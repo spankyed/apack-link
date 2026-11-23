@@ -83,6 +83,25 @@ const take = accept((link) => { /* join(link, backendPort) */ })
 server.on('connection', (ws) => take(socket(ws)))
 ```
 
+### A link by itself
+
+`join` is what most hosts use, and is written on what a link offers. `dial`, `listen` and `accept` each give a
+`Link`:
+
+| | |
+|---|---|
+| `send(frame, { cause, private })` | Sends a frame. Throws for one that cannot be sent, having taken no number. With no connection it waits |
+| `prepare(frame, how)` | Encodes a frame now and returns what `send` takes later, once, without encoding it again |
+| `onFrame((frame, cause) => …)` | Each frame the other end sent, once each, in the order it sent them |
+| `onTraffic((traffic) => …)` | Each frame as it is numbered to go out and as it is taken in, as a tap sees it |
+| `onEnd((ending) => …)` | Once, when the link has ended, with why |
+| `close(bye)` | Ends the link, having sent what was sent, with a goodbye if one is given: `restarting` or `ended` |
+| `kept()` | How many numbers this end keeps because the other has not said it took them |
+| `waiting()` | How many frames wait to be numbered |
+| `awaiting()` | Says this end is owed something, so that a quiet connection is watched while it is. What it returns is called when that has come |
+
+`listen()` gives a `Listener`, which has one more: `carry(transport)` hands it a connection.
+
 ### What a backend has to do itself
 
 - **Say who may connect.** A link authenticates nobody. A connection that says a session's id and a hello that
@@ -134,7 +153,7 @@ Nothing else. A new frame is a new thing a state can say, and is added with the 
   connections is not made without one (`timers` is a clock on `setTimeout`, to hand it). After a connection that
   held, the next is opened at once. After one that did not, the wait is `first` milliseconds, doubled for each
   such connection in a row, `most` at the most. A connection has held once it has stayed up, after the other
-  end said hello on it, for as long as the wait before it.
+  end said hello on it, for as long as the wait before it, and for `first` at least.
 
 ### What cannot be sent
 
@@ -156,7 +175,9 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 - **A batch is cut the same way:** into the fewest messages that fit, between the things said, in order.
 - **`LEAST` is 1144 bytes,** and is the least any link is carried on, whatever it is set with: the shortest part
   (16), the longest cause (1024), what JSON puts around a thing numbered at the most (102), and the batch's two.
-  What takes less is closed, with a `RangeError`, as it is handed over.
+  A transport that takes less is closed as it is handed over, with a `RangeError`: thrown by `dial`, `listen`,
+  `carry` and `accept`, and, for a connection a link opened for itself later, handed to `thrown` and counted as
+  one that did not hold. A hello that says the other end takes less is `too narrow`.
 - **What is kept is sent again as it was.** So a connection that takes less than something an end still keeps,
   and the hello on it does not say was taken, cannot carry it. That is found at the hello: the end that listens
   turns the connection away, and the end that dialled ends `too narrow`.
@@ -215,13 +236,14 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 | `overrun` | what waits to be sent passed its bound, with nothing left to let go | `waiting`, `bound` |
 | `too narrow` | the connection takes no message as long as this end needs | `most`, `needs` |
 
-Only the end that dials ends `lost`, `version` or `too narrow` for a first word: the end that listens turns the
-connection away and goes on.
+Only the end that dials ends for the first thing said on a connection, `lost`, `version`, `too narrow` or
+`not a frame`: the end that listens turns the connection away and goes on.
 
 ## What a link is set with
 
-`dial`, `listen` and `accept` take the same options. Both ends are given the same `codec`; nothing else has to
-agree.
+`dial`, `listen` and `accept` take the same options. Two things have to agree between the ends, and nothing
+else: both are given the same `codec`, and the end a frame arrives at is given a `bound.frame` no less than the
+end that sent it.
 
 | Option | What it sets | Unless given |
 |---|---|---|
@@ -229,7 +251,7 @@ agree.
 | `there: { window, clock }` | How long a connection may be quiet while this end is owed something | Nothing is watched |
 | `bound.kept: { frames, size }` | How much sent and not yet taken there may be before nothing more is numbered | 1024 frames, 16 MiB |
 | `bound.waiting: { frames, size }` | How much may wait to be numbered before the link ends `overrun` | 16 384 frames, 64 MiB |
-| `bound.frame` | How many bytes one frame and its cause may be. 1024 at least | 64 MiB |
+| `bound.frame` | How many bytes one frame and its cause may be. 1024 at least. A larger one is refused where it is sent, and one arriving in parts that add up to more ends the link `not a frame` | 64 MiB |
 | `part` | The most a part, and a message of several things, may be, in bytes. 16 at least | 1 MiB |
 | `codec` | What batches are encoded in. One that puts more around a frame than JSON does is refused | JSON |
 | `thrown(error)` | Handed what a listener, opening a connection, or a transport's `send` threw | Thrown again in a turn of its own |
