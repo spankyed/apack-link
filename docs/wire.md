@@ -10,8 +10,11 @@ part's `data` is then bytes of that encoding instead of text.
 ## Messages
 
 Each message on the transport is a **batch**: a list, never empty, of things one end says, in the order it said
-them. An end sends at most one batch a turn, and one sooner once it is as long as a part. Each thing in a batch
-is one of these:
+them. An end says what it has to say in a turn as one batch, and sends one sooner once it is as long as a part.
+Where that batch would be longer than what carries it takes, or than the `most` the other end's hello named, it
+crosses as more than one message: the fewest that fit, cut between the things said, in the order they were
+said, each a batch of its own. A hello is still first in the first of them and a goodbye last in the last, and
+whoever reads the wire takes them one after another as if they were one. Each thing in a batch is one of these:
 
 | Said | What it is |
 |---|---|
@@ -58,6 +61,11 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
 - An end handed its connections, a backend's, turns away a connection whose first word does not fit, and goes on.
   Only the end that opened a connection ends for what it met there. An end already met on one connection keeps it
   until a hello that fits arrives on a new one.
+- The end that opened a connection says its hello first on it. An end that is on a connection where the other
+  has been met says nothing on a new one, its own hello included, until a hello that fits has arrived there:
+  then it closes the old one and says its hello on the new, with what it had taken by then. On a connection it
+  is handed while it is on none, or on one where nobody has been met, an end says its hello at once. So a client
+  written to this must not wait for a backend's hello before sending its own.
 - Each numbered thing is one more than the one before it from that end; one that is not ends the link
   `out of order`. A resume sends again everything after the `taken` the other end's hello names, and a frame in
   parts picks up at the part it got to.
