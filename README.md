@@ -88,8 +88,8 @@ and so can keep all of it in order.
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
-  says another number is closed on, naming both. So is one that takes no message as long as a frame this end may
-  send (`too narrow`).
+  says another number is closed on, naming both. So is one that takes no message as long as this end may need for
+  a part and what goes with one (`too narrow`).
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
   that cannot be put into text is refused with a `TypeError` of the link's own.
 - **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and
@@ -163,7 +163,7 @@ order, until it closes. Four are here, and none imports what it is carried on:
 
 | | Carried on |
 |---|---|
-| `socket(ws)` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. What is sent while it is opening waits for it to open |
+| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` is the longest message the server takes, where it has a limit: the link cuts to it. What is sent while it is opening waits for it to open |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
 | `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed. A link carried on it is told `most`, and sends nothing longer |
 | `memoryPair()` | Two ends in memory, for specs |

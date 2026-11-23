@@ -140,14 +140,17 @@ anything an end sends is a change to that file.
   messages that fit, cut between the things said, in order, the hello still first and a goodbye still last. The
   length a link is carried on and the size of what it sends cannot be set apart from each other: the link
   reads the one and keeps to it. `accept` hands a link the transport's `most` and `waiting` with it.
-  - **Found as a connection is handed over.** What takes no message as long as a frame the link may send (the
-    frame, 128 bytes around it, and the batch's two) does not carry the link: `link`, `carry` and `accept` close
-    it and throw a `RangeError`, and a link that opened it for itself counts it as a connection that did not
-    hold. So a frame's size is held to one thing, `bound.frame`, known when it is sent; no frame is taken on that
-    some later connection cannot carry, and nothing is found out by how large a frame happens to be.
+  - **Found as a connection is handed over.** What takes no message as long as the link may need for one thing it
+    numbers does not carry the link: `link`, `carry` and `accept` close it and throw a `RangeError`, and a link
+    that opened it for itself counts it as a connection that did not hold. What it may need is a part, or a
+    frame no longer than one, with what caused it (1024 bytes at most), 128 bytes around them and the batch's
+    two; and never more than a whole frame would need, where a frame may be no longer than a part. A frame
+    longer than a part never crosses whole, so what carries a link has to have room for a part and not for a
+    frame. So a frame's size is held to one thing, `bound.frame`, known when it is sent; no frame is taken on
+    that some later connection cannot carry, and nothing is found out by how large a frame happens to be.
   - **Both ends.** Each end says in its hello the longest message it takes on that connection, and a batch is cut
     to the shorter of what the two take. An end that takes none as long as a frame the other may send is one the
-    other cannot talk to: the one that opened the connection ends `{ why: 'too narrow', most, frame }`. A link
+    other cannot talk to: the one that opened the connection ends `{ why: 'too narrow', most, needs }`. A link
     that sends before it has met the other end, one given one transport, cuts to its own until it has.
 - **A batch is taken in order**, and nothing in it after what ended the link.
 - **What arrives is checked to be a frame** (`asFrame`, `src/frames.ts`): one of the nine kinds, an id a whole
@@ -288,7 +291,8 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 
 - **Cause.** `send(frame, { cause })`. A cause is a short text the kernel makes, naming the step that sent the
   frame. It crosses beside the frame (`{ "seq", "frame", "cause" }`), and `onFrame` hears it. A link never reads
-  it. A result that overtook another while waiting carries its own cause.
+  it. It is 1024 bytes at most as it crosses, and a frame sent with a longer one is refused where it is sent: it
+  crosses whole beside a frame or its first part, so what a link needs of what carries it counts it in. A result that overtook another while waiting carries its own cause.
 - **Tap.** `onTraffic(seen)` is told of each frame as it is numbered to go out, and as it is taken in: direction,
   number, kind, id, name (a tell's `to`, an ask's name, a view's name), bytes of its text, and cause. Never what it
   carries. A tap that throws is the tap's to answer for; the link goes on.
@@ -315,15 +319,20 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   the next one is not a frame.
 - **A part is no longer than a part as it crosses.** What a part carries is a piece of the frame's encoding, said
   as data, and a piece can be longer as data than it was: text in JSON has each quote and backslash in it said in
-  two. So a piece too long as data is cut again, in half, until it fits or is one character, and `part` is 16
-  bytes at least so that one character always does. With what goes around it, a part is then never longer than
-  what carries the link was found wide enough for, whatever the frame holds.
+  two. By how much is the codec's to know, so a piece is tried: one too long as data is tried again shorter by as
+  much as it was too long, and one with room to spare longer by as much as it had, between the longest found to
+  fit and the shortest found not to, until it is within a character or two of a part or nothing lies between.
+  Text that says nothing in two takes two tries a part. `part` is 16 bytes at least, so that one character
+  always fits. With what goes around it, a part is then never longer than what carries the link was found wide
+  enough for, whatever the frame holds, and no part but the last is much shorter than it may be.
 - **What a frame's parts add up to is bounded where they arrive.** An end keeps the parts of one frame until the
   last, and takes no more of them than a frame may be (`bound.frame`), nor one that holds nothing: past that the
   link ends `not a frame`, however many parts were said to be coming. Without it, what an end kept would be
   bounded by nothing the moment a frame was said to be in parts.
-- **A batch leaves once it is as long as a part**, as well as at the end of the turn, so no one write is much longer
-  than a part, and a resume sends again what was kept the same way.
+- **A batch longer than a part crosses as more than one message**, cut between what was said, so no one write is
+  much longer than a part, and a resume sends again what was kept the same way. All of it leaves at the end of
+  the turn, as any batch does: nothing is handed to what carries a link while whoever is sending is still in
+  `send`, so nothing a transport does there, throwing among it, comes back to them.
 - **A tap's `size`** is how many bytes a frame is as it crosses, numbered and with its cause: for a frame in parts,
   all of its parts, the same at both ends.
 
@@ -333,7 +342,11 @@ A `Transport` hands over whole messages, `string | Uint8Array`, in order, and sa
 arrive. A link sends text today and takes either: bytes are read as UTF-8.
 
 - **`socket`**, over anything shaped like a browser's `WebSocket` (Node's `ws` is). Sent while opening, it waits
-  and leaves in order once open. Bytes arrive as `ArrayBuffer` and are handed over as `Uint8Array`.
+  and leaves in order once open. Bytes arrive as `ArrayBuffer` and are handed over as `Uint8Array`. A socket
+  does not say how long a message the other end takes, and a server that takes none past some length closes on
+  one that is: `socket(ws, { most })` is told it, and says it as any transport does, so the link cuts to it and
+  is not opened to a server too narrow for it. Without it, what keeps a link under a server's limit is only
+  that a part is shorter.
 - **`port`**, over a message port that takes listeners as an event target (a browser's, Node's) or as an emitter
   handing over an event (Electron's). A port closing is not heard at the other end everywhere, so closing posts
   `null` first, after what was sent before it; a port's own `close` event is heard as well.

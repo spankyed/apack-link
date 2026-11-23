@@ -116,7 +116,7 @@ type Ending =
    * The other end takes no message as long as a frame this end may send: the longest it said it takes, and how
    * many bytes a frame may be here. The two ends are not set to talk to each other.
    */
-  | { readonly why: 'too narrow'; readonly most: number; readonly frame: number }
+  | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
 ```
 
 ### `Failure`
@@ -413,7 +413,20 @@ A transport over a WebSocket. What is sent while it is still opening waits, and 
 Bytes arrive as a `Uint8Array`.
 
 ```ts
-socket(ws: WebSocketLike): Transport
+socket(ws: WebSocketLike, options?: SocketOptions): Transport
+```
+
+### `SocketOptions`
+
+```ts
+interface SocketOptions {
+  /**
+   * The longest message, in bytes, the other end of the socket takes, where it takes none longer: a server's limit
+   * on a message. The transport says it (`most`), so a link carried on it sends nothing longer, and is not
+   * carried on it at all if that is less than it may need to send. A socket says nothing of this itself.
+   */
+  readonly most?: number
+}
 ```
 
 ### `stream`

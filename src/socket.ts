@@ -16,6 +16,15 @@ export interface WebSocketLike {
   addEventListener(type: 'message', listener: (event: { readonly data: unknown }) => void): void
 }
 
+export interface SocketOptions {
+  /**
+   * The longest message, in bytes, the other end of the socket takes, where it takes none longer: a server's limit
+   * on a message. The transport says it (`most`), so a link carried on it sends nothing longer, and is not
+   * carried on it at all if that is less than it may need to send. A socket says nothing of this itself.
+   */
+  readonly most?: number
+}
+
 const OPENING = 0
 const OPEN = 1
 
@@ -23,7 +32,7 @@ const OPEN = 1
  * A transport over a WebSocket. What is sent while it is still opening waits, and leaves in order once it is open.
  * Bytes arrive as a `Uint8Array`.
  */
-export function socket(ws: WebSocketLike): Transport {
+export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transport {
   const hears: Array<(message: Message) => void> = []
   const closes = once()
   const waiting: Message[] = []
@@ -47,6 +56,7 @@ export function socket(ws: WebSocketLike): Transport {
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
+    ...(options.most === undefined ? {} : { most: options.most }),
     waiting: () => ws.bufferedAmount + waiting.reduce((all, message) => all + (typeof message === 'string' ? bytesOf(message) : message.byteLength), 0),
     close: () => {
       if (closes.fired) return
