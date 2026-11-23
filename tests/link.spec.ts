@@ -540,6 +540,22 @@ describe('what carries a link taking no message longer than it says', () => {
     expect((JSON.parse(texts.at(-1)!) as unknown[]).at(-1)).toEqual({ bye: 'ended' })
   })
 
+  it('is handed nothing longer, and nothing cut sooner than it had to be, whatever length it takes', () => {
+    // Past one byte a character, so that it is bytes the texts are cut by.
+    const sent = Array.from({ length: 12 }, (_, at) => tell(`✓é ${'x'.repeat(at)}`))
+    for (let most = 150; most <= 450; most++) {
+      const texts: string[] = []
+      const turns: Array<() => void> = []
+      const a = link({ most, send: (message) => { texts.push(message as string) }, onData: () => {}, onClose: () => {}, close: () => {} }, { later: (run) => { turns.push(run) } })
+      for (const frame of sent) a.send(frame, { cause: '✓' })
+      for (const run of turns) run()
+      const crossed = texts.flatMap((text) => JSON.parse(text) as Array<{ frame?: Frame }>)
+      expect([most, crossed.slice(1).map((one) => one.frame)]).toEqual([most, sent])
+      expect([most, Math.max(...texts.map(bytes))]).toEqual([most, expect.toSatisfy((longest: number) => longest <= most)])
+      for (let at = 1; at < texts.length; at++) expect([most, bytes(texts[at - 1]!) + bytes(texts[at]!) - 1 > most]).toEqual([most, true])
+    }
+  })
+
   it('is handed one text for a turn that fits in one', async () => {
     const { narrow, texts } = limited(300)
     const a = link(narrow)
