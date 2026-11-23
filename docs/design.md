@@ -44,6 +44,28 @@ that stream, with what a general layer cannot know: which frames there are, and 
 | `follow` | the follower | at `unfollow`, or when the link closes |
 | `shown` | the one that runs the view | at `unfollow` |
 | `unfollow` | the follower | the view |
+| `over` | the one that runs the view | the view, for the follower: nothing more is shown |
+
+## Peers
+
+`src/peer.ts`, `join`. A link knows nothing of what its frames are for; a peer gives the ids their meaning, for one
+system at one end. A system offers a `Port`, and `join(link, mine)` returns the port of the system at the other
+end: a call on it leaves as a frame, and a frame arriving is a call on `mine`.
+
+- **Ids.** Each end numbers its own asks and its own views from 1, and an id is used once in a link's life. An
+  `ask` or a `follow` whose id is not new is not taken.
+- **A frame for an id nobody holds is dropped.** It is one that crossed a `left` or an `unfollow` on the way, or
+  came after its `answer` or `over`. Whatever a system does with an ask or a view after it has ended (answers again,
+  shows more) goes nowhere: one `answer` and one `over` cross for each.
+- **When the link ends**, every ask waiting here ends `{ ok: false, failure: { kind: 'disconnected' } }`, every
+  view followed here is `over` with the same, and everything this end was answering or showing is told to stop.
+  Each once. An ask or a follow made after is ended there and then.
+- **A value that cannot be sent fails the one it belongs to, and no other.** An answer or a progress: the ask is
+  answered `failed`, and whoever was answering is told to stop. A view's result: the view is `over` and stopped.
+  An ask or a follow: it is ended where it was made. Nothing is thrown into the system, and nobody is left waiting.
+  The value is never said: the message is "A value could not be sent".
+- **A system that throws where it is asked or followed** fails that one ask or view, `failed`, "It could not be
+  taken". What it threw is the system's to report.
 
 ## What a link says about itself
 
@@ -106,6 +128,9 @@ Read 2026-11-22, before peers were built. Written down so that it is not argued 
 - Noted: `connect` may carry a `session` to come back to, and the specification does not say what a server does
   with one. Step 5 says what a link does.
 
+How it is shown, for peers: each scenario in `src/testing/scenarios.ts` has whatever a system does in answer to
+something arriving done in a lane of its own, so it falls in every place among what crosses the link.
+
 **The Language Server Protocol's base protocol** (3.17).
 
 - Taken: **the three shapes.** A request and its response are `ask` and `answer`, a notification is `tell`.
@@ -124,7 +149,7 @@ Read 2026-11-22, before peers were built. Written down so that it is not argued 
 ## Order of work
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
-memory, and step 0: the schedule, hello and goodbye.
+memory, step 0 (the schedule, hello and goodbye) and step 1 (peers).
 
 ## What is not decided
 

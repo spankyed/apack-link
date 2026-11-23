@@ -19,7 +19,13 @@ export type Frame =
   | { readonly kind: 'follow'; readonly id: Id; readonly feature: string; readonly view: string; readonly args: unknown }
   /** What a followed view shows now. */
   | { readonly kind: 'shown'; readonly id: Id; readonly update: unknown }
+  /** The follower lets a view go. */
   | { readonly kind: 'unfollow'; readonly id: Id }
+  /** The one running a view says it has ended, and why. Nothing more is shown for its id. */
+  | { readonly kind: 'over'; readonly id: Id; readonly failure: Failure }
+
+/** Why an ask failed or a view ended: a kind to act on and a message to read. */
+export interface Failure { readonly kind: string; readonly message: string }
 
 /** A frame as it is on the wire: with its place in everything this end has sent. */
 export interface Sent {
