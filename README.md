@@ -259,3 +259,8 @@ npm run package:smoke      # the tarball installed elsewhere, and the README's e
 ```
 
 Node 24.12 or later.
+
+## License
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option; the npm package ships both
+texts.
