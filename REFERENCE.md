@@ -464,8 +464,8 @@ socket(ws: WebSocketLike, options?: SocketOptions): Transport
 interface SocketOptions {
   /**
    * The longest message, in bytes, the other end of the socket takes, where it takes none longer: a server's limit
-   * on a message. The transport says it (`most`), so a link carried on it sends nothing longer, and is not
-   * carried on it at all if that is less than it may need to send. A socket says nothing of this itself.
+   * on a message. The transport says it (`most`), so a link carried on it cuts what it sends to fit, and is not
+   * carried on it at all if that is less than `LEAST` or what it still keeps. A socket says nothing of this itself.
    */
   readonly most?: number
 }
@@ -539,7 +539,7 @@ interface Transport {
   waiting?(): number
   /**
    * The longest message it carries, in bytes, where there is one. A link hands it nothing longer: a batch that
-   * would be crosses as more than one, and a frame that would be is refused where it is sent.
+   * would be crosses as more than one, and a frame that would be is cut into parts.
    */
   readonly most?: number
 }

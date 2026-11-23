@@ -156,7 +156,7 @@ export function dial(over: Transport | (() => Transport), options: Options = {})
   // Opening again with nothing to pace it is a link that spins while its connections fail: not one to be made.
   if (typeof over === 'function' && !options.reopen) throw new TypeError('A link that opens its own connections is given a clock to open them on')
   // It opens its connections, or is on one alone: there is nothing to hand it one with.
-  const { carry: _, ...made } = end('dials', over, options)
+  const { carry: _, ...made } = end('dials', over, options).made
   return made
 }
 
@@ -169,7 +169,7 @@ export function dial(over: Transport | (() => Transport), options: Options = {})
 export function listen(over: Transport, options?: Options): Link
 export function listen(over?: undefined, options?: Options): Listener
 export function listen(over?: Transport, options: Options = {}): Link | Listener {
-  const made = end('listens', over, options)
+  const { made } = end('listens', over, options)
   if (!over) return made
   // It is on one connection alone: there is nothing to hand it another with.
   const { carry: _, ...alone } = made
@@ -177,7 +177,7 @@ export function listen(over?: Transport, options: Options = {}): Link | Listener
 }
 
 /** One end of a link, on what it is handed. */
-function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | undefined, options: Options): Listener {
+function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | undefined, options: Options): { readonly made: Listener; readonly hand: (transport: Transport) => void } {
   const pace = options.reopen
   const later = options.later ?? queueMicrotask
   const set = setup({
@@ -282,9 +282,8 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     }
   }
 
-  const carry = (transport: Transport): void => {
+  const hand = (transport: Transport): void => {
     if (state.ending) { transport.close(); return }
-    wideEnough(transport, narrowest(state))
     const on = ++connections
     transports.set(on, transport)
     tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
@@ -298,6 +297,11 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         while (state.taking.length > taking) tell({ is: 'more', backlog: backlog(on) })
       } finally { state.taking.length = Math.min(state.taking.length, taking) }
     })
+  }
+  const carry = (transport: Transport): void => {
+    if (state.ending) { transport.close(); return }
+    wideEnough(transport, narrowest(state))
+    hand(transport)
   }
 
   const made: Listener = {
@@ -340,7 +344,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
   }
   if (typeof over === 'object') carry(over)
   else if (typeof over === 'function') carry(over())
-  return made
+  return { made, hand }
 }
 
 /**
@@ -357,7 +361,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
  */
 export function accept(onLink: (link: Link) => void, options: Options = {}): (transport: Transport) => void {
   const codec = options.codec ?? json
-  const links = new Map<string, Listener>()
+  const links = new Map<string, (transport: Transport) => void>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
   limits(options)
   return (transport) => {
@@ -398,7 +402,7 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
         return
       }
       const known = links.get(said.session)
-      if (known) known.carry(relay)
+      if (known) known(relay)
       // Going on with a session from before this end began, or one that says it took what nobody here sent: a
       // new session says so, and the other end finds it lost.
       else if (said.resumes !== undefined || said.taken !== 0) { turnAway('lost'); return }
@@ -406,13 +410,13 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
       else if (said.most !== undefined && said.most < LEAST) { turnAway('lost'); return }
       else {
         const session = said.session
-        const made = listen(undefined, options)
-        links.set(session, made)
+        const { made, hand } = end('listens', undefined, options)
+        links.set(session, hand)
         made.onEnd(() => { links.delete(session) })
         // Handing it its connections is this function's, and nobody else's.
-        const { carry, ...link } = made
+        const { carry: _, ...link } = made
         onLink(link)
-        carry(relay)
+        hand(relay)
       }
       for (const heard of hears) heard(message)
     })

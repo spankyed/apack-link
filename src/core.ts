@@ -33,7 +33,8 @@
 //
 // What carries a link may take no message longer than it says (`most`), and each end says in its hello the
 // longest it takes. A batch that would be longer than either crosses as more than one, cut between frames, in
-// order. A link is not carried on what takes no message as long as a frame it may send.
+// order, and a frame longer than fits crosses in parts. A link is not carried on what takes less than `LEAST`,
+// or less than something it still keeps to send again.
 //
 // The two ends are not alike. The one that dials opened the connection: it says hello first on it, and ends for
 // what it meets there. The one that listens says nothing on a connection, and keeps the one it has, until whoever
@@ -250,12 +251,12 @@ export function setup(given: Given): Setup {
 
 /**
  * The shortest message an end can go on being carried on, as it stands: what any link needs, and no less than the
- * longest thing it numbered and still keeps, with the batch's own two. What is kept is sent again as it was, so a
- * connection that takes less than it was cut for cannot carry it.
+ * longest thing it numbered and still keeps past `after`, with the batch's own two. What is kept is sent again as
+ * it was, so a connection that takes less than it was cut for cannot carry it.
  */
-export function narrowest(state: State): number {
+export function narrowest(state: State, after = 0): number {
   let longest = 0
-  for (const one of state.kept) if (one.size > longest) longest = one.size
+  for (const one of state.kept) if (one.seq > after && one.size > longest) longest = one.size
   return Math.max(LEAST, longest + 2)
 }
 
@@ -425,7 +426,7 @@ type Unfit =
   | { readonly no: 'not a frame' }
   | { readonly no: 'version'; readonly theirs: number }
   | { readonly no: 'lost' }
-  | { readonly no: 'too narrow'; readonly most: number }
+  | { readonly no: 'too narrow'; readonly most: number; readonly needs: number }
 
 /**
  * What an end set this way does. What comes back takes what an end holds and one thing that happened, changes
@@ -686,7 +687,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
    * taken. Otherwise what it has not taken is all still kept: numbering stops at the bound, so nothing is let go
    * before it is taken. An end that has met nobody has numbered nothing, so the two start afresh.
    */
-  const greeting = (arrived: unknown): Hello | Unfit => {
+  const greeting = (arrived: unknown, local?: number): Hello | Unfit => {
     if (!isObject(arrived) || typeof arrived.link !== 'number') return { no: 'not a frame' }
     if (arrived.link !== LINK) return { no: 'version', theirs: arrived.link }
     if (!isHello(arrived)) return { no: 'not a frame' }
@@ -695,7 +696,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (resumes !== undefined && resumes !== mine) return { no: 'lost' }
     if (resumes === undefined && taken !== 0) return { no: 'lost' }
     if (taken > s.sent || taken < s.released) return { no: 'lost' }
-    if (most !== undefined && most < narrowest(s)) return { no: 'too narrow', most }
+    const needs = narrowest(s, taken)
+    const limit = Math.min(most ?? Infinity, local ?? Infinity)
+    if (limit < needs) return { no: 'too narrow', most: limit, needs }
     return arrived
   }
   /** This end's hello on a connection that takes messages of `most` bytes, where it says. */
@@ -711,9 +714,16 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
    * An end that listens is never here: it is on no connection before a hello that fits.
    */
   const refuse = (on: Connection, unfit: Unfit): void => {
-    if (toldLost(unfit)) put(on, word({ lost: true }))
-    if (unfit.no === 'lost') { flush(on); end({ why: 'lost' }); return }
-    if (unfit.no === 'too narrow') { flush(on); end({ why: 'too narrow', most: unfit.most, needs: narrowest(s) }); return }
+    if (unfit.no === 'too narrow') {
+      // Drop any frames queued before meeting the other end that would exceed what it just said it takes.
+      if (on.live) on.batch.length = on.sizes.length = on.batch.length > s.kept.length ? 1 : 0
+      on.takes = unfit.most
+      put(on, word({ lost: true }))
+      flush(on)
+      end({ why: 'too narrow', most: unfit.most, needs: unfit.needs })
+      return
+    }
+    if (unfit.no === 'lost') { put(on, word({ lost: true })); flush(on); end({ why: 'lost' }); return }
     if (unfit.no === 'version') { end({ why: 'version', mine: LINK, theirs: unfit.theirs }); return }
     unknown()
   }
@@ -907,7 +917,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const waited = s.pending
     if (s.ending || waited?.id !== id) return
     delete s.pending
-    const fits = greeting(firstOf(codec, message))
+    const fits = greeting(firstOf(codec, message), waited.most)
     if ('no' in fits) {
       // Turned away, and told why where it would otherwise wait: which link this is, so that another link ends
       // saying both numbers, and that the session is lost. It is told nothing of the session this end is in: a
