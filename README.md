@@ -59,7 +59,11 @@ and so can keep all of it in order.
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
   says another number is closed on, naming both.
-- **A reason never holds what was sent.** An ending names a kind, a number or a size.
+- **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
+  that cannot be put into text is refused with a `TypeError` of the link's own.
+- **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and
+  `onFrame` hears the cause. `onTraffic` is told of each frame out and in: its direction, number, kind, id, name,
+  size and cause. A frame sent `{ private: true }` is told of only as having crossed, with its number and size.
 
 ## Use
 
@@ -176,7 +180,7 @@ be done:
 5. A connection that comes back, with nothing taken twice. **Built.**
 6. A bound on what waits, with a view's overtaken update let go. **Built.**
 7. Knowing the other end is there by what it does, never by a time to reply. **Built.**
-8. What caused a frame, a tap that never sees what one carries, and frames that are private.
+8. What caused a frame, a tap that never sees what one carries, and frames that are private. **Built.**
 9. Bytes, and frames too large for one write.
 10. Releases apack can pin, and the wire written down once.
 

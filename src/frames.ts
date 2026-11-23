@@ -32,4 +32,16 @@ export interface Sent {
   /** One more than the frame before it from this end, from 1. */
   readonly seq: number
   readonly frame: Frame
+  /** What caused it: a short text the kernel makes, passed on and never read. */
+  readonly cause?: string
+  /** A tap at either end is told only that it crossed, and its size. */
+  readonly private?: true
+}
+
+/**
+ * A frame as text. Throws a `TypeError` of its own for a frame that cannot be put into text, saying nothing of what
+ * it holds: what a value could not be is described by its keys, and a key is something a frame carries.
+ */
+export function toText(frame: Frame): string {
+  try { return JSON.stringify(frame) } catch { throw new TypeError('A frame could not be put into text') }
 }
