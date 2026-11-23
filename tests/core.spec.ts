@@ -123,6 +123,54 @@ describe('a step', () => {
     expect(copy).toEqual(state)
   })
 
+  const helloOf = (session: string, more: object = {}): string => JSON.stringify([{ link: 1, session, taken: 0, ...more }])
+  const does = (effects: Effect[]): string[] => effects.map((effect) => effect.do)
+
+  it('writes nothing when a turn ends for a connection the end has left', () => {
+    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const state = start()
+    step(state, { is: 'carry', on: 1 })
+    step(state, { is: 'carry', on: 2 })
+    expect(does(step(state, { is: 'turn', on: 1 }))).toEqual([])
+    expect(does(step(state, { is: 'turn', on: 2 }))).toEqual(['write'])
+  })
+
+  it('takes nothing more from a connection it turned away, whatever is said on it next', () => {
+    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const state = start()
+    step(state, { is: 'carry', on: 1 })
+    expect(does(step(state, { is: 'data', on: 1, message: '["not a hello"]', backlog: 0 }))).toEqual(['write', 'close'])
+    expect(step(state, { is: 'data', on: 1, message: helloOf('there'), backlog: 0 })).toEqual([])
+    expect(state.theirs).toBeUndefined()
+  })
+
+  it('takes nothing from a connection that waited and closed', () => {
+    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const state = start()
+    step(state, { is: 'carry', on: 1 })
+    step(state, { is: 'data', on: 1, message: helloOf('there'), backlog: 0 })
+    step(state, { is: 'carry', on: 2 })
+    step(state, { is: 'closed', on: 2 })
+    expect(step(state, { is: 'data', on: 2, message: helloOf('there', { resumes: 'here' }), backlog: 0 })).toEqual([])
+    expect(state.now?.id).toBe(1)
+  })
+
+  it('opens no connection for a clock that was called off, or while it is on one', () => {
+    const step = core(setup({ kind: 'opens', session: 'here' }))
+    const state = start()
+    step(state, { is: 'carry', on: 1 })
+    // It could not be carried after all, though the end was put on it: another is to be opened, when the clock says.
+    const [waits] = step(state, { is: 'unopened' })
+    expect(waits).toMatchObject({ do: 'after', clock: 'reopen' })
+    const timer = (waits as { timer: number }).timer
+    expect(step(state, { is: 'due', timer: timer + 100 })).toEqual([])
+    expect(step(state, { is: 'due', timer })).toEqual([])
+    step(state, { is: 'closed', on: 1 })
+    expect(step(state, { is: 'due', timer: state.reopening! + 100 })).toEqual([])
+    const again = step(state, { is: 'due', timer: state.reopening! })
+    expect(does(again)).toEqual(['open'])
+  })
+
   it('refuses a setting no end could work with', () => {
     expect(() => setup({ kind: 'once', session: 'x', part: 8 })).toThrow(RangeError)
     expect(() => setup({ kind: 'once', session: 'x', bound: { frame: 100 } })).toThrow(RangeError)

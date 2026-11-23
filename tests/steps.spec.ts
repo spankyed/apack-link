@@ -103,3 +103,41 @@ describe('a transport that throws as the link ends', () => {
     expect(thrown).toEqual([new Error('cannot send')])
   })
 })
+
+describe('what a link is handed', () => {
+  it('has what closing a transport threw, as the link ended, handed on', async () => {
+    const other = bare()
+    const thrown: unknown[] = []
+    const ended: Ending[] = []
+    const a = link({ ...other.transport, close: () => { throw new Error('cannot close') } }, { thrown: (error) => { thrown.push(error) } })
+    a.onEnd((ending) => { ended.push(ending) })
+    a.close()
+    await turn()
+    expect(ended).toEqual([{ why: 'closed' }])
+    expect(thrown).toEqual([new Error('cannot close')])
+  })
+
+  it('closes a transport handed to a link that has ended, whatever it is, and throws nothing', () => {
+    const a = link(undefined, { bound: { frame: 4096 }, part: 2048 })
+    a.close()
+    let closed = 0
+    expect(() => a.carry({ ...bare().transport, most: 64, close: () => { closed++ } })).not.toThrow()
+    expect(closed).toBe(1)
+  })
+
+  it('goes on watching a quiet connection while it is owed something, however often another thing owed is settled', async () => {
+    const other = bare()
+    const waits: Array<() => void> = []
+    const clock = { after: (_: number, run: () => void) => { waits.push(run); return () => { waits.splice(waits.indexOf(run), 1) } } }
+    const a = link(other.transport, { there: { window: 100, clock } })
+    other.hand(hello)
+    const first = a.awaiting()
+    a.awaiting()
+    first()
+    first()
+    // Something arriving starts the window over, for as long as anything is owed.
+    other.hand({ here: 0 })
+    await turn()
+    expect(waits.length).toBe(1)
+  })
+})
