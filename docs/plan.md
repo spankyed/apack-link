@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 8.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 9.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -356,6 +356,9 @@ Done when: a tap sees every frame in order, a cause crosses, and a spec that put
 every private frame's name finds it in nothing a tap, an ending or a thrown error holds.
 
 ## Step 9. Bytes, and frames too large for one write
+
+Built: `src/codec.ts` (`Codec`, `json`), `Options.codec` and `Options.part`, and `Link.prepare`. A codec encodes one
+value and joins values already encoded, which is what lets a frame still be refused alone where it is sent.
 
 - **A codec is handed in**: what turns a batch into `string | Uint8Array` and back. JSON is the one built in.
   msgpack is given by a host that has it; a spec runs one as a development dependency.

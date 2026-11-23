@@ -600,6 +600,34 @@ const needsTheHold = (offers: boolean): KitScenario[] => [
 /** Step 2's: what a system says waits until the views it runs for the other end have caught up. */
 export const hold: readonly KitScenario[] = [
   ...needsTheHold(true),
+  // What a held thing says is what it said when it was said, whatever becomes of the value after.
+  {
+    name: 'what is held is sent as it was when it was said, though the value changed while it waited',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      let toWindow!: ReturnType<typeof join>
+      const window = desk()
+      const toBackend = join(a, window.port)
+      toWindow = join(b, desk({
+        ask: (asked) => {
+          const event = { count: 1 }
+          const answer = { count: 1 }
+          toWindow.tell('panel', event)
+          asked.ended({ ok: true, value: answer })
+          // Changed after it was said, while the view is still to catch up.
+          event.count = 2
+          answer.count = 2
+        },
+        follow: (viewed) => things.follow(viewed),
+      }).port)
+      watching(toBackend, 'things', 'count', {})
+      const made_ = asking(toBackend, 'things', 'MAKE', {})
+      return () => {
+        same(window.told.map((told) => told.event), [{ count: 1 }], 'what the window was told')
+        same(made_.ended, [{ ok: true, value: { count: 1 } }], 'how the ask ended')
+      }
+    },
+  },
   {
     name: 'an end that runs no views for the other holds nothing',
     play: (schedule, { a, b }) => {

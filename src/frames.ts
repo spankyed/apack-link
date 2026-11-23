@@ -38,14 +38,6 @@ export interface Sent {
   readonly private?: true
 }
 
-/**
- * A frame as text. Throws a `TypeError` of its own for a frame that cannot be put into text, saying nothing of what
- * it holds: what a value could not be is described by its keys, and a key is something a frame carries.
- */
-export function toText(frame: Frame): string {
-  try { return JSON.stringify(frame) } catch { throw new TypeError('A frame could not be put into text') }
-}
-
 const isId = (value: unknown): value is Id => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 const isText = (value: unknown): value is string => typeof value === 'string'
 
