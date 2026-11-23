@@ -729,8 +729,13 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
    */
   const refuse = (on: Connection, unfit: Unfit): void => {
     if (unfit.no === 'too narrow') {
-      // Drop any frames queued before meeting the other end that would exceed what it just said it takes.
-      if (on.live) on.batch.length = on.sizes.length = on.batch.length > s.kept.length ? 1 : 0
+      // What was numbered this turn, before the other end said how little the connection takes, was cut for more:
+      // it is not said, and the link is ending. What else waits to be said on the connection is this end's hello,
+      // and that is said, with that the session is lost, in messages no longer than is taken.
+      const numbered = new Set(s.kept.map((one) => one.encoded))
+      const said = on.batch.map((encoded, at) => [encoded, on.sizes[at]!] as const).filter(([encoded]) => !numbered.has(encoded))
+      on.batch = said.map(([encoded]) => encoded)
+      on.sizes = said.map(([, size]) => size)
       on.takes = unfit.most
       put(on, word({ lost: true }))
       flush(on)
