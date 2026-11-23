@@ -48,7 +48,7 @@ and so can keep all of it in order.
   waited for, and go at once.
 - **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number: a
   `TypeError` for one that cannot be encoded, a `RangeError` for one larger than a frame may be
-  (`bound.frame`, 64 MiB unless given). The link goes on, with nothing missing before the next frame. Through
+  (`bound.frame`, 64 MiB unless given) or sent with a cause longer than 1024 bytes. The link goes on, with nothing missing before the next frame. Through
   `join`, the one ask or view it belonged to fails, and no other. `prepare(frame)` encodes a frame now, to be
   sent later without being encoded again: what a peer holds for its views is refused where it was said, and
   crosses as it was when it was said.
@@ -56,7 +56,7 @@ and so can keep all of it in order.
   message, unless it is longer than a part (`part`, 1 MiB unless given). Where what carries it takes no message
   that long (`Transport.most`), or the other end says it takes none that long (each says so in its hello), it
   crosses as the fewest that fit, cut between what was said, in order: a link never hands over more than is
-  taken. What takes no message as long as a frame the link may send is not carried on at all: `link`, `carry`
+  taken. What takes no message as long as a part and what goes with one is not carried on at all: `link`, `carry`
   and `accept` throw as it is handed over. A frame longer than a part crosses as parts, each numbered, and is
   handed over whole in the place of its first; a resume picks up within it.
 - **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.
@@ -88,8 +88,8 @@ and so can keep all of it in order.
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
-  says another number is closed on, naming both. So is one that takes no message as long as a frame this end may
-  send (`too narrow`).
+  says another number is closed on, naming both. So is one that takes no message as long as this end may need for
+  a part and what goes with one (`too narrow`).
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
   that cannot be put into text is refused with a `TypeError` of the link's own.
 - **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and
@@ -163,7 +163,7 @@ order, until it closes. Four are here, and none imports what it is carried on:
 
 | | Carried on |
 |---|---|
-| `socket(ws)` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. What is sent while it is opening waits for it to open |
+| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` is the longest message the server takes, where it has a limit: the link cuts to it. What is sent while it is opening waits for it to open |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
 | `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed. A link carried on it is told `most`, and sends nothing longer |
 | `memoryPair()` | Two ends in memory, for specs |

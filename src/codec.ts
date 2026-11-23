@@ -48,25 +48,26 @@ const unitBytes = (text: string, at: number): number => {
   return unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(at + 1) & 0xfc00) === 0xdc00 ? 4 : 3
 }
 
-/** Pieces of a message, each no more than `most` bytes. Text is cut between characters, never inside one. */
-export const cut = (message: Message, most: number): Message[] => {
-  const pieces: Message[] = []
-  if (typeof message !== 'string') {
-    for (let at = 0; at < message.byteLength; at += most) pieces.push(message.subarray(at, at + most))
-    return pieces
-  }
-  let from = 0
+/**
+ * How much of a message, from its start, is no more than `most` bytes: in units of text, or in bytes. Text is cut
+ * between characters, never inside one, and at least one character is taken however long it is.
+ */
+export const head = (message: Message, most: number): number => {
+  if (typeof message !== 'string') return Math.max(1, Math.min(message.byteLength, most))
   let bytes = 0
-  for (let at = 0; at < message.length;) {
+  let at = 0
+  while (at < message.length) {
     const size = unitBytes(message, at)
-    const units = size === 4 ? 2 : 1
-    if (bytes + size > most && at > from) { pieces.push(message.slice(from, at)); from = at; bytes = 0 }
+    if (bytes + size > most && at > 0) break
     bytes += size
-    at += units
+    at += size === 4 ? 2 : 1
   }
-  pieces.push(message.slice(from))
-  return pieces
+  return at
 }
+/** A message from `from` on, or up to `to`: in units of text, or in bytes. */
+export const slice = (message: Message, from: number, to?: number): Message => (typeof message === 'string' ? message.slice(from, to) : message.subarray(from, to))
+/** How long a message is, in what `head` counts in. */
+export const lengthOf = (message: Message): number => (typeof message === 'string' ? message.length : message.byteLength)
 
 /** The pieces of a message, put back together. */
 export const joined = (pieces: readonly Message[]): Message => {

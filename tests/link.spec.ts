@@ -772,7 +772,7 @@ describe('the longest message an end takes', () => {
   })
 
   it('ends the link of an end that opened the connection, saying both, when it is less than a frame that end may send', async () => {
-    for (const [most, ending] of [[LEAST, []], [LEAST - 1, [{ why: 'too narrow', most: LEAST - 1, frame: 1024 }]]] as const) {
+    for (const [most, ending] of [[LEAST, []], [LEAST - 1, [{ why: 'too narrow', most: LEAST - 1, needs: LEAST }]]] as const) {
       const { bare, right, texts } = facingBare()
       const a = link(right, { bound })
       const ended: Ending[] = []
