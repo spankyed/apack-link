@@ -137,13 +137,21 @@ describe('a link', () => {
 
   it('hands nothing to what carries it once it has closed', () => {
     const texts: string[] = []
-    const a = link({ send: (text) => { texts.push(text) }, onText: () => {}, onClose: () => {}, close: () => {} })
+    const a = link({ send: (text) => { texts.push(text as string) }, onData: () => {}, onClose: () => {}, close: () => {} })
     a.send(tell('before'))
     a.close()
     a.send(tell('after'))
     a.close('ended')
     // What was sent before it closed left as it closed, and nothing after.
     expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('before') }]])
+  })
+
+  it('takes a batch that arrives as bytes', async () => {
+    const { bare, heard, ended } = facing()
+    bare.send(new TextEncoder().encode(wire({ link: 1 }, { seq: 1, frame: tell('as bytes ✓') })))
+    await turn()
+    expect(told(heard)).toEqual(['as bytes ✓'])
+    expect(ended).toEqual([])
   })
 
   it('is closed by what carries it going, after what was sent before it went', async () => {
@@ -163,7 +171,7 @@ describe('one write a turn', () => {
     const [left, right] = memoryPair()
     const texts: string[] = []
     const send = left.send
-    left.send = (text) => { texts.push(text); send(text) }
+    left.send = (text) => { texts.push(text as string); send(text) }
     return { left, right, texts }
   }
 
@@ -203,7 +211,7 @@ describe('one write a turn', () => {
     const [left, right] = memoryPair()
     const texts: string[] = []
     const send = left.send
-    left.send = (text) => { texts.push(text); send(text) }
+    left.send = (text) => { texts.push(text as string); send(text) }
     const turns: Array<() => void> = []
     const a = link(left, { later: (run) => { turns.push(run) } })
     const heard: Frame[] = []
@@ -238,7 +246,7 @@ describe('hello', () => {
   it('is the first thing each end says', async () => {
     const [bare, right] = memoryPair()
     const texts: string[] = []
-    bare.onText((text) => { texts.push(text) })
+    bare.onData((text) => { texts.push(text as string) })
     link(right).send(tell('after'))
     await turn()
     expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('after') }]])

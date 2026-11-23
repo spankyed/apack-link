@@ -7,7 +7,8 @@ any two things that run states. As a package, `@apackdev/link`.
 
 Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
 peer that matches asks to answers and views to what they show and holds what a system says until its views have
-caught up, a pair of ends in memory to run it on, and a schedule that runs a spec under every order. Nothing in apack uses it yet.
+caught up, things to carry it on (a WebSocket, a message port, a stream of bytes, and two ends in memory), and a
+schedule that runs a spec under every order. Nothing in apack uses it yet.
 
 ## Why it exists
 
@@ -76,7 +77,17 @@ A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `
 shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
 the other end after the views that end follows show what the answer is about.
 
-A `Transport` is anything that takes text at one end and hands it over at the other, in order, until it closes.
+A `Transport` is anything that takes a message, text or bytes, at one end and hands it over at the other, in
+order, until it closes. Four are here, and none imports what it is carried on:
+
+| | Carried on |
+|---|---|
+| `socket(ws)` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. What is sent while it is opening waits for it to open |
+| `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
+| `stream(duplex)` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it |
+| `memoryPair()` | Two ends in memory, for specs |
+
+Whoever holds the socket opens it, with whatever it needs to be let in.
 
 ## Specs under every order
 
@@ -109,6 +120,10 @@ import { everyOrder, memoryEnds, peers } from '@apackdev/link/testing'
 for (const scenario of [...peers, ...hold]) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
 ```
 
+Over something real, `carried(schedule, [left, right])` puts what arrives at each end into a lane of its direction,
+and a run waits for what is on its way: this package runs every scenario over a WebSocket, a message port and a
+stream of bytes as well as over memory.
+
 `withoutTheHold` is the hold's scenarios with views that offer no `caughtUp`: each fails in some order, which is
 how the scenarios are known to be able to.
 
@@ -128,7 +143,7 @@ be done:
 1. Peers: asks matched to their answers, views followed and let go. **Built.**
 2. The hold: what a step sends a window waits until that window's views have caught up. **Built.**
 3. One write a turn. **Built.**
-4. A socket and a message port to be carried on.
+4. A socket, a message port and a stream of bytes to be carried on. **Built.**
 5. A connection that comes back, with nothing taken twice.
 6. A bound on what waits, with a view's overtaken update let go.
 7. Knowing the other end is there by what it does, never by a time to reply.

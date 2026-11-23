@@ -1,4 +1,7 @@
 export type { Failure, Frame, Id, Sent } from './frames.ts'
 export { LINK, link, type Bye, type Ending, type Link, type Options } from './link.ts'
 export { join, type Following, type Outcome, type Port } from './peer.ts'
-export { memoryPair, type Transport } from './transport.ts'
+export { port, type MessagePortLike } from './port.ts'
+export { socket, type WebSocketLike } from './socket.ts'
+export { stream, type DuplexLike } from './stream.ts'
+export { memoryPair, type Message, type Transport } from './transport.ts'

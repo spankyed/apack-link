@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 3.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 4.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -227,6 +227,10 @@ Done when: a thousand frames sent in one turn are one text and arrive in order, 
 leaves no gap, and the specs of steps 1 and 2 pass unchanged.
 
 ## Step 4. Things to be carried on
+
+Built: `src/socket.ts`, `src/port.ts`, `src/stream.ts`. `Transport` is `send(message)`, `onData`, `onClose`,
+`close`, with `Message = string | Uint8Array`. The scenarios run over each in `tests/scenarios.spec.ts`: every order
+over memory, forty over each of the others, since a real connection per order makes every order too slow to run.
 
 - **A socket**: `socket(webSocketLike): Transport`, taking anything with `send`, `close` and the events a browser's
   `WebSocket` and Node's `ws` share. Neither is imported. The token apack sends as a subprotocol is the host's to

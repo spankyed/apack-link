@@ -23,6 +23,12 @@ export interface Schedule {
   work<T>(label: string, value: T): Promise<T>
   /** The same, for work that fails. */
   breaks(label: string, error: Error): Promise<never>
+  /**
+   * Something outside the schedule is under way, such as a message on a real socket: the run does not come to rest
+   * until what is returned is called. What it does when it lands, it puts into a lane, and the schedule chooses as
+   * ever. Nothing outside is chosen: it lands when it lands.
+   */
+  outside(): () => void
 }
 
 /** What a scenario is: it builds what it checks from the schedule, and returns what must hold once all is at rest. */
@@ -51,10 +57,25 @@ async function once(scenario: Scenario, choose: (depth: number, among: number) =
   const lanes = new Map<Lane, Task[]>()
   const into = (lane: Lane, task: Task): void => { (lanes.get(lane) ?? lanes.set(lane, []).get(lane)!).push(task) }
   const schedule: Schedule = {
+    outside: () => () => {},
     later: (lane, run) => into(lane, { what: lane.label, run }),
     does: (label, ...steps) => { const lane: Lane = { label }; for (const [what, run] of steps) into(lane, { what: `${label}: ${what}`, run }) },
     work: (label, value) => new Promise((resolve) => { into({ label }, { what: label, run: () => resolve(value) }) }),
     breaks: (label, error) => new Promise((_, reject) => { into({ label }, { what: label, run: () => reject(error) }) }),
+  }
+  let away = 0
+  let landed: (() => void) | undefined
+  schedule.outside = () => {
+    away++
+    let done = false
+    return () => {
+      if (done) return
+      done = true
+      away--
+      const wake = landed
+      landed = undefined
+      wake?.()
+    }
   }
   const made: Run = { choices: [], counts: [], taken: [] }
   hold.ref?.()
@@ -63,6 +84,7 @@ async function once(scenario: Scenario, choose: (depth: number, among: number) =
     for (;;) {
       await settled()
       const ready = [...lanes.values()].filter((waiting) => waiting.length)
+      if (!ready.length && away) { await new Promise<void>((resolve) => { landed = resolve }); continue }
       if (!ready.length) break
       if (made.taken.length >= RUNAWAY) throw new Error(`Still going after ${RUNAWAY} things: something never comes to rest`)
       // Only a real choice is written down, so that the choices are as short as the ordering they name.

@@ -91,8 +91,10 @@ export function link(transport: Transport, options: Options = {}): Link {
     for (const ended of ends) ended(why)
   }
   transport.onClose(() => end({ why: 'closed' }))
-  transport.onText((text) => {
+  const decoder = new TextDecoder()
+  transport.onData((message) => {
     if (ending) return
+    const text = typeof message === 'string' ? message : decoder.decode(message)
     const unknown = (): void => end({ why: 'not a frame', size: text.length })
     let batch: unknown
     try { batch = JSON.parse(text) } catch { unknown(); return }

@@ -1,13 +1,7 @@
+// The hold's scenarios are run with the others in carriers.spec.ts. Here they are shown able to fail: with views
+// that offer no `caughtUp`, there is an order in which each does.
 import { describe, expect, it } from 'vitest'
-import { everyOrder, explore, hold, memoryEnds, withoutTheHold } from '../src/testing/index.ts'
-
-describe('the hold, over memory', () => {
-  for (const scenario of hold) {
-    it(scenario.name, async () => {
-      expect(await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))).toBeGreaterThan(0)
-    })
-  }
-})
+import { explore, memoryEnds, withoutTheHold } from '../src/testing/index.ts'
 
 describe('without the hold', () => {
   for (const scenario of withoutTheHold) {

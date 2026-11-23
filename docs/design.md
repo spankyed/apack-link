@@ -131,6 +131,22 @@ A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing
 - **Closing is in order too.** What an end sent before it closed is handed over before the other end hears that
   it closed. A socket does this, and the ends in memory do: it is what lets a goodbye arrive.
 
+## What a link is carried on
+
+A `Transport` hands over whole messages, `string | Uint8Array`, in order, and says once when nothing more will
+arrive. A link sends text today and takes either: bytes are read as UTF-8.
+
+- **`socket`**, over anything shaped like a browser's `WebSocket` (Node's `ws` is). Sent while opening, it waits
+  and leaves in order once open. Bytes arrive as `ArrayBuffer` and are handed over as `Uint8Array`.
+- **`port`**, over a message port that takes listeners as an event target (a browser's, Node's) or as an emitter
+  handing over an event (Electron's). A port closing is not heard at the other end everywhere, so closing posts
+  `null` first, after what was sent before it; a port's own `close` event is heard as well.
+- **`stream`**, over a byte stream with no edges between messages. Each message crosses as one byte for its kind
+  (0 text, 1 bytes), four for its length, most significant first, and the message. What arrives in pieces is put
+  together and what arrives together taken apart. A kind that is neither closes it.
+
+Which of these apack's windows and tools are carried on is apack's to decide; a link is the same over each.
+
 ## How it is known to hold
 
 Where order matters, a spec is run under every order. `src/testing/schedule.ts` stands in for the event loop:
@@ -139,6 +155,12 @@ choosing between lanes. Each direction of a link in memory is a lane, and a spec
 itself. It is exported as `@apackdev/link/testing`, since from step 1 on the scenarios are a kit: written against
 what the package exports and nothing else, to be run over any pair of ends, so that another implementation of an
 end is held to the same file.
+
+`tests/scenarios.spec.ts` runs every scenario over memory under every order, and over a WebSocket (a real `ws`
+server and client), a `worker_threads` message port and a `node:net` socket path under forty orders each, from a
+seed. Over something real, `carried` (`src/testing/carried.ts`) puts what arrives at each end into a lane of its
+direction, so the schedule chooses among what has arrived, and `Schedule.outside` keeps a run from coming to rest
+while a message or a close is on its way.
 
 ## What was read, and what was taken from it
 
@@ -185,8 +207,8 @@ something arriving done in a lane of its own, so it falls in every place among w
 ## Order of work
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
-memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold) and step 3 (one write a
-turn).
+memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
+and step 4 (a socket, a port and a stream).
 
 ## What is not decided
 
