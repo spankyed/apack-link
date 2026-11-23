@@ -1,7 +1,7 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and step 0. No
-step after it is started.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 and
+1. No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
 build, in what order, what each step has to hold, and how each is known to be done. `README.md` says what a link is
@@ -139,6 +139,12 @@ Done when: the specs there are pass under `explore` where they have more than on
 `{ link: 2 }` is refused by name, and each kind of goodbye ends the other end saying which it was.
 
 ## Step 1. Peers
+
+Built. `src/peer.ts` is `join`, `Port`, `Following` and `Outcome`; `over` is the ninth frame. The scenarios are
+`peers` in `src/testing/scenarios.ts`, exported from `@apackdev/link/testing` with `desk` (a system that notes
+what reaches it), `asking`, `watching` and `memoryEnds`. Beyond what is below: a system that throws where it is
+asked or followed fails that one; a value a view shows that cannot be sent ends the view `over`; and an `ask` or
+`follow` with an id already used is not taken.
 
 `src/peer.ts`, `join`.
 

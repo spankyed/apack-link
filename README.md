@@ -6,8 +6,8 @@ any two things that run states. As a package, `@apackdev/link`.
 **What one system sends another arrives once, in the order it was sent, or the sender is told it did not.**
 
 Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
-pair of ends in memory to run it on, and a schedule that runs a spec under every order. Nothing in apack uses it
-yet.
+peer that matches asks to answers and views to what they show, a pair of ends in memory to run it on, and a
+schedule that runs a spec under every order. Nothing in apack uses it yet.
 
 ## Why it exists
 
@@ -30,8 +30,7 @@ and so can keep all of it in order.
 | `progress` | What the one answering says before it answers |
 | `left` | Whoever asked has gone, and the work for them can stop |
 | `follow`, `shown`, `unfollow` | A view: its result, and each changed result after it |
-
-A ninth, for a view the one running it ends, is planned.
+| `over` | The one running a view has ended it, and why |
 
 ## What holds
 
@@ -39,7 +38,8 @@ A ninth, for a view the one running it ends, is planned.
   frame lost, doubled or out of place closes the link, saying why.
 - **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
   number. The link goes on, with nothing missing before the next frame.
-- **Ending is said once, to both ends**, with why. An end going on purpose says goodbye first, as `restarting` or
+- **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
+  said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
   says another number is closed on, naming both.
@@ -47,16 +47,26 @@ A ninth, for a view the one running it ends, is planned.
 
 ## Use
 
+A system offers a `Port`: what it can be told, asked and have followed. `join` puts one at an end of a link and
+returns the port of the system at the other end.
+
 ```ts
-import { link, memoryPair } from '@apackdev/link'
+import { join, link, memoryPair, type Port } from '@apackdev/link'
 
+const backend: Port = {
+  tell: (to, event) => {},
+  ask: (to, name, args, heard, ended) => { ended({ ok: true, value: { id: 'THR-1' } }); return () => {} },
+  follow: (feature, view, args, shown, over) => { shown(0); return { stop: () => {} } },
+}
 const [left, right] = memoryPair()
-const window = link(left)
-const backend = link(right)
+join(link(right), backend)
+const toBackend = join(link(left), { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) })
 
-backend.onFrame((frame) => { /* an ask, a tell, a follow */ })
-window.send({ kind: 'ask', id: 1, to: 'threads', name: 'CREATE', args: { topic: 'one' } })
+toBackend.ask('threads', 'CREATE', { topic: 'one' }, (update) => {}, (outcome) => console.log(outcome))
 ```
+
+What `ask` returns is to be called when whoever asked has gone: the other end is told, and nothing more is heard
+for it. A `Following`'s `stop` does the same for a view.
 
 A `Transport` is anything that takes text at one end and hands it over at the other, in order, until it closes.
 
@@ -81,6 +91,16 @@ await everyOrder((schedule) => {
 
 A failure names the order that led to it and the choices to `replay` it with.
 
+The scenarios are a kit. Each in `peers` is written against what the package exports and nothing else, and plays
+over whatever two ends it is handed, so an end built another way, or carried on something else, is held to the
+same file:
+
+```ts
+import { everyOrder, memoryEnds, peers } from '@apackdev/link/testing'
+
+for (const scenario of peers) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
+```
+
 ## Not its job
 
 - **A general RPC library.** It carries what states say to each other and nothing else.
@@ -94,7 +114,7 @@ A failure names the order that led to it and the choices to `replay` it with.
 be done:
 
 0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye. **Built.**
-1. Peers: asks matched to their answers, views followed and let go.
+1. Peers: asks matched to their answers, views followed and let go. **Built.**
 2. The hold: what a step sends a window waits until that window's views have caught up.
 3. One write a turn.
 4. A socket and a message port to be carried on.

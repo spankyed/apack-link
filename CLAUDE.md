@@ -11,8 +11,10 @@ know before changing it.
 - `src/link.ts` is one end: frames numbered as they are sent, taken only in turn, and the link closed where one
   arrives out of place.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory.
+- `src/peer.ts` is `join`: what gives a link's ids their meaning, between a link and the `Port` a system offers.
 - `src/testing/` is what specs are written with, exported as `@apackdev/link/testing`: a schedule that runs a
-  scenario under every order, and two ends in memory whose directions are lanes of it.
+  scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios every end is
+  held to (`scenarios.ts`), written against what the package exports and nothing else.
 - `docs/design.md` is why a link exists and what holds; `docs/plan.md` is what is to be built, a step at a time,
   and `docs/deferred/` what is left out of it and why.
 
