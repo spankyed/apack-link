@@ -328,22 +328,25 @@ describe('what a link needs of what carries it, with frames in parts', () => {
       const { heard, ended } = watched(listen(right, options))
       // And one short enough to cross whole, beside the longest cause there may be.
       const whole = tell('x')
+      // And one that would cross whole by itself, and not beside what caused it.
+      const beside = tell('y'.repeat(900))
       a.send(largest, { cause })
       a.send(whole, { cause })
-      await until(() => heard.length === 2 || ended.length > 0)
+      a.send(beside, { cause })
+      await until(() => heard.length === 3 || ended.length > 0)
       expect([part, ended]).toEqual([part, []])
-      expect(heard).toEqual([{ frame: largest, cause }, { frame: whole, cause }])
+      expect(heard).toEqual([{ frame: largest, cause }, { frame: whole, cause }, { frame: beside, cause }])
       expect([part, Math.max(...writes) <= LEAST]).toEqual([part, true])
     }
   })
 
   it('is as much of a part as there is room for: parts are no shorter than what carries them makes them', async () => {
-    const sizes = async (most: number, part: number | undefined): Promise<number[]> => {
+    const sizes = async (most: number, part: number | undefined, caused?: string): Promise<number[]> => {
       const { transport, right } = narrow(most)
       const a = dial(transport, { ...options, ...(part ? { part } : {}) })
       const crossed: number[] = []
       right.onData((message) => { for (const said of JSON.parse(message as string) as Array<{ data?: string }>) if (said.data !== undefined) crossed.push(bytes(JSON.stringify(said.data))) })
-      a.send(tell('x'.repeat(50_000)))
+      a.send(tell('x'.repeat(50_000)), caused === undefined ? {} : { cause: caused })
       await turn()
       return crossed
     }
@@ -351,6 +354,11 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     const fitted = await sizes(5000, undefined)
     expect(Math.max(...fitted)).toBeLessThanOrEqual(5000 - 130)
     expect(Math.min(...fitted.slice(0, -1))).toBeGreaterThan(5000 - 130 - 8)
+    // What caused the frame crosses beside its first part, which is that much shorter, and beside no other.
+    const [first, ...after] = await sizes(5000, undefined, cause)
+    expect(first).toBeLessThanOrEqual(5000 - 130 - 1024)
+    expect(first).toBeGreaterThan(5000 - 130 - 1024 - 8)
+    expect(Math.min(...after.slice(0, -1))).toBeGreaterThan(5000 - 130 - 8)
     const capped = await sizes(5000, 2000)
     expect(Math.max(...capped)).toBeLessThanOrEqual(2000)
     expect(Math.min(...capped.slice(0, -1))).toBeGreaterThan(2000 - 8)
@@ -398,10 +406,27 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     await turn()
     bare.send(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most: 3000 }]))
     await turn()
-    expect(ended).toEqual([{ why: 'too narrow', most: 3000, needs: expect.any(Number) }])
-    const needs = (ended[0] as { needs: number }).needs
-    // What it kept, and the batch's two.
-    expect([needs > 5000, needs <= Math.max(...sent)]).toEqual([true, true])
+    // What it kept, and the batch's two: the frame as it was numbered, which is what would be sent again.
+    const texts: string[] = []
+    const again = memoryPair()
+    again[0].onData((message) => { texts.push(message as string) })
+    const other = dial(again[1], options)
+    other.send(tell('x'.repeat(5000)))
+    await turn()
+    const kept = JSON.stringify((JSON.parse(texts[0]!) as unknown[])[1]).length
+    expect(sent.length).toBeGreaterThan(0)
+    expect(ended).toEqual([{ why: 'too narrow', most: 3000, needs: kept + 2 }])
+    // One byte short of that it is too narrow, and at that it is not.
+    for (const [most, endings] of [[kept + 1, 1], [kept + 2, 0]] as const) {
+      const [far, near] = memoryPair()
+      const one = dial(near, options)
+      const at = watched(one)
+      one.send(tell('x'.repeat(5000)))
+      await turn()
+      far.send(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most }]))
+      await turn()
+      expect([most, at.ended.length]).toEqual([most, endings])
+    }
   })
 
   it('is no less than what a link keeps was cut for, on a connection that comes back, and anything once that has been taken', async () => {
