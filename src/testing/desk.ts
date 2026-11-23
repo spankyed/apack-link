@@ -34,16 +34,16 @@ export interface Desk {
 }
 
 /**
- * A system that notes what reaches it. `ask` and `follow` are called as each arrives, to answer or show there and
- * then or to put it off into a lane; `follow` may return what the view's `Following` has beside `stop`.
+ * A system that notes what reaches it. `tell`, `ask` and `follow` are called as each arrives, to answer or show
+ * there and then or to put it off into a lane; `follow` may return what the view's `Following` has beside `stop`.
  */
-export function desk(does: { ask?(asked: Asked): void; follow?(viewed: Viewed): Pick<Following, 'caughtUp'> | void } = {}): Desk {
+export function desk(does: { tell?(to: string, event: unknown): void; ask?(asked: Asked): void; follow?(viewed: Viewed): Pick<Following, 'caughtUp'> | void } = {}): Desk {
   const made: Desk = {
     told: [],
     asks: [],
     views: [],
     port: {
-      tell: (to, event) => { made.told.push({ to, event }) },
+      tell: (to, event) => { made.told.push({ to, event }); does.tell?.(to, event) },
       ask: (to, name, args, heard, ended) => {
         const asked: Asked = { to, name, args, heard, ended, left: 0 }
         made.asks.push(asked)

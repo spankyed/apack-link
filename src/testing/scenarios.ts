@@ -11,6 +11,7 @@ import { join } from '../peer.ts'
 import { holds, same } from './check.ts'
 import { asking, desk, watching } from './desk.ts'
 import type { Schedule } from './schedule.ts'
+import { made } from './views.ts'
 
 /** Two ends of one link. */
 export interface Ends { readonly a: Link; readonly b: Link }
@@ -468,3 +469,258 @@ export const peers: readonly KitScenario[] = [
     },
   },
 ]
+
+/**
+ * A window that follows views of how many things there are, and notes, for each answer and each tell it hears,
+ * what its views showed then. Every answer and tell says how many there were at least when it was sent, so a
+ * window told of a thing its views do not show yet is found.
+ */
+const window = (port: () => ReturnType<typeof join>) => {
+  const views: Array<ReturnType<typeof watching>> = []
+  const behind: string[] = []
+  const heard: string[] = []
+  const shows = (): number => Math.min(...views.map((view) => (view.shown.at(-1) as number | undefined) ?? -1))
+  const check = (what: string, atLeast: number): void => {
+    heard.push(what)
+    if (shows() < atLeast) behind.push(`${what}, while its views showed ${shows()}`)
+  }
+  return {
+    desk: desk({ tell: (_, event) => { const { what, atLeast } = event as { what: string; atLeast: number }; check(`told ${what}`, atLeast) } }),
+    follow: (view = 'count') => { views.push(watching(port(), 'things', view, {})) },
+    /** Asks for a thing to be made, and does `then` once it is answered. */
+    ask: (what: string, then?: () => void) => {
+      port().ask('things', 'MAKE', what, () => {}, (outcome) => {
+        if (outcome.ok) check(`answered ${what}`, (outcome.value as { atLeast: number }).atLeast)
+        else heard.push(`failed ${what}`)
+        then?.()
+      })
+    },
+    views,
+    behind,
+    heard,
+  }
+}
+
+/** A backend whose `MAKE` makes a thing, tells the window it did, and answers. */
+const backend = (things: ReturnType<typeof made>, toWindow: () => ReturnType<typeof join>) => desk({
+  ask: (asked) => {
+    const atLeast = things.make()
+    toWindow().tell('panel', { what: String(asked.args), atLeast })
+    asked.ended({ ok: true, value: { atLeast } })
+  },
+  follow: (viewed) => things.follow(viewed),
+})
+
+/** The hold's scenarios that need it: each fails in some order with views that offer no `caughtUp`. */
+const needsTheHold = (offers: boolean): KitScenario[] => [
+  {
+    name: 'asked for one thing and then another, the asker is answered and told only after its view shows it',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule, { offers })
+      let toBackend!: ReturnType<typeof join>
+      let toWindow!: ReturnType<typeof join>
+      const it = window(() => toBackend)
+      toBackend = join(a, it.desk.port)
+      toWindow = join(b, backend(things, () => toWindow).port)
+      it.follow()
+      it.ask('one', () => it.ask('two'))
+      return () => {
+        same(it.behind, [], 'what the window heard before its views showed it')
+        same([...it.heard].sort(), ['answered one', 'answered two', 'told one', 'told two'], 'what the window heard')
+        same(it.views[0]!.shown.at(-1), 2, 'what the view shows at the end')
+      }
+    },
+  },
+  {
+    name: 'with two views, the asker is answered and told only after both show it',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule, { offers })
+      let toBackend!: ReturnType<typeof join>
+      let toWindow!: ReturnType<typeof join>
+      const it = window(() => toBackend)
+      toBackend = join(a, it.desk.port)
+      toWindow = join(b, backend(things, () => toWindow).port)
+      it.follow()
+      it.follow()
+      it.ask('one')
+      return () => {
+        same(it.behind, [], 'what the window heard before its views showed it')
+        same([...it.heard].sort(), ['answered one', 'told one'], 'what the window heard')
+      }
+    },
+  },
+  {
+    name: 'asked for two at once, the asker is answered and told of each only after its view shows it',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule, { offers })
+      let toBackend!: ReturnType<typeof join>
+      let toWindow!: ReturnType<typeof join>
+      const it = window(() => toBackend)
+      toBackend = join(a, it.desk.port)
+      toWindow = join(b, backend(things, () => toWindow).port)
+      it.follow()
+      it.ask('one')
+      it.ask('two')
+      return () => {
+        same(it.behind, [], 'what the window heard before its views showed it')
+        same([...it.heard].sort(), ['answered one', 'answered two', 'told one', 'told two'], 'what the window heard')
+      }
+    },
+  },
+  {
+    name: 'what is said after a round of the hold began waits for the next round',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule, { offers })
+      let toBackend!: ReturnType<typeof join>
+      let toWindow!: ReturnType<typeof join>
+      const it = window(() => toBackend)
+      toBackend = join(a, it.desk.port)
+      // Told of nothing new, then something is made, then told of it: the second tell waits on the view's change.
+      toWindow = join(b, desk({
+        ask: (asked) => {
+          toWindow.tell('panel', { what: 'before', atLeast: 0 })
+          const atLeast = things.make()
+          toWindow.tell('panel', { what: 'after', atLeast })
+          asked.ended({ ok: true, value: { atLeast } })
+        },
+        follow: (viewed) => things.follow(viewed),
+      }).port)
+      it.follow()
+      it.ask('one')
+      return () => {
+        same(it.behind, [], 'what the window heard before its views showed it')
+        same(it.heard, ['told before', 'told after', 'answered one'], 'what the window heard')
+      }
+    },
+  },
+]
+
+/** Step 2's: what a system says waits until the views it runs for the other end have caught up. */
+export const hold: readonly KitScenario[] = [
+  ...needsTheHold(true),
+  {
+    name: 'an end that runs no views for the other holds nothing',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      let toWindow!: ReturnType<typeof join>
+      // The window follows nothing, so a view that would never call back is never asked.
+      const backendDesk = desk({ ask: (asked) => { toWindow.tell('panel', 'made'); asked.ended({ ok: true, value: 'made' }) }, follow: (viewed) => things.follow(viewed) })
+      toWindow = join(b, backendDesk.port)
+      const window = desk()
+      const made_ = asking(join(a, window.port), 'things', 'MAKE', {})
+      return () => {
+        same(made_.ended, [{ ok: true, value: 'made' }], 'how the ask ended')
+        same(window.told, [{ to: 'panel', event: 'made' }], 'what the window was told')
+        same(things.soon, [], 'what the views were asked')
+      }
+    },
+  },
+  {
+    name: 'a view stopped while it is waited on does not hold what waits',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      const backendDesk = desk({ ask: (asked) => { asked.ended({ ok: true, value: 'made' }) }, follow: (viewed) => things.follow(viewed) })
+      join(b, backendDesk.port)
+      const toBackend = join(a, desk().port)
+      const view = watching(toBackend, 'things', 'stuck', {})
+      const ask = asking(toBackend, 'things', 'MAKE', {})
+      schedule.does('the window', ['lets the view go', () => view.stop()])
+      return () => { same(ask.ended, [{ ok: true, value: 'made' }], 'how the ask ended') }
+    },
+  },
+  {
+    name: 'a view ended by the one running it while it is waited on does not hold what waits',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      const ends = { label: 'the view ends' }
+      const backendDesk = desk({
+        ask: (asked) => { asked.ended({ ok: true, value: 'made' }) },
+        follow: (viewed) => { schedule.later(ends, () => viewed.over({ kind: 'reloaded', message: 'The pack was reloaded' })); return things.follow(viewed) },
+      })
+      join(b, backendDesk.port)
+      const toBackend = join(a, desk().port)
+      const view = watching(toBackend, 'things', 'stuck', {})
+      const ask = asking(toBackend, 'things', 'MAKE', {})
+      return () => {
+        same(ask.ended, [{ ok: true, value: 'made' }], 'how the ask ended')
+        same(view.over, [{ kind: 'reloaded', message: 'The pack was reloaded' }], 'how the view ended')
+      }
+    },
+  },
+  {
+    name: 'a view followed after something was said is not waited on for it',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      const backendDesk = desk({ ask: (asked) => { asked.ended({ ok: true, value: 'made' }) }, follow: (viewed) => things.follow(viewed) })
+      join(b, backendDesk.port)
+      const toBackend = join(a, desk().port)
+      watching(toBackend, 'things', 'count', {})
+      const ask = asking(toBackend, 'things', 'MAKE', {})
+      // Followed after the ask, so it arrives after the answer was said. It never calls back.
+      const late = watching(toBackend, 'things', 'stuck', {})
+      return () => {
+        same(ask.ended, [{ ok: true, value: 'made' }], 'how the ask ended')
+        same(late.shown, [0], 'what the late view showed')
+      }
+    },
+  },
+  {
+    name: 'the views are asked to be soon for an answer, and not for progress alone',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      const works = { label: 'the backend works' }
+      let answered = false
+      let beforeTheAnswer = 0
+      const backendDesk = desk({
+        ask: (asked) => {
+          schedule.later(works, () => asked.heard('one'))
+          schedule.later(works, () => asked.heard('two'))
+          schedule.later(works, () => { beforeTheAnswer = things.soon.length; answered = true; asked.ended({ ok: true, value: 'made' }) })
+        },
+        follow: (viewed) => things.follow(viewed),
+      })
+      join(b, backendDesk.port)
+      const toBackend = join(a, desk().port)
+      watching(toBackend, 'things', 'count', {})
+      const ask = asking(toBackend, 'things', 'MAKE', {})
+      return () => {
+        holds(answered, 'the ask was answered')
+        same(things.soon.slice(0, beforeTheAnswer), things.soon.slice(0, beforeTheAnswer).map(() => false), 'soon, for progress alone')
+        holds(beforeTheAnswer >= 2, 'the views were asked for each progress')
+        same(things.soon.slice(beforeTheAnswer), [true], 'soon, for the answer')
+        same(ask.heard, ['one', 'two'], 'the progress heard')
+      }
+    },
+  },
+  {
+    name: 'what cannot be sent while things wait is refused where it was said, and what waits still goes in order',
+    play: (schedule, { a, b }) => {
+      const things = made(schedule)
+      let toWindow!: ReturnType<typeof join>
+      const thrown: string[] = []
+      const window = desk()
+      const toBackend = join(a, window.port)
+      toWindow = join(b, desk({
+        ask: (asked) => {
+          toWindow.tell('panel', 'first')
+          try { toWindow.tell('panel', { big: 1n }) } catch (error) { thrown.push((error as Error).name) }
+          if (asked.args === 'bad') asked.ended({ ok: true, value: { big: 1n } })
+          else { toWindow.tell('panel', 'last'); asked.ended({ ok: true, value: 'fine' }) }
+        },
+        follow: (viewed) => things.follow(viewed),
+      }).port)
+      watching(toBackend, 'things', 'count', {})
+      const bad = asking(toBackend, 'things', 'MAKE', 'bad')
+      const fine = asking(toBackend, 'things', 'MAKE', 'fine')
+      return () => {
+        same(thrown, ['TypeError', 'TypeError'], 'what telling what cannot be sent threw')
+        same(bad.ended, [{ ok: false, failure: { kind: 'failed', message: 'A value could not be sent' } }], 'how the ask whose answer could not be sent ended')
+        same(fine.ended, [{ ok: true, value: 'fine' }], 'how the next ask ended')
+        same(window.told.map((told) => told.event), ['first', 'first', 'last'], 'what the window was told')
+      }
+    },
+  },
+]
+
+/** The hold's scenarios with the hold taken out: views that offer no `caughtUp`. Each fails in some order. */
+export const withoutTheHold: readonly KitScenario[] = needsTheHold(false)

@@ -1,7 +1,7 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 and
-1. No step after them is started.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 2.
+No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
 build, in what order, what each step has to hold, and how each is known to be done. `README.md` says what a link is
@@ -176,6 +176,12 @@ Done when: those hold, and the mutants are caught: an answer delivered twice, an
 `left` not passed on, a frame for a forgotten id delivered.
 
 ## Step 2. The hold
+
+Built, in `join`. The scenarios are `hold` in `src/testing/scenarios.ts`, run against `made`
+(`src/testing/views.ts`), the stand-in for views; `withoutTheHold` is the same with views that offer no
+`caughtUp`, and each is shown to fail. Two things go beyond what is below: what is held is everything the system
+says, its own `ask`, `follow`, `left` and `unfollow` too, so that nothing it says passes something it said before;
+and `over`, like `shown`, is not held.
 
 What a system sends the other end waits until the views that end follows have caught up. In `join`.
 

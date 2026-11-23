@@ -6,8 +6,8 @@ any two things that run states. As a package, `@apackdev/link`.
 **What one system sends another arrives once, in the order it was sent, or the sender is told it did not.**
 
 Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
-peer that matches asks to answers and views to what they show, a pair of ends in memory to run it on, and a
-schedule that runs a spec under every order. Nothing in apack uses it yet.
+peer that matches asks to answers and views to what they show and holds what a system says until its views have
+caught up, a pair of ends in memory to run it on, and a schedule that runs a spec under every order. Nothing in apack uses it yet.
 
 ## Why it exists
 
@@ -36,6 +36,9 @@ and so can keep all of it in order.
 
 - **Order.** Every frame an end sends is numbered. The other end takes a frame only if it is the next one, and a
   frame lost, doubled or out of place closes the link, saying why.
+- **A window hears of a step after its views show it.** What a system says to the other end waits until the views
+  it runs for that end have caught up with what was kept before it was said. A view's own updates are what is
+  waited for, and go at once.
 - **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
   number. The link goes on, with nothing missing before the next frame.
 - **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
@@ -68,6 +71,10 @@ toBackend.ask('threads', 'CREATE', { topic: 'one' }, (update) => {}, (outcome) =
 What `ask` returns is to be called when whoever asked has gone: the other end is told, and nothing more is heard
 for it. A `Following`'s `stop` does the same for a view.
 
+A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `then` once this view has been
+shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
+the other end after the views that end follows show what the answer is about.
+
 A `Transport` is anything that takes text at one end and hands it over at the other, in order, until it closes.
 
 ## Specs under every order
@@ -98,8 +105,11 @@ same file:
 ```ts
 import { everyOrder, memoryEnds, peers } from '@apackdev/link/testing'
 
-for (const scenario of peers) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
+for (const scenario of [...peers, ...hold]) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
 ```
+
+`withoutTheHold` is the hold's scenarios with views that offer no `caughtUp`: each fails in some order, which is
+how the scenarios are known to be able to.
 
 ## Not its job
 
@@ -115,7 +125,7 @@ be done:
 
 0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye. **Built.**
 1. Peers: asks matched to their answers, views followed and let go. **Built.**
-2. The hold: what a step sends a window waits until that window's views have caught up.
+2. The hold: what a step sends a window waits until that window's views have caught up. **Built.**
 3. One write a turn.
 4. A socket and a message port to be carried on.
 5. A connection that comes back, with nothing taken twice.
