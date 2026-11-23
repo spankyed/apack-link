@@ -30,6 +30,8 @@ and so can keep all of it in order.
 | `left` | Whoever asked has gone, and the work for them can stop |
 | `follow`, `shown`, `unfollow` | A view: its result, and each changed result after it |
 
+A ninth, for a view the one running it ends, is planned.
+
 ## What holds
 
 - **Order.** Every frame an end sends is numbered. The other end takes a frame only if it is the next one, and a

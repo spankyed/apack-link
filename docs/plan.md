@@ -12,7 +12,8 @@ One thing is left out on purpose and has a plan of its own:
 
 ## What is being built
 
-A window and its backend each run states. What they say to each other is eight kinds of frame (`src/frames.ts`). A
+A window and its backend each run states. What they say to each other is eight kinds of frame (`src/frames.ts`),
+nine with step 1's. A
 link is to carry them so that:
 
 1. **Order.** What one end sends, the other takes in the order it was sent, whatever kind each frame is.
@@ -52,8 +53,8 @@ a system (the kernel's)          this repository                     what carrie
     tell(to: string, event: unknown): void
     /** Asks. `heard` takes what is said before the answer, `ended` how it ended. Returns what to call when whoever asked has gone. */
     ask(to: string, name: string, args: unknown, heard: (update: unknown) => void, ended: (outcome: Outcome) => void): () => void
-    /** Follows a view. `shown` takes its result and each changed result after it. */
-    follow(feature: string, view: string, args: unknown, shown: (update: unknown) => void): Following
+    /** Follows a view. `shown` takes its result and each changed result after it, `over` that it has ended and why. */
+    follow(feature: string, view: string, args: unknown, shown: (update: unknown) => void, over: (failure: { kind: string; message: string }) => void): Following
   }
   export interface Following {
     stop(): void
@@ -108,6 +109,15 @@ Small things every later step stands on.
   between lanes, `sample` under a seed's worth, `replay` one again. `memoryPair` already takes what says when a
   text arrives: given a lane of the schedule for each direction, a link's two directions and anything else a spec
   adds are run in every order.
+- **The scenarios are a kit, and not only this package's specs.** Every scenario from step 1 on is written
+  against `Port`, `Link` and `Transport` as they are exported and reaches into nothing else, and is exported from
+  `@apackdev/link/testing` to be run over any pair of ends it is handed. Another implementation of an end, in
+  another language behind a transport, is then held to the same file. WebSocket and WAMP each have such a suite,
+  and it is what keeps two implementations one protocol.
+- **What was read.** Before step 1, Meteor's DDP specification and the base protocol of the Language Server
+  Protocol (its requests, notifications, progress and cancelling); before step 5, MQTT's rules for a session.
+  `docs/design.md` gets a section saying what was taken from each and what was declined, with why, so that it is
+  not argued again.
 - **Hello.** The first thing each end sends is `{ link: 1 }`. An end that hears another number closes, with an
   ending that names both. The number is 1 and stays 1 until something exists that cannot move with it: both ends
   ship together.
@@ -130,6 +140,11 @@ Done when: the specs there are pass under `explore` where they have more than on
   forgets it: nothing that arrives for the id after is heard. On the other end `ask` arrives, `mine.ask` is called,
   and what it is told goes back as `progress` and `answer`. `left` arriving calls what `mine.ask` returned.
 - **A view.** The same shape: `follow`, `shown`, `unfollow`, with `stop` letting go at both ends.
+- **A view the one running it ends.** A pack reloads, or the view is not there to follow: the follower has to be
+  told, and `unfollow` is the follower's alone. A ninth frame, `over`, with the view's id and a kind and a
+  message as a failed ask has, says the view has ended and nothing more will be shown. `Port.follow` takes what
+  to call with it, beside `shown`. A `follow` of a view there is not is answered `over` at once. Meteor's DDP has
+  this as `nosub`.
 - **A tell** is a frame each way.
 - **Ids.** Each end numbers its own asks and its own views from 1. An id is used once in a link's life.
 - **When the link ends**, every ask waiting at this end ends `{ ok: false, failure: { kind: 'disconnected', … } }`,
@@ -141,7 +156,7 @@ Done when: the specs there are pass under `explore` where they have more than on
 
 Specs, each under every order of the two directions: an ask is answered once; progress is heard before its answer
 and in the order sent; an ask left before its answer hears nothing after; two asks cross each way at once; a view
-shown, changed, and let go; the link ending with an ask waiting, an ask being answered and a view followed, each
+shown, changed, and let go; a view ended by the one running it, and one there is not; the link ending with an ask waiting, an ask being answered and a view followed, each
 ended once and none twice; an answer that cannot be sent fails that ask and the next ask is answered.
 
 Done when: those hold, and the mutants are caught: an answer delivered twice, an ask not ended when the link ends,
@@ -224,6 +239,11 @@ A link outlives what carries it.
 - An end that does not know the session, or no longer holds what is asked for, says so, and the link ends
   `{ why: 'lost' }`: step 1's ending then ends every ask and stops every view, as when a link closes.
 - While there is no connection, what is sent waits, within step 6's bound.
+- **Whoever holds a link says when the other end is gone for good.** A window that crashed will not come back, and
+  nothing a link can see tells that from one that is slow to return. A link is not given a time to wait: the host
+  knows, since Electron tells it when a window is destroyed, and says so with `link.close()`. What was kept for
+  that end is let go then. Until it is said, what is kept is bounded by step 6 and by nothing else. MQTT and TCP
+  each answer this with a timer, which is what is not done here.
 - An end that said goodbye as `restarting` is one to open a connection to again, and its hello may start a new
   session: then the link ends `lost` as above, and whoever holds it joins anew. One that said `ended` is not
   reached again.
@@ -244,15 +264,22 @@ advanced, a resume that should be refused taken.
   text, set where the link is made.
 - **What can be let go is.** A `shown` for a view that has a later `shown` waiting behind it, not yet numbered, is
   dropped: only the last matters. Nothing else is dropped.
-- A transport may say how much it has not yet written (`waiting(): number`). Past a mark, a link stops numbering
-  and lets frames wait where they can still be let go.
+- **How far behind the other end is, is what it has not said it took.** Every batch says the last number its
+  sender has taken (step 5), so the frames sent and not yet taken are counted the same over anything a link is
+  carried on. Past a mark, a link stops numbering and lets frames wait where they can still be let go. A message
+  port, which has no buffer to ask about and pushes back on nothing, is why this is the measure and not the
+  transport's own. A transport that can say how much it has not yet written (`waiting(): number`) is asked as
+  well. HTTP/2 and AMQP have the one receiving say how much it will take, for the same reason.
+- An end says what it has taken when it has handed a batch over, without waiting for another batch of its own to
+  carry the word: an end that only listens still has to say.
 - **Past the bound with nothing left to let go**, the link ends `{ why: 'overrun' }`, saying which bound and by how
   much. A link that grew without end would end the process instead.
 - What is kept for resuming and passes its bound is let go, oldest first, and a resume that needs it is refused
   (step 5's `lost`). A connection that is up is not ended for it.
 
-Done when: a view that changes ten thousand times while nothing is written is one frame when writing goes on; ten
-thousand answers past the bound end the link by name; the order of what does arrive is the order sent.
+Done when: a view that changes ten thousand times while nothing is taken is one frame when taking goes on, over
+memory and over a message port; ten thousand answers past the bound end the link by name; an end that only
+listens is not taken for one that is behind; the order of what does arrive is the order sent.
 
 ## Step 7. Knowing the other end is there
 
