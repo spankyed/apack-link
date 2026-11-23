@@ -1,7 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 9.
-No step after them is started.
+Status: built, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 10.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
 build, in what order, what each step has to hold, and how each is known to be done. `README.md` says what a link is
@@ -371,6 +370,13 @@ Done when: steps 1, 2 and 5's scenarios pass with msgpack; a frame of fifty mega
 arrives whole and in its place, and survives a drop part-way.
 
 ## Step 10. Releases
+
+Built: `.github/workflows/packages.yml` (a `pkg-<commit>` release for each `master` commit whose CI's `ci-pass`
+passed), `scripts/package-smoke.mjs` (the tarball installed into an empty project, each entry imported, and the
+README's first example run there as it is written), `scripts/reference.mjs` with `REFERENCE.md`, which also fails
+for an export no spec uses, `scripts/workflows-check.mjs` (no workflow publishes to npm or holds a token for it),
+and `docs/wire.md` with `tests/wire.spec.ts`. Naming the package in apack's `external-packages.mjs` is apack's,
+and is not done here.
 
 As apack's other repositories do: each commit on `master` packs the package and attaches the tarball to a release
 tagged `pkg-<commit>`, which apack names in its `overrides` and moves with `npm run deps:pin`. The tarball is
