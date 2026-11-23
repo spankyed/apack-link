@@ -5,8 +5,9 @@ any two things that run states. As a package, `@apackdev/link`.
 
 **What one system sends another arrives once, in the order it was sent, or the sender is told it did not.**
 
-Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, and a
-pair of ends in memory to run it on. Nothing in apack uses it yet.
+Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
+pair of ends in memory to run it on, and a schedule that runs a spec under every order. Nothing in apack uses it
+yet.
 
 ## Why it exists
 
@@ -38,7 +39,11 @@ A ninth, for a view the one running it ends, is planned.
   frame lost, doubled or out of place closes the link, saying why.
 - **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
   number. The link goes on, with nothing missing before the next frame.
-- **Ending is said once, to both ends**, with why.
+- **Ending is said once, to both ends**, with why. An end going on purpose says goodbye first, as `restarting` or
+  `ended`, and the other end's ending says which.
+- **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
+  says another number is closed on, naming both.
+- **A reason never holds what was sent.** An ending names a kind, a number or a size.
 
 ## Use
 
@@ -55,6 +60,27 @@ window.send({ kind: 'ask', id: 1, to: 'threads', name: 'CREATE', args: { topic: 
 
 A `Transport` is anything that takes text at one end and hands it over at the other, in order, until it closes.
 
+## Specs under every order
+
+`@apackdev/link/testing` is what this package's own specs are written with. A schedule stands in for the event
+loop: each direction of a link is a lane, a lane keeps its order, and a scenario is run once for every way of
+choosing between lanes.
+
+```ts
+import { link } from '@apackdev/link'
+import { everyOrder, scheduledPair } from '@apackdev/link/testing'
+
+await everyOrder((schedule) => {
+  const [left, right] = scheduledPair(schedule)
+  const a = link(left)
+  const b = link(right)
+  // ... what each end does ...
+  return () => { /* what must hold once everything has come to rest */ }
+})
+```
+
+A failure names the order that led to it and the choices to `replay` it with.
+
 ## Not its job
 
 - **A general RPC library.** It carries what states say to each other and nothing else.
@@ -67,7 +93,7 @@ A `Transport` is anything that takes text at one end and hands it over at the ot
 [`docs/plan.md`](docs/plan.md) is the plan, a step at a time, each with what it has to hold and how it is known to
 be done:
 
-0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye.
+0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye. **Built.**
 1. Peers: asks matched to their answers, views followed and let go.
 2. The hold: what a step sends a window waits until that window's views have caught up.
 3. One write a turn.
