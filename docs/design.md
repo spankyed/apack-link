@@ -108,7 +108,8 @@ only a frame is numbered. A link that numbered its own words would have more to 
 | `{ "bye": "restarting" }` | This end is going on purpose and is to be reached again |
 | `{ "bye": "ended" }` | This end is going on purpose and is not coming back |
 
-A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing in the last batch.
+A frame crosses as `{ "seq": n, "frame": { … } }`, with `"cause"` and `"private"` when it has them, or as parts:
+`{ "seq": n, "part": i, "of": count, "data": piece }`. A goodbye is the last thing in the last batch.
 
 ```
 [{"link":1,"session":"…","taken":0},{"seq":1,"frame":{"kind":"follow","id":1,…}},{"seq":2,"frame":{"kind":"ask","id":1,…}}]
@@ -119,13 +120,13 @@ A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing
 
 - **Order.** A frame is numbered as it is sent and taken only in turn. What carries a link is expected to keep
   order, as a socket does; the number is how a link knows it did, and what a resumed link will say it has.
-- **One bad frame is one refusal.** A frame is put into text and measured before it takes its number, when it is
-  sent, and a batch is those texts joined: joining cannot fail, so nothing that can runs between a number and the
-  transport. A frame that cannot be put into text is refused with a `TypeError`. One that is larger, with its
+- **One bad frame is one refusal.** A frame is encoded and measured before it takes its number, when it is sent,
+  and a batch is those encodings joined: joining cannot fail, so nothing that can runs between a number and the
+  transport. A frame that cannot be encoded is refused with a `TypeError`. One that is larger, with its
   cause, than a frame may be (`bound.frame`: 64 MiB unless given, and 1024 bytes at least, so that what a peer
   says in place of a value it could not send always fits) is refused with a `RangeError`. Neither ends the link.
   `Link.prepare` does both now for a frame to be sent later, and throws what `send` would: what comes back is
-  sent once, by the link that prepared it, as the text it was put into then.
+  sent once, by the link that prepared it, as it was encoded then.
 - **One write a turn.** A batch leaves when `link`'s `later` says, a microtask unless given, so what one turn says
   is one write. Order is by number, within a batch and across batches. A link that closes sends what it has said
   first.
@@ -293,6 +294,25 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   `TypeError('A frame could not be put into text')`: what JSON says of a value it cannot take names its keys, and a
   key is something a frame carries. An ending holds kinds, numbers and sizes.
 
+## Bytes, and frames too large for one write
+
+- **A codec is handed in** (`src/codec.ts`): it encodes one value, joins values already encoded as a list or as the
+  fields of a record, and decodes. A link encodes each thing it says where it is said, so what cannot be encoded
+  is refused there alone, and builds batches and numbered records by joining, which cannot fail. JSON is built in.
+  A host with msgpack hands its own; this package's specs run one (`tests/support/msgpack.ts`) over the
+  `@msgpack/msgpack` development dependency.
+- **`link.prepare(frame)`** encodes a frame now, to be sent later as it was now. The hold uses it, so what it holds
+  is encoded once, refused where it was said, and sent as it was when it was said.
+- **A frame longer than a part** (`part`, 1 MiB unless given, in bytes), and no larger than a frame may be,
+  crosses as parts: `{ seq, part, of, data }`, each numbered, one after another, the first carrying the cause and whether it is
+  private. The other end takes each in turn and says it took it, so a resume picks up within the frame, and hands
+  the frame over whole once the last has arrived, in its first part's place. Anything between its parts other than
+  the next one is not a frame.
+- **A batch leaves once it is as long as a part**, as well as at the end of the turn, so no one write is much longer
+  than a part, and a resume sends again what was kept the same way.
+- **A tap's `size`** is how many bytes a frame is as it crosses, numbered and with its cause: for a frame in parts,
+  all of its parts, the same at both ends.
+
 ## What a link is carried on
 
 A `Transport` hands over whole messages, `string | Uint8Array`, in order, and says once when nothing more will
@@ -393,15 +413,16 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound), step 7 (knowing the other end is there) and step 8 (cause, tap and private frames).
+step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound), step 7 (knowing the other end is there), step 8 (cause, tap and private frames) and step 9 (a codec, and
+frames in parts).
 
 ## What is not decided
 
 - **How what a frame carries is checked where it arrives.** A link checks that what arrived is a frame, and no
   more. apack's contracts type what a system takes; whether a link checks an ask's `args` or an answer's
   `outcome` against them, or hands it to the kernel to refuse, is open.
-- **Text or bytes.** JSON now. elmdb answers in msgpack, and a view's result is decoded and encoded again on its
-  way to a window.
+- **Which codec apack uses.** A codec is handed in. elmdb answers in msgpack, and a view's result is decoded and
+  encoded again on its way to a window; handing msgpack in is the host's to decide.
 - **Where secrets travel.** Today they are kept off the bus, in procedures of their own.
 
 ## Further off

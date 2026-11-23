@@ -9,6 +9,7 @@ import { MessageChannel } from 'node:worker_threads'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
 import { link, port, socket, stream, type Frame, type Message, type Transport } from '../src/index.ts'
+import { msgpack } from './support/msgpack.ts'
 import { carried, everyOrder, hold, memoryEnds, peers, sample, type KitScenario } from '../src/testing/index.ts'
 
 const scenarios: readonly KitScenario[] = [...peers, ...hold]
@@ -86,6 +87,14 @@ describe('over memory', () => {
   for (const scenario of scenarios) {
     it(scenario.name, async () => {
       expect(await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))).toBeGreaterThan(0)
+    })
+  }
+})
+
+describe('over memory, in msgpack', () => {
+  for (const scenario of scenarios) {
+    it(scenario.name, async () => {
+      expect(await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule, { codec: msgpack })))).toBeGreaterThan(0)
     })
   }
 })
