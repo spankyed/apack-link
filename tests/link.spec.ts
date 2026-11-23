@@ -497,22 +497,24 @@ describe('a transport that throws where it is handed something to send', () => {
       const at = opened++
       b.carry(right)
       return { ...left, send: (message) => { if (failing) { failing = false; throw new Error('cannot send') } left.send(message) }, close: () => { closed.push(at); left.close() } }
-    // Opened again as soon as it is asked, on no time at all.
-    }, { reopen: { clock: { after: (_, run) => { queueMicrotask(run); return () => {} } } } })
+    // Opened again a turn after it is asked, however long was asked for.
+    }, { reopen: { clock: { after: (_, run) => { let off = false; setImmediate(() => { if (!off) run() }); return () => { off = true } } } } })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
-    a.send(tell(1))
-    await turn()
-    expect(told(heard)).toEqual([1])
-    failing = true
-    a.send(tell(2))
-    a.send(tell(3))
-    await turn()
-    a.send(tell(4))
-    await turn()
-    expect(told(heard)).toEqual([1, 2, 3, 4])
-    expect([opened, closed, ended]).toEqual([2, [0], []])
-    expect(a.kept()).toBe(0)
+    try {
+      a.send(tell(1))
+      await turn()
+      expect(told(heard)).toEqual([1])
+      failing = true
+      a.send(tell(2))
+      a.send(tell(3))
+      for (let turns = 0; turns < 3; turns++) await turn()
+      a.send(tell(4))
+      await turn()
+      expect(told(heard)).toEqual([1, 2, 3, 4])
+      expect([opened, closed, ended]).toEqual([2, [0], []])
+      expect(a.kept()).toBe(0)
+    } finally { a.close() }
   })
 })
 
