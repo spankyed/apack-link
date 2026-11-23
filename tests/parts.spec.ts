@@ -413,6 +413,7 @@ describe('a WebSocket that takes no message longer than some length', () => {
 })
 
 describe('the work of cutting a frame', () => {
+  const inBytes = (message: Message): number => (typeof message === 'string' ? new TextEncoder().encode(message).byteLength : message.byteLength)
   /** A codec that counts each piece it is handed to encode as a part's data: text or bytes by itself. */
   const counting = (codec: typeof msgpack) => {
     const count = { pieces: 0 }
@@ -434,7 +435,11 @@ describe('the work of cutting a frame', () => {
           const { count, codec } = counting(base)
           const [left, right] = memoryPair()
           let parts = 0
-          const a = link({ ...left, send: (message) => { parts += (base.decode(message) as Array<Record<string, unknown>>).filter((one) => 'part' in one).length; left.send(message) } }, { part, codec })
+          const data: number[] = []
+          const a = link({ ...left, send: (message) => {
+            for (const one of base.decode(message) as Array<Record<string, unknown>>) if ('part' in one) { parts++; data.push(inBytes(base.encode(one.data))) }
+            left.send(message)
+          } }, { part, codec })
           const heard: Frame[] = []
           link(right, { part, codec: base }).onFrame((frame) => { heard.push(frame) })
           a.send(tell(event))
@@ -442,6 +447,8 @@ describe('the work of cutting a frame', () => {
           expect(heard).toEqual([tell(event)])
           // No piece is tried more than a few times, and so no frame encoded more than a few times over.
           expect([part, count.pieces <= 6 * parts]).toEqual([part, true])
+          // And for it no part but the last is left far short of what it may be.
+          expect([part, Math.min(...data.slice(0, -1)) >= 0.8 * part]).toEqual([part, true])
         }
       })
     }
