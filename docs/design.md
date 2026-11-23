@@ -320,8 +320,10 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 - **A part is no longer than a part as it crosses.** What a part carries is a piece of the frame's encoding, said
   as data, and a piece can be longer as data than it was: text in JSON has each quote and backslash in it said in
   two. By how much is the codec's to know, so a piece is tried: one too long as data is tried again shorter by as
-  much as it was too long, and one with room to spare longer by as much as it had, between the longest found to
-  fit and the shortest found not to, until it is within a character or two of a part or nothing lies between.
+  much as it was too long (in proportion first, which is right where all of it grows alike as data; then by every
+  byte it was still too long by, which always fits, since no byte is less than one as data), and one with room
+  to spare longer by as much as it had, between the longest found to fit and the shortest found not to, until
+  it is within a character or two of a part or nothing lies between.
   Text that says nothing in two takes two tries a part, and nothing takes more than six: after that the longest
   found to fit is taken as it is, so the work of cutting a frame stays in proportion to the frame whatever it
   holds, and a part of text that is plain in one place and all quotes in the next may be shorter than it could be. `part` is 16 bytes at least, so that one character

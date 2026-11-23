@@ -556,10 +556,10 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
           if (fits && fits.want + 1 >= over) break
           // Shorter in proportion to how much too long it was, which is right where all of it grows alike as data.
           // Where that was still too long, shorter by every byte it was too long by: no byte is less than one as
-          // data, so that fits. And by half, should nothing have fitted after all, so that something soon does.
+          // data, so that fits.
           overs++
           const shorter = Math.min(want - 1, overs === 1 ? Math.floor(want * part / size) : want - (size - part))
-          grown = Math.max(fits ? fits.want + 1 : 1, tries >= TRIES ? Math.min(shorter, want >> 1) : shorter)
+          grown = Math.max(fits ? fits.want + 1 : 1, shorter)
         }
         // Tried often enough, the longest found to fit is taken as it is: the work stays in proportion to the frame.
         if (fits && tries >= TRIES) break
