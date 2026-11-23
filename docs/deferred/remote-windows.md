@@ -20,14 +20,17 @@ none is built.
 ## What it would take
 
 1. **How long a session is kept, said by whoever listens.** A listener keeps a session it has lost the
-   connection of until whoever holds the link says the other end is gone for good. On one machine that is known:
-   the window's process ended. Across a network it is not, so a listener would be made with how long it keeps a
-   session nobody has come back to, and a link without one would not be made. MQTT's Session Expiry Interval was
+   connection of until whoever holds the link says the other end is gone for good. On one machine something
+   knows when that is, the process that made the window, and the host has to be told by it: a link is given
+   nothing to learn it from, and that is not built either
+   ([proposed: a session has an owner](../proposed/sessions-have-owners.md)). Across a network nothing knows,
+   so the host would say an owner is gone after a time of its own choosing. MQTT's Session Expiry Interval was
    declined for one machine, and this is the case it was made for.
 2. **A resume that cannot be claimed by guessing.** A session's id and what it has taken are told to anything
    that connects, and a hello that fits takes the link's place. On one machine who may connect at all is settled
    before `accept`. Across a network the listener would make a secret for each session and hand it over on the
-   first connection, and a hello that goes on with a session would have to say it.
+   first connection, and a hello that goes on with a session would have to say it. If a session has an owner
+   (proposed, above) this is not needed: a session is gone on with only by whoever was admitted as its owner.
 3. **Who is connecting, and a connection nobody else can read.** A link authenticates nothing and encrypts
    nothing, and both stay outside it: TLS on the socket, and whatever says who a connection is before it reaches
    `accept`. What is deferred is the app's choice of each. A token read from a file only the user can open is no
