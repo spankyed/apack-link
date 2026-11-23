@@ -100,7 +100,7 @@ only a frame is numbered. A link that numbered its own words would have more to 
 
 | Text | Says |
 |---|---|
-| `{ "link": 1, "session": s, "taken": n }` | Hello: which link, which session this end is, and the last number it took. First on each connection, and nothing is taken before it. `"again": true` on every connection after an end's first |
+| `{ "link": 1, "session": s, "taken": n }` | Hello: which link, which session this end is, and the last number it took. First on each connection, and nothing is taken before it. `"resumes": t`, the other end's session, from an end that has met it; absent from one that has met nobody |
 | `{ "taken": n }` | The last number this end took. In a batch when it has more to say of it |
 | `{ "lost": true }` | The session cannot be picked up again; the link ends `lost` |
 | `{ "there": n }`, `{ "here": n }` | Whether the other end is there, and that it is, with the same number |
@@ -124,15 +124,28 @@ A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing
   is one write. Order is by number, within a batch and across batches. A link that closes sends what it has said
   first.
 - **A batch is taken in order**, and nothing in it after what ended the link.
+- **What arrives is checked to be a frame** (`asFrame`, `src/frames.ts`): one of the nine kinds, an id a whole
+  number from 1, a name text, a failure a kind and a message, both text. Anything else ends the link
+  `not a frame`. What a frame carries for a system (`event`, `args`, `update`, an `outcome`) is not looked at, and
+  only what a frame has is handed on.
+- **What a listener throws is never the link's.** A listener (`onFrame`, `onEnd`), and so a system joined to the
+  link, may throw. Every listener is still called, every frame after it in the batch is still taken and said to
+  be taken, and the link does not end. What was thrown is handed to `Options.thrown`; without it, it is thrown
+  again in a turn of its own, where nothing of the link's is beneath it. A tap that throws is still the tap's
+  alone. A transport that throws where it is handed a batch is a connection that has gone: it is closed, and
+  the batch, which is kept, is sent again on the next.
 - **Ending is said once**, to both ends, with why (`Ending`, `src/link.ts`). An end that heard a goodbye ends
   `{ why: 'goodbye', bye }`; without one, a backend that restarted and one that ended both look like a connection
   that was lost.
 - **An end that says another number is refused**, with `{ why: 'version', mine, theirs }`. Nothing is negotiated:
   both ends ship together, and the number stays 1 until something exists that cannot move with it.
-- **A reason never holds what was sent.** What is not a frame ends the link with the length of its text, and
+- **A reason never holds what was sent.** What is not a frame ends the link with how many bytes it was, and
   nothing of the text.
 - **Closing is in order too.** What an end sent before it closed is handed over before the other end hears that
-  it closed. A socket does this, and the ends in memory do: it is what lets a goodbye arrive.
+  it closed. A socket does this, and the ends in memory do: it is what lets a goodbye arrive. `close()` numbers
+  what waited for room, past the mark, before it says goodbye: it is the last this end sends. It can only do so
+  on a connection where frames go: what waited for a connection, or for the other end to be met on one, is let
+  go, and a goodbye is still said on whatever connection there is.
 
 ## A connection that comes back
 
@@ -140,24 +153,49 @@ A link outlives what carries it (`src/link.ts`).
 
 - **Kept until taken.** Each end keeps every frame it sent, as text, until the other says it took it. The other
   says so with `{ taken }` in a batch, and in its hello.
-- **A new connection.** Each end's hello says its session and the last number it took. Each sends again what the
-  other has not taken, in order, then goes on. A frame is taken only in turn, so nothing is taken twice. On a
-  connection after an end's first, nothing new goes out until hellos have crossed. On the first connection, frames
-  go at once.
+- **A new connection.** Each end's hello says its session, the last number it took, and the session it is going
+  on with (`resumes`) once it has met one. Each sends again what the other has not taken, in order, then goes on.
+  A frame is taken only in turn, so nothing is taken twice.
+- **Nothing is numbered before the other end is met.** On every connection of a link that can come back
+  (`link(open)`, `link()`), frames wait until the other end's hello has arrived. So an end that has met nobody
+  has sent nothing that anybody could have taken, and whoever it meets first, it starts with afresh: a window
+  that opens before its backend listens, or whose first connection went before anything arrived, loses nothing
+  and repeats nothing, whether the backend it reaches is the one it dialled or one started since. A link given
+  one transport does not come back, and sends at once.
 - **Lost.** A link ends `{ why: 'lost' }`, saying `{ lost: true }` to the other end, when the hello is from another
-  session than the one it was talking to, or says it took more than was sent, or wants frames no longer kept. It
-  also ends lost when the hello says `again` on this end's own first connection: the other end is going on with
-  something, and this end is new. That last rule is what stops a window whose first connection dropped before it
-  heard anything from handing its frames to a backend that restarted. The window never learned the old backend's
-  session, so it cannot tell. Every ask and view then ends as when a link closes.
-- **Who opens.** `link(open)` opens a connection now, and another each time one closes, at once. Whoever gives
-  `open` decides when it actually connects. `link()` waits to be handed each connection with `carry`. `accept`
-  takes connections as they arrive at a backend: a new session is a new link, a known one goes back to its link,
-  and one that says `again` for a session it does not know is told `lost`.
+  session than the one it was talking to; says it is going on with a session that is not this one; says it has met
+  nobody and yet took something; says it took more than was sent; or wants what it earlier said it had taken, which
+  is no longer kept. Every ask and view then ends as when a link closes. Each case is one where what one end holds
+  is not what the other thinks. The two that are not lost: neither end has met anybody, which is a start; and one
+  end met the other while the other never heard it (its hello went with the connection), which is gone on with,
+  the one that met sending again all it sent, since none of it was taken.
+- **Who opens.** `link(open)` opens a connection now, and another after each one closes. `link()` waits to be
+  handed each connection with `carry`. `accept` takes connections as they arrive at a backend: a new session is a
+  new link, a known one goes back to its link, and one that says it `resumes` something, from a session it does
+  not know, is told `lost`: it is from before this backend began.
+- **Opening again is paced, on no clock of the link's own.** A connection is never opened within the turn the
+  last closed in: a link whose every connection fails at once would otherwise never let the event loop turn.
+  Given a clock (`Options.reopen`), a link waits `first` milliseconds (100) after a connection on which the other
+  end was never met, twice as long after each one more in a row, and `most` (10 000) at most; meeting the other
+  end starts the count over, and after a connection on which it was met the next is asked of the clock after no
+  time. What could not be opened at all, `open` throwing, is counted as a connection that met nobody. Doubling
+  with a ceiling, and no jitter: the ends are a window and its backend, not a crowd arriving together. Without a
+  clock nothing is timed: each connection is opened one turn of the event loop after the last closed. That
+  never starves the loop, and it does spin for as long as connections fail at once, which is why anything that
+  dials over a network is to be given a clock.
+- **Admission is not the link's.** A session's id in a hello is all `accept` asks before handing a connection the
+  link of that session: whoever can connect and knows the id takes the link over, and can end it by saying
+  something that does not fit. A link authenticates nothing. Who may connect at all has to be settled by what
+  takes the connections, before one reaches `accept`: apack's token on the socket, a socket path only the user
+  can open. A session id is not a secret and is not to be treated as one.
 - **Goodbye.** `ended` ends the other end, which is not reached again. `restarting` does not end a link that comes
   back: it reconnects, and an end that restarted is a new session, which is lost.
 - **Gone for good** is the host's to say, with `close()`. Nothing a link sees tells a crashed window from a slow
-  one, and a link is given no time to wait. What is kept is bounded by step 6 and by nothing else.
+  one, and a link is given no time to wait. What is kept is bounded by step 6 and by nothing else. So a link
+  nobody closes keeps what it has for a window that is gone, for good, and `accept` keeps the link: a backend
+  whose windows come and go without their links being closed grows by one link's bound for each. The host is
+  expected to close a window's link when it learns the window is gone (Electron says when a window is
+  destroyed), or, where it cannot learn that, by a rule of its own, on its own clock. None is built in.
 
 An ask is delivered at most once, because a frame is: an answer lost on the way is one of the frames sent again.
 
@@ -167,7 +205,10 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   link is carried on: a message port has no buffer to ask about and pushes back on nothing. A transport that can
   say how much it has not yet written (`waiting()`: a socket's `bufferedAmount`, a stream's `writableLength`) is
   counted as well.
-- **Past a mark** (`bound.kept`, in frames and in length of text) a link stops numbering. What is sent then waits,
+- **One unit.** A size is bytes, of text as UTF-8 (`bytesOf`): what is kept, what waits, a frame as a tap is told
+  of it, what was not a frame, and what a transport says it has not written. A length in characters is none of
+  these, and for text past ASCII is less than half of some.
+- **Past a mark** (`bound.kept`, in frames and in bytes) a link stops numbering. What is sent then waits,
   in order, and is numbered as room comes back. A link looks again whenever anything arrives, since a transport
   that has written its backlog says nothing when it does. Nothing sent passes what waits.
 - **What can be let go is.** A `shown` waiting for a view that already has one waiting takes that one's place: the
@@ -177,8 +218,9 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 - **An end says what it took** with its next batch, and sends a batch for that alone when it has none of its own
   to send: an end that only listens still says.
 - **Past the bound on what waits** (`bound.waiting`), with nothing left to let go, the link ends
-  `{ why: 'overrun', waiting, bound }`, each in frames and length. A link that grew without end would end the
-  process instead.
+  `{ why: 'overrun', waiting, bound }`, each in frames and bytes. A link that grew without end would end the
+  process instead. One frame larger than all that may wait ends the link the same way where it is sent, with
+  room or without, so no one message a link sends is more than what it may keep and one frame that waited.
 - **What is kept is never let go before it is taken.** Numbering stops at its mark, so it does not pass its
   bound, and a resume never finds what it needs gone.
 
@@ -200,7 +242,7 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   frame. It crosses beside the frame (`{ "seq", "frame", "cause" }`), and `onFrame` hears it. A link never reads
   it. A result that overtook another while waiting carries its own cause.
 - **Tap.** `onTraffic(seen)` is told of each frame as it is numbered to go out, and as it is taken in: direction,
-  number, kind, id, name (a tell's `to`, an ask's name, a view's name), length of its text, and cause. Never what it
+  number, kind, id, name (a tell's `to`, an ask's name, a view's name), bytes of its text, and cause. Never what it
   carries. A tap that throws is the tap's to answer for; the link goes on.
 - **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
   told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
@@ -221,7 +263,13 @@ arrive. A link sends text today and takes either: bytes are read as UTF-8.
   `null` first, after what was sent before it; a port's own `close` event is heard as well.
 - **`stream`**, over a byte stream with no edges between messages. Each message crosses as one byte for its kind
   (0 text, 1 bytes), four for its length, most significant first, and the message. What arrives in pieces is put
-  together and what arrives together taken apart. A kind that is neither closes it.
+  together and what arrives together taken apart: what arrives is kept as the pieces it came in and a message
+  joined once, when all of it is here, so the work is in proportion to the bytes however small the pieces. A
+  kind that is neither, text that is not UTF-8, or a head that claims more than `most` bytes closes it, and the
+  stream beneath is destroyed, or ended where it cannot be: a stream that said something that is not a message
+  is not listened to further. `most` is 160 MiB unless given: twice what a link with its default bounds may keep
+  and have one frame wait (16 MiB and 64 MiB), so more than such a link puts in one message. A link given larger
+  bounds is to be given a larger `most`. Sending more than `most` closes the stream too.
 
 Which of these apack's windows and tools are carried on is apack's to decide; a link is the same over each.
 
@@ -272,7 +320,8 @@ something arriving done in a lane of its own, so it falls in every place among w
 - Taken: **both ends keep state, and a reconnect says whether there is a session.** MQTT keeps unacknowledged
   messages on both sides and has the server say `Session Present`. Here each hello says its session and where it
   got to, and either end can find the session lost.
-- Taken: **a client with no state that is told there is one closes.** That is the `again` rule turned around.
+- Taken: **a client with no state that is told there is one closes.** Here a hello names the session it is going
+  on with, and an end that is not that session finds the link lost.
 - Declined: **Session Expiry Interval.** MQTT discards a session after a time. Whoever holds a link says when the
   other end is gone (`close()`); a link is given no time to wait.
 - Declined: **acknowledgement per message, and QoS 2's four-step handshake.** Exactly-once here comes from
@@ -306,8 +355,9 @@ step 4 (a socket, a port and a stream) step 5 (a connection that comes back), st
 
 ## What is not decided
 
-- **How a frame is checked where it arrives.** apack's contracts type what a system takes; whether a link checks a
-  frame against them, or hands it to the kernel to refuse, is open.
+- **How what a frame carries is checked where it arrives.** A link checks that what arrived is a frame, and no
+  more. apack's contracts type what a system takes; whether a link checks an ask's `args` or an answer's
+  `outcome` against them, or hands it to the kernel to refuse, is open.
 - **Text or bytes.** JSON now. elmdb answers in msgpack, and a view's result is decoded and encoded again on its
   way to a window.
 - **Where secrets travel.** Today they are kept off the bus, in procedures of their own.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { link, memoryPair, type Ending, type Frame } from '../src/index.ts'
+import { bytesOf, link, memoryPair, socket, type Ending, type Frame } from '../src/index.ts'
 import { everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -313,5 +313,223 @@ describe('goodbye', () => {
         expect([ended.a, ended.b]).toEqual([[{ why: 'closed' }], [{ why: 'closed' }]])
       }
     })
+  })
+})
+
+describe('what arrives as a frame', () => {
+  it('ends the link when it is not one of the frames there are, saying how many bytes and not what', async () => {
+    const failure = { kind: 'gone', message: 'It went' }
+    for (const frame of [
+      { kind: 'bytes', id: 1 },
+      { kind: 'tell', event: 1 },
+      { kind: 'tell', to: 7, event: 1 },
+      { kind: 'ask', to: 'x', name: 'ASK', args: {} },
+      { kind: 'ask', id: 0, to: 'x', name: 'ASK', args: {} },
+      { kind: 'ask', id: 1, to: 'x', name: 7, args: {} },
+      { kind: 'ask', id: 1, name: 'ASK', args: {} },
+      { kind: 'left', id: -1 },
+      { kind: 'left', id: 1.5 },
+      { kind: 'left', id: '1' },
+      { kind: 'progress', id: 2 ** 53, update: 1 },
+      { kind: 'answer', outcome: { ok: true } },
+      { kind: 'follow', id: 1, feature: 'x', args: {} },
+      { kind: 'follow', id: 1, feature: 7, view: 'list', args: {} },
+      { kind: 'shown', id: null, update: 1 },
+      { kind: 'unfollow' },
+      { kind: 'over', id: 1 },
+      { kind: 'over', id: 1, failure: 'gone' },
+      { kind: 'over', id: 1, failure: { kind: 'gone' } },
+      { kind: 'over', id: 1, failure: { kind: 7, message: 'It went' } },
+      { kind: 'over', id: 0, failure },
+    ]) {
+      const { bare, heard, ended } = facing()
+      const text = wire({ seq: 1, frame })
+      bare.send(hello)
+      bare.send(text)
+      await turn()
+      expect([frame, heard]).toEqual([frame, []])
+      expect([frame, ended]).toEqual([frame, [{ why: 'not a frame', size: text.length }]])
+    }
+  })
+
+  it('is handed on as the frame it is and nothing else, with what it carries for a system left as it came', async () => {
+    const { bare, heard, ended } = facing()
+    const carried = [null, 0, 'text', [1, { deep: [true] }], { kind: 'tell', id: 'not a frame\'s own' }]
+    const frames: Frame[] = [
+      ...carried.map((event): Frame => ({ kind: 'tell', to: 'x', event })),
+      ...carried.map((outcome, at): Frame => ({ kind: 'answer', id: at + 1, outcome })),
+      { kind: 'over', id: 1, failure: { kind: 'gone', message: 'It went' } },
+    ]
+    bare.send(wire(HELLO, ...frames.map((frame, at) => ({ seq: at + 1, frame: { ...frame, more: 'than a frame has' } })), { seq: frames.length + 1, frame: { kind: 'tell', to: 'x' } }))
+    await turn()
+    expect(heard).toEqual([...frames, { kind: 'tell', to: 'x', event: undefined }])
+    expect(heard.some((frame) => 'more' in frame)).toBe(false)
+    expect(ended).toEqual([])
+  })
+})
+
+describe('a size', () => {
+  const bytes = (text: string): number => new TextEncoder().encode(text).length
+
+  it('is in bytes, of text as it crosses: a frame as a tap is told of it, at both ends', async () => {
+    const [left, right] = memoryPair()
+    const a = link(left)
+    const b = link(right)
+    const out: number[] = []
+    const in_: number[] = []
+    a.onTraffic((traffic) => { out.push(traffic.size) })
+    b.onTraffic((traffic) => { in_.push(traffic.size) })
+    const frame = tell('✓ é 𝄞 \ud800 plain')
+    a.send(frame, { cause: 'step ✓' })
+    a.send(tell('plain'))
+    await turn()
+    const sizes = [bytes(JSON.stringify({ seq: 1, frame, cause: 'step ✓' })), bytes(JSON.stringify({ seq: 2, frame: tell('plain') }))]
+    expect(sizes[0]).toBeGreaterThan(JSON.stringify({ seq: 1, frame, cause: 'step ✓' }).length)
+    expect([out, in_]).toEqual([sizes, sizes])
+  })
+
+  it('is in bytes where what arrived was not a frame, as text or as bytes', async () => {
+    const text = '["✓✓✓"'
+    for (const message of [text, new TextEncoder().encode(text)]) {
+      const { bare, ended } = facing()
+      bare.send(hello)
+      bare.send(message)
+      await turn()
+      expect(ended).toEqual([{ why: 'not a frame', size: bytes(text) }])
+    }
+  })
+
+  it('is in bytes where what is kept is counted against its mark', () => {
+    const [left] = memoryPair()
+    // Forty characters, and more than a hundred bytes.
+    const a = link(left, { bound: { kept: { frames: 100, size: 100 } } })
+    a.send(tell('✓'.repeat(40)))
+    a.send(tell('waits'))
+    expect([a.kept(), a.waiting()]).toEqual([1, 1])
+  })
+
+  it('is in bytes where what waits is counted against its bound', () => {
+    const [left] = memoryPair()
+    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 100, size: 100 } } })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.send(tell('numbered'))
+    // Forty-five characters and sixty-five bytes: two of it are past a hundred bytes, and not past a hundred characters.
+    const waits = tell('✓'.repeat(10))
+    a.send(waits)
+    expect(ended).toEqual([])
+    a.send(waits)
+    expect(ended).toEqual([{ why: 'overrun', waiting: { frames: 2, size: 2 * bytes(JSON.stringify(waits)) }, bound: { frames: 100, size: 100 } }])
+  })
+})
+
+describe('a frame larger than all that may wait', () => {
+  it('ends the link overrun where it is sent, with room or without, and is not sent', async () => {
+    const [left, right] = memoryPair()
+    const a = link(left, { bound: { waiting: { frames: 100, size: 100 } } })
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.send(tell('x'.repeat(60)))
+    expect(ended).toEqual([])
+    a.send(tell('x'.repeat(100)))
+    expect(ended).toEqual([{ why: 'overrun', waiting: { frames: 1, size: JSON.stringify(tell('x'.repeat(100))).length }, bound: { frames: 100, size: 100 } }])
+    await turn()
+    expect(heard).toEqual([])
+  })
+})
+
+describe('closing', () => {
+  it('sends what waited for room before it closes, in order, and a goodbye last', async () => {
+    const [left, right] = memoryPair()
+    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
+    const b = link(right)
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    for (const event of [1, 2, 3]) a.send(tell(event))
+    expect(a.waiting()).toBe(2)
+    a.close('ended')
+    await turn()
+    expect(told(heard)).toEqual([1, 2, 3])
+    expect(ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
+  })
+
+  it('says goodbye to an end it has not met, and lets go of what waited to meet it', async () => {
+    const [bare, right] = memoryPair()
+    const texts: unknown[] = []
+    bare.onData((text) => { texts.push(JSON.parse(text as string)) })
+    // A link that can come back numbers nothing until the other end has said hello.
+    const a = link()
+    a.carry(right)
+    a.send(tell('waits to meet'))
+    expect(a.waiting()).toBe(1)
+    a.close('ended')
+    await turn()
+    expect(texts).toEqual([[saidHello, { bye: 'ended' }]])
+    expect(a.waiting()).toBe(0)
+  })
+})
+
+describe('a transport that throws where it is handed something to send', () => {
+  it('is a connection that has gone: the link ends closed, when it is the only one it has', async () => {
+    let closed = 0
+    const a = link({ send: () => { throw new Error('cannot send') }, onData: () => {}, onClose: () => {}, close: () => { closed++ } })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.send(tell(1))
+    await turn()
+    expect(ended).toEqual([{ why: 'closed' }])
+    expect(closed).toBe(1)
+  })
+
+  it('is a connection that has gone: what it was handed is sent again on the next, once, in order', async () => {
+    const b = link()
+    const heard: Frame[] = []
+    b.onFrame((frame) => { heard.push(frame) })
+    let failing = false
+    let opened = 0
+    const closed: number[] = []
+    const a = link(() => {
+      const [left, right] = memoryPair()
+      const at = opened++
+      b.carry(right)
+      return { ...left, send: (message) => { if (failing) { failing = false; throw new Error('cannot send') } left.send(message) }, close: () => { closed.push(at); left.close() } }
+    // Opened again as soon as it is asked, on no time at all.
+    }, { reopen: { clock: { after: (_, run) => { queueMicrotask(run); return () => {} } } } })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.send(tell(1))
+    await turn()
+    expect(told(heard)).toEqual([1])
+    failing = true
+    a.send(tell(2))
+    a.send(tell(3))
+    await turn()
+    a.send(tell(4))
+    await turn()
+    expect(told(heard)).toEqual([1, 2, 3, 4])
+    expect([opened, closed, ended]).toEqual([2, [0], []])
+    expect(a.kept()).toBe(0)
+  })
+})
+
+describe('how many bytes a text is', () => {
+  it('is what it is as UTF-8, whatever it holds', () => {
+    for (const text of ['', 'plain', 'é', '✓', '𝄞', 'a𝄞b✓cé', '\ud800', '\udc00', '\ud800x', '\udc00\ud800', '𝄞\ud834', '߿ࠀ￿']) {
+      expect([text, bytesOf(text)]).toEqual([text, new TextEncoder().encode(text).length])
+    }
+  })
+})
+
+describe('a WebSocket that is still opening', () => {
+  it('says what waits for it to open in bytes', () => {
+    const ws = { readyState: 0, bufferedAmount: 3, binaryType: '', send: () => {}, close: () => {}, addEventListener: () => {} }
+    const carried = socket(ws)
+    carried.send('✓✓')
+    carried.send(new Uint8Array(4))
+    expect(carried.waiting!()).toBe(3 + 6 + 4)
   })
 })
