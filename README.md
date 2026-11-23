@@ -5,98 +5,28 @@ any two things that run states. As a package, `@apackdev/link`.
 
 **What one system sends another arrives once, in the order it was sent, or the sender is told it did not.**
 
-Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
-peer that matches asks to answers and views to what they show and holds what a system says until its views have
-caught up, things to carry it on (a WebSocket, a message port, a stream of bytes, and two ends in memory), and a
-schedule that runs a spec under every order, released for apack to pin. Nothing in apack uses it yet.
+Everything in [the plan](docs/plan.md) is built, steps 0 to 14. Nothing in apack uses it yet, so no end can be
+left behind on an older one: the wire is link 1, and a change to what crosses is made at both ends at once.
+
+| To | Read |
+|---|---|
+| use it | this page |
+| look up an export | [`REFERENCE.md`](REFERENCE.md): every export, its doc comment and signature |
+| speak to a link without this package | [`docs/wire.md`](docs/wire.md): everything an end sends, and an exchange recorded as it crossed |
+| know why it is this way | [`docs/design.md`](docs/design.md) |
+| change it | [`CLAUDE.md`](CLAUDE.md): where things are, and the rules; [`docs/plan.md`](docs/plan.md): each step and how it is known to be done |
 
 ## Why it exists
 
-apack's states talk across a boundary in a handful of ways: one asks and is answered, one tells, one follows a view
-and is shown what it holds. The design those states are written to
-([apack-state](https://github.com/spankyed/apack/blob/master/docs/plans/apack-state.md)) rests on the order between
-them. A window that is answered "created" has to have been shown the thing first, so the view's update and the
-answer have to arrive in the order they were sent.
+apack's states talk across a boundary in a handful of ways: one asks and is answered, one tells, one follows a
+view and is shown what it holds. The design those states are written to
+([apack-state](https://github.com/spankyed/apack/blob/master/docs/plans/apack-state.md)) rests on the order
+between them. A window that is answered "created" has to have been shown the thing first, so the view's update
+and the answer have to arrive in the order they were sent.
 
-A general RPC layer does not promise that. It gives each subscription a pump of its own, and order between two of
-them is whatever the timing gives. A link carries exactly what states say to each other, as frames on one stream,
-and so can keep all of it in order.
-
-## What it carries
-
-| Frame | Says |
-|---|---|
-| `tell` | Something happened. Nobody waits |
-| `ask`, `answer` | A question, and how it ended. Answered once |
-| `progress` | What the one answering says before it answers |
-| `left` | Whoever asked has gone, and the work for them can stop |
-| `follow`, `shown`, `unfollow` | A view: its result, and each changed result after it |
-| `over` | The one running a view has ended it, and why |
-
-## What holds
-
-- **Once, across a connection that drops.** A link outlives what carries it. Each end keeps what it sent until
-  the other says it took it, and a new connection picks up where each end got to. Nothing is taken twice. A link
-  that can come back sends nothing until it has met the other end, so a window that starts before its backend
-  listens has handed nothing to anybody, and starts with whichever backend it meets.
-- **Order.** Every frame an end sends is numbered. The other end takes a frame only if it is the next one, and a
-  frame lost, doubled or out of place closes the link, saying why. So does anything that is not one of the frames
-  below: an id is a whole number from 1, a name is text, a failure is a kind and a message. What a frame carries
-  for a system is not looked at.
-- **A window hears of a step after its views show it.** What a system says to the other end waits until the views
-  it runs for that end have caught up with what was kept before it was said. A view's own updates are what is
-  waited for, and go at once.
-- **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number: a
-  `TypeError` for one that cannot be encoded, a `RangeError` for one larger than a frame may be
-  (`bound.frame`, 64 MiB unless given) or sent with a cause longer than 1024 bytes. The link goes on, with nothing missing before the next frame. Through
-  `join`, the one ask or view it belonged to fails, and no other. `prepare(frame)` encodes a frame now, to be
-  sent later without being encoded again: what a peer holds for its views is refused where it was said, and
-  crosses as it was when it was said.
-- **One write a turn, and none too long.** What an end sends within one turn of the event loop crosses as one
-  message, unless it is longer than a part (`part`, 1 MiB unless given). Where what carries it takes no message
-  that long (`Transport.most`), or the other end says it takes none that long (each says so in its hello), it
-  crosses as the fewest that fit, cut between what was said, in order: a link never hands over more than is
-  taken. A frame longer than a part, or than a connection has room for, crosses as parts, each numbered, and is
-  handed over whole in the place of its first; a resume picks up within it. A part is as long as fits what
-  carries the link and what the other end takes, and `part` is only the most it may be: nothing has to be set
-  to match anything else. What takes no message of `LEAST` bytes (1144) carries no link at all: `dial`,
-  `listen`, `carry` and `accept` throw as it is handed over.
-- **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.
-  One that puts more around a frame than JSON does, 102 bytes, is refused where the link is made.
-- **A connection takes a link's place only once it fits.** The end that listens, a backend's, says nothing on a
-  connection it is handed, and keeps the one it has, until a hello that fits has arrived there. One that does not
-  fit is closed, told why, and the link goes on: it never ends for what a connection says before such a hello.
-  Only the end that dials, which opened the connection, ends `lost` for what it met there.
-- **Bounded.** How far behind the other end is, is what it has not said it took. Past a mark a link stops
-  numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
-  matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
-  `dial(transport, { bound: { kept, waiting, frame } })` sets them, in frames and in bytes. Every size a link counts or
-  reports is in bytes of text as UTF-8, which is what a transport counts what it has not written in.
-- **Never a time to answer in.** What carries a link saying it closed is how an end knows the other has gone. For
-  a connection that can go quiet without closing, `dial(open, { there: { window, clock } })`: while this end is
-  owed something, a `taken` or an answer, and nothing at all has arrived for half the window, it asks whether the
-  other end is there. After a whole window with nothing arriving, it opens another connection. An ask that takes an
-  hour is not a link that has gone.
-- **A listener that throws loses nothing.** Every frame of the batch is still taken, in order, every other
-  listener is still called, and the link goes on. What was thrown is handed to `dial(…, { thrown })`, or thrown
-  again in a turn of its own, to be reported as anything uncaught is. A system joined to a link is a listener:
-  one that throws where it is told, answered or shown is told, answered and shown everything after.
-- **Closing sends what was sent.** `close()` sends everything sent before it, what waited for room included, and
-  then the goodbye, wherever it can arrive no more than once: on a connection where the other end has been met,
-  and on any connection of an end that has never met anybody, so a window that says one thing and closes is
-  heard. What waited with no connection, or on one where an end met before has not been met again, has nowhere
-  to go and is let go.
-- **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
-  said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
-  `ended`, and the other end's ending says which.
-- **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
-  says another number is closed on, naming both. So is one that takes no message as long as any link needs, or
-  as what this end still keeps to send again was cut for (`too narrow`).
-- **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
-  that cannot be put into text is refused with a `TypeError` of the link's own.
-- **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and
-  `onFrame` hears the cause. `onTraffic` is told of each frame out and in: its direction, number, kind, id, name,
-  size and cause. A frame sent `{ private: true }` is told of only as having crossed, with its number and size.
+A general RPC layer does not promise that. It gives each subscription a pump of its own, and order between two
+of them is whatever the timing gives. A link carries exactly what states say to each other, as frames on one
+stream, and so can keep all of it in order.
 
 ## Use
 
@@ -118,11 +48,6 @@ const toBackend = join(dial(left), { tell: () => {}, ask: () => () => {}, follow
 toBackend.ask('threads', 'CREATE', { topic: 'one' }, (update) => {}, (outcome) => console.log(outcome))
 ```
 
-A link has two ends that are not alike. The one that opened the connection dials: `dial` says hello first, and
-ends for what it meets. The other listens: `listen` says nothing on a connection until a hello that fits has
-arrived on it, and ends for nothing said before one. Where neither opened it, a pair of message ports, one of the
-two is chosen to dial. Two that both listen never say anything.
-
 What `ask` returns is to be called when whoever asked has gone: the other end is told, and nothing more is heard
 for it. A `Following`'s `stop` does the same for a view.
 
@@ -130,8 +55,22 @@ A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `
 shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
 the other end after the views that end follows show what the answer is about.
 
-An end that dials is given what opens a connection, and comes back when one drops. A backend takes connections
-as they arrive and hands each to the link that listens for it:
+### Two ends that are not alike
+
+The end that opened the connection dials. The other listens. Where neither opened it, a pair of message ports,
+one of the two is chosen to dial: two that both listen never say anything.
+
+| Made with | What it is |
+|---|---|
+| `dial(transport)` | Dials on one connection, and ends when it closes. What it sends goes at once, beside its hello |
+| `dial(open, { reopen })` | Dials, opens its own connections, and opens another after each one closes. Numbers nothing until the other end has said hello |
+| `listen(transport)` | Listens on one connection, and ends when it closes |
+| `listen()` | Listens, and is handed each connection with `carry`: a `Listener` |
+| `accept(onLink)` | A backend's: takes connections as they arrive, makes a link that listens for each new session, and hands a known session's connection back to its link |
+
+The end that dials says hello first, and ends for what it meets there. The end that listens says nothing on a
+connection until a hello that fits has arrived on it, and ends for nothing said before one: what does not fit
+is turned away, told why, and the link goes on with the connection it has.
 
 ```ts
 import { accept, dial, socket, timers } from '@apackdev/link'
@@ -144,50 +83,172 @@ const take = accept((link) => { /* join(link, backendPort) */ })
 server.on('connection', (ws) => take(socket(ws)))
 ```
 
-A link has no clock of its own, and one that opens its own connections is not made without being handed one:
-`dial(open, { reopen: { clock, first, most } })` (`timers` is a clock on `setTimeout`, to hand it). A connection
-has held once it has stayed up, after the other end said hello on it, for as long as the wait before it was
-opened, and `first` at least. After one that held, the next is opened at once. After one that did not, met or
-not, the link waits `first` milliseconds (100), doubled for each such connection in a row, `most` (10 000) at
-most. So a backend that is not there, and one that says hello and goes every time, are each dialled ever more
-slowly, and a connection that drops after doing its work is dialled again at once.
+### What a backend has to do itself
 
-A transport that throws where it is handed something to send is a connection that has gone: what it was handed
-is sent again on the next, and what it threw goes to `thrown`, since none of the transports here throws.
+- **Say who may connect.** A link authenticates nobody. A connection that says a session's id and a hello that
+  fits is that session, as far as a link can tell. Who may connect is settled by whatever takes the connections,
+  before one is handed to `accept`: a token on the socket, a socket path only the user can open.
+- **Close the link of a window that is gone.** A link outlives its connections, so a connection closing does not
+  say the window is gone, and nothing ends a link by a clock. `accept` keeps each link, with what it holds for
+  its window, until it ends: whoever takes the links calls `close()` on one when it knows its window is gone for
+  good. A design in which a link holds whose each session is, so that a host does not keep that itself, is
+  [proposed and not built](docs/proposed/sessions-have-owners.md). What a window on another machine would need
+  beyond it is [left out, with why](docs/deferred/remote-windows.md).
 
-Whoever holds a link says when the other end is gone for good, with `close()`: until then what was sent is kept.
-`accept` keeps each link until it ends, so a backend closes the link of a window it knows is gone; nothing ends
-one by a clock.
+## What it carries
 
-A link authenticates nobody. A connection that says a window's session and a hello that does not fit is turned
-away, and the window's link goes on; one that says a hello that does fit is the window, as far as a link can
-tell, and what a hello has to say to fit is told to anything that connects. Who may connect is settled by
-whatever takes the connections, before one is handed to `accept`: a token on the socket, a socket path only the
-user can open.
+| Frame | Says |
+|---|---|
+| `tell` | Something happened. Nobody waits |
+| `ask`, `answer` | A question, and how it ended. Answered once |
+| `progress` | What the one answering says before it answers |
+| `left` | Whoever asked has gone, and the work for them can stop |
+| `follow`, `shown`, `unfollow` | A view: its result, and each changed result after it |
+| `over` | The one running a view has ended it, and why |
+
+Nothing else. A new frame is a new thing a state can say, and is added with the kernel that says it.
+
+## What holds
+
+### Once, and in order
+
+- **Every frame is numbered, and taken only in turn.** A frame lost, doubled or out of place ends the link,
+  saying why. So does anything that is not one of the frames above: an id is a whole number from 1, a name is
+  text, a failure is a kind and a message. What a frame carries for a system is not looked at.
+- **A window hears of a step after its views show it.** What a system says to the other end waits until the
+  views it runs for that end have caught up with what was kept before it was said. A view's own updates are what
+  is waited for, and go at once.
+- **One message a turn.** What an end sends within one turn of the event loop crosses as one message, where it
+  fits in one.
+
+### Across a connection that drops
+
+- **A link outlives what carries it.** Each end keeps what it sent until the other says it took it, and a new
+  connection picks up where each end got to, within a frame in parts too. Nothing is taken twice.
+- **Nothing is handed to a stranger.** An end that opens its own connections sends nothing until it has met the
+  other end, so a window that starts before its backend listens starts with whichever backend it meets.
+- **A connection takes a link's place only once it fits.** The end that listens keeps the connection it has
+  until a hello that fits arrives on another. A hello that does not fit is turned away, and learns nothing of
+  the session.
+- **Opening again is paced on a clock handed in.** A link has no clock of its own, and one that opens its own
+  connections is not made without one (`timers` is a clock on `setTimeout`, to hand it). After a connection that
+  held, the next is opened at once. After one that did not, the wait is `first` milliseconds, doubled for each
+  such connection in a row, `most` at the most. A connection has held once it has stayed up, after the other
+  end said hello on it, for as long as the wait before it.
+
+### What cannot be sent
+
+- **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number:
+  a `TypeError` for one that cannot be encoded, a `RangeError` for one larger than a frame may be
+  (`bound.frame`) or sent with a cause longer than 1024 bytes. The link goes on, with nothing missing before
+  the next frame. Through `join`, the one ask or view it belonged to fails, and no other.
+- **`prepare(frame)` encodes a frame now, to be sent later** without being encoded again: what a peer holds for
+  its views is refused where it was said, and crosses as it was when it was said.
+
+### Sizes
+
+Every size a link counts or reports is in bytes, of text as UTF-8.
+
+- **Nothing has to be set to match.** A frame is cut, where it is numbered, to what the transport takes
+  (`Transport.most`) and what the other end says it takes (each says so in its hello). It crosses whole where it
+  fits, and otherwise as parts, each numbered and each as long as fits, and is handed over whole in the place of
+  its first. `part` is only the most a part may be.
+- **A batch is cut the same way:** into the fewest messages that fit, between the things said, in order.
+- **`LEAST` is 1144 bytes,** and is the least any link is carried on, whatever it is set with: the shortest part
+  (16), the longest cause (1024), what JSON puts around a thing numbered at the most (102), and the batch's two.
+  What takes less is closed, with a `RangeError`, as it is handed over.
+- **What is kept is sent again as it was.** So a connection that takes less than something an end still keeps,
+  and the hello on it does not say was taken, cannot carry it. That is found at the hello: the end that listens
+  turns the connection away, and the end that dialled ends `too narrow`.
+
+### Bounded
+
+- **How far behind the other end is, is what it has not said it took.** Past a mark (`bound.kept`) a link stops
+  numbering what is sent, and it waits.
+- **Only a view's overtaken result is let go.** One that a later result of the same view overtakes while it
+  waits is dropped: only the last matters. Nothing else is.
+- **Past the bound on what waits (`bound.waiting`) the link ends `overrun`,** saying by how much.
+
+### Knowing the other end is there
+
+- **Never a time to answer in.** What carries a link saying it closed is how an end knows the other has gone.
+  An ask that takes an hour is not a link that has gone.
+- **A connection that can go quiet without closing is watched** only where a clock is handed in (`there`), and
+  only while this end is owed something, a `taken` or an answer. With nothing at all arriving for half the
+  window it asks whether the other end is there, and after a whole window it lets the connection go and another
+  is opened.
+
+### Listeners, closing and ending
+
+- **A listener that throws loses nothing.** Every frame of the batch is still taken, in order, every other
+  listener is still called, and the link goes on. What was thrown goes to `thrown`. A system joined to a link is
+  a listener.
+- **A transport that throws where it is handed something to send is a connection that has gone.** What it was
+  handed is sent again on the next, and what it threw goes to `thrown`.
+- **Closing sends what was sent.** `close()` sends everything sent before it, what waited for room included,
+  and then the goodbye, wherever it can arrive no more than once: on a connection where the other end has been
+  met, and on any connection of an end that has never met anybody. What waited with nowhere to go is let go.
+- **Ending is said once, to both ends, with why.** Every ask waiting ends `disconnected`, every view followed is
+  said to be over, and whatever an end was answering or showing for the other is told to stop.
+
+### What may be seen
+
+- **What caused a frame crosses with it.** `send(frame, { cause })`, and `onFrame` hears the cause.
+- **A tap never sees what a frame carries.** `onTraffic` is told of each frame out and in: its direction,
+  number, kind, id, name, size and cause. Of one sent `{ private: true }`, only that it crossed, its number and
+  its size.
+- **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and what is
+  thrown for a frame that cannot be encoded is the link's own.
+
+## How a link ends
+
+`onEnd` is called once, with one of these.
+
+| `why` | It ended because | Also says |
+|---|---|---|
+| `closed` | this end was closed, or the one connection of a link that does not come back went | |
+| `goodbye` | the other end said it was going | `bye`: `restarting` or `ended` |
+| `lost` | the session cannot be gone on with: the other end is a new one, or does not hold what is needed | |
+| `version` | the other end is another link | `mine`, `theirs` |
+| `out of order` | a number arrived that was not the next | `expected`, `got` |
+| `not a frame` | what arrived was not something a link says | `size` |
+| `overrun` | what waits to be sent passed its bound, with nothing left to let go | `waiting`, `bound` |
+| `too narrow` | the connection takes no message as long as this end needs | `most`, `needs` |
+
+Only the end that dials ends `lost`, `version` or `too narrow` for a first word: the end that listens turns the
+connection away and goes on.
+
+## What a link is set with
+
+`dial`, `listen` and `accept` take the same options. Both ends are given the same `codec`; nothing else has to
+agree.
+
+| Option | What it sets | Unless given |
+|---|---|---|
+| `reopen: { clock, first, most }` | The clock an end that opens its connections paces them on, and the first wait and the longest, in milliseconds | No default clock: `dial(open)` throws without one. `first` 100, `most` 10 000 |
+| `there: { window, clock }` | How long a connection may be quiet while this end is owed something | Nothing is watched |
+| `bound.kept: { frames, size }` | How much sent and not yet taken there may be before nothing more is numbered | 1024 frames, 16 MiB |
+| `bound.waiting: { frames, size }` | How much may wait to be numbered before the link ends `overrun` | 16 384 frames, 64 MiB |
+| `bound.frame` | How many bytes one frame and its cause may be. 1024 at least | 64 MiB |
+| `part` | The most a part, and a message of several things, may be, in bytes. 16 at least | 1 MiB |
+| `codec` | What batches are encoded in. One that puts more around a frame than JSON does is refused | JSON |
+| `thrown(error)` | Handed what a listener, opening a connection, or a transport's `send` threw | Thrown again in a turn of its own |
+| `later(run)` | What puts a batch off until the end of the turn. A spec gives a schedule's lane | A microtask |
+
+## What it is carried on
 
 A `Transport` is anything that takes a message, text or bytes, at one end and hands it over at the other, in
-order, until it closes. Four are here, and none imports what it is carried on:
+order, until it closes. It may say the longest message it carries (`most`) and how much it has not yet written
+(`waiting`). Four are here, and none imports what it is carried on:
 
 | | Carried on |
 |---|---|
-| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` is the longest message the server takes, where it has a limit: the link cuts to it. What is sent while it is opening waits for it to open |
+| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` is the longest message the server takes, where it has a limit. What is sent while it is opening waits for it to open |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
-| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed. A link carried on it is told `most`, and sends nothing longer |
+| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed |
 | `memoryPair()` | Two ends in memory, for specs |
 
 Whoever holds the socket opens it, with whatever it needs to be let in.
-
-## Getting it
-
-Never from npm. Each commit on `master` whose CI passed is released as `pkg-<commit>`, with the tarball attached:
-
-```bash
-npm install https://github.com/spankyed/apack-link/releases/download/pkg-<commit>/apackdev-link-0.1.0.tgz
-```
-
-[`REFERENCE.md`](REFERENCE.md) is every export with its doc comment and signature. [`docs/wire.md`](docs/wire.md)
-is everything an end sends, for whoever speaks to a link without this package, with an exchange recorded as it
-crossed that the specs hold the package to.
 
 ## Specs under every order
 
@@ -210,26 +271,27 @@ await everyOrder((schedule) => {
 
 A failure names the order that led to it and the choices to `replay` it with.
 
-The scenarios are a kit. Each in `peers` is written against what the package exports and nothing else, and plays
-over whatever two ends it is handed, so an end built another way, or carried on something else, is held to the
-same file:
+**The scenarios are a kit.** Each in `peers` and `hold` is written against what the package exports and
+nothing else, and plays over whatever two ends it is handed, so an end built another way, or carried on
+something else, is held to the same file:
 
 ```ts
-import { everyOrder, memoryEnds, peers } from '@apackdev/link/testing'
+import { everyOrder, hold, memoryEnds, peers } from '@apackdev/link/testing'
 
 for (const scenario of [...peers, ...hold]) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
 ```
 
-Over something real, `carried(schedule, [left, right])` puts what arrives at each end into a lane of its direction,
-and a run waits for what is on its way: this package runs every scenario over a WebSocket, a message port and a
-stream of bytes as well as over memory.
+Over something real, `carried(schedule, [left, right])` puts what arrives at each end into a lane of its
+direction, and a run waits for what is on its way: this package runs every scenario over a WebSocket, a message
+port and a stream of bytes as well as over memory. The scenarios in `resume` play over two
+ends whose connection can be dropped and whose backend can be restarted: `droppingMemoryEnds` is that, in memory.
 
-Beside what each scenario checks, a run can be held to the model: a queue each way between two ends, and whether
-each end is still there. `model()` is that, and each link put under it (`held.end(link, 'a')`, or the third thing
-`memoryEnds` and `droppingMemoryEnds` take) is noted as it is sent to, hands over and ends. Its `check` throws for
-the first thing an end did that the model could not have, with what led to it: a frame out of turn, twice, changed,
-with another cause or from nowhere, anything handed over after an ending, an ending for what crossed, a session lost with both ends
-still there, and at rest, what was sent and never handed over. `underModel` puts its check after a scenario's own:
+**A run can be held to the model:** a queue each way between two ends, and whether each end is still there.
+`model()` is that, and each link put under it is noted as it is sent to, hands over and ends. Its `check` throws
+for the first thing an end did that the model could not have, with what led to it: a frame out of turn, twice,
+changed, with another cause or from nowhere, anything handed over after an ending, an ending for what crossed,
+a session lost with both ends still there, and at rest, what was sent and never handed over. `underModel` puts
+its check after a scenario's own:
 
 ```ts
 import { everyOrder, memoryEnds, peers, underModel } from '@apackdev/link/testing'
@@ -243,29 +305,26 @@ how the scenarios are known to be able to.
 ## Not its job
 
 - **A general RPC library.** It carries what states say to each other and nothing else.
-- **Old peers and new.** Both ends ship together. An end that meets another it cannot talk to refuses it; nothing
-  is negotiated.
+- **Old peers and new.** Both ends ship together. An end that meets another it cannot talk to refuses it;
+  nothing is negotiated.
 - **What a frame means.** Which system takes an ask, and what a view is, are the kernel's.
+- **Who is at the other end.** That is for whatever takes the connections.
 
-## Where it is going
-
-[`docs/plan.md`](docs/plan.md) is the plan, a step at a time, each with what it has to hold and how it is known to
-be done:
-
-0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye. **Built.**
-1. Peers: asks matched to their answers, views followed and let go. **Built.**
-2. The hold: what a step sends a window waits until that window's views have caught up. **Built.**
-3. One write a turn. **Built.**
-4. A socket, a message port and a stream of bytes to be carried on. **Built.**
-5. A connection that comes back, with nothing taken twice. **Built.**
-6. A bound on what waits, with a view's overtaken update let go. **Built.**
-7. Knowing the other end is there by what it does, never by a time to reply. **Built.**
-8. What caused a frame, a tap that never sees what one carries, and frames that are private. **Built.**
-9. Bytes, and frames too large for one write. **Built.**
-10. Releases apack can pin, and the wire written down once. **Built.**
-
-Left out on purpose, with a plan of its own:
+Decided against, each with why: [causal delivery in place of the hold](docs/wont-do/causal-delivery.md),
+[credit the other end grants](docs/wont-do/credit-based-flow-control.md) and
+[resume outside the core](docs/wont-do/resume-outside-the-core.md). Left out for now, each with a plan of its
+own: [a window on another machine](docs/deferred/remote-windows.md) and
 [views that never pass through the server's JavaScript](docs/deferred/views-from-the-engine.md).
+
+## Getting it
+
+Never from npm. Each commit on `master` whose CI passed is released as `pkg-<commit>`, with the tarball attached:
+
+```bash
+npm install https://github.com/spankyed/apack-link/releases/download/pkg-<commit>/apackdev-link-0.1.0.tgz
+```
+
+It has no dependencies at run time, and runs in a window and in Node from one source.
 
 ## Developing
 
@@ -275,12 +334,12 @@ npm run typecheck
 npm test
 npm run build
 npm run reference:check    # REFERENCE.md as the source says; :update writes it
-npm run package:smoke      # the tarball installed elsewhere, and the README's example run from it
+npm run package:smoke      # the tarball installed elsewhere, and the README's first example run from it
 ```
 
 Node 24.12 or later.
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option; the npm package ships both
-texts.
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option; the npm package ships
+both texts.
