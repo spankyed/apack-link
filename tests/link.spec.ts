@@ -591,9 +591,9 @@ describe('what carries a link taking no message longer than it says', () => {
     return { narrow, right, texts, noted }
   }
   const bytes = (text: string): number => new TextEncoder().encode(text).length
-  /** A frame may be 1024 bytes, so what carries the link takes 1090 at least: the frame, what is put around it, and the batch's two. */
+  /** A frame may be 1024 bytes, so what carries the link takes 1154 at least: the frame, what is put around it, and the batch's two. */
   const bound = { frame: 1024 }
-  const LEAST = 1024 + 64 + 2
+  const LEAST = 1024 + 128 + 2
   /** Frames past one byte a character, so that it is bytes the texts are cut by. */
   const frames = (count: number): Frame[] => Array.from({ length: count }, (_, at) => tell(`✓é ${'x'.repeat(100 + at)}`))
 
@@ -681,7 +681,7 @@ describe('what carries a link taking no message longer than it says', () => {
     const arriving = limited(LEAST - 1)
     expect(() => accept(() => {}, { bound })(arriving.narrow)).toThrow(RangeError)
     expect(arriving.noted.closed).toBe(1)
-    // With the 64 MiB a frame may be unless told, 1090 bytes is nowhere near.
+    // With the 64 MiB a frame may be unless told, 1154 bytes is nowhere near.
     expect(() => link(limited(LEAST).narrow)).toThrow(RangeError)
     // The first of a link that opens its own.
     const opening = limited(LEAST - 1)
@@ -727,7 +727,7 @@ describe('what carries a link taking no message longer than it says', () => {
 
 describe('the longest message an end takes', () => {
   const bound = { frame: 1024 }
-  const LEAST = 1024 + 64 + 2
+  const LEAST = 1024 + 128 + 2
   const bytes = (text: string): number => new TextEncoder().encode(text).length
   const frames = (count: number): Frame[] => Array.from({ length: count }, (_, at) => tell(`✓é ${'x'.repeat(100 + at)}`))
   /** A link on a transport that takes any length, facing a bare end, with each text the link sends. */

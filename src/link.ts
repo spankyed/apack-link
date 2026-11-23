@@ -235,8 +235,13 @@ const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
 const FRAME = 64 * 1024 * 1024
 /** The least `bound.frame` may be: more than anything a peer says in place of what could not be sent. */
 const SMALLEST = 1024
-/** More than everything a link puts around a frame and its cause where it numbers it: a number, and the names. */
-const AROUND = 64
+/**
+ * More than everything a link puts around a frame and its cause where it numbers it, or around a part of one: the
+ * numbers, and the names.
+ */
+const AROUND = 128
+/** The least a part may be: more than any one character is as a part's data, so that a frame can always be cut to it. */
+const SHORTEST = 16
 /** The shortest message that holds any one frame of `largest` bytes: the frame, what is put around it, and the batch's own two. */
 const needs = (largest: number): number => largest + AROUND + 2
 /** Throws for what takes no message as long as a frame may be, having closed it: a link is not carried on that. */
@@ -291,6 +296,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const later = options.later ?? queueMicrotask
   const codec = options.codec ?? json
   const part = options.part ?? PART
+  if (part < SHORTEST) throw new RangeError(`part is ${SHORTEST} bytes at least`)
   const mine = crypto.randomUUID()
   /** The other end's session, once it has said it. A connection from another is not this link's. */
   let theirs: string | undefined
@@ -316,7 +322,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   /** For each view with a result waiting, that result: a later one takes its place. */
   const showing = new Map<number, (typeof waiting)[number]>()
   /** The parts of a frame arriving in parts, so far, and how many bytes they were as they crossed. */
-  let parting: { readonly first: number; readonly of: number; readonly pieces: Message[]; size: number; readonly cause?: string; readonly private: boolean } | undefined
+  let parting: { readonly first: number; readonly of: number; readonly pieces: Message[]; bytes: number; size: number; readonly cause?: string; readonly private: boolean } | undefined
   let ending: Ending | undefined
   const hears: Array<(frame: Frame, cause?: string) => void> = []
   const taps: Array<(traffic: Traffic) => void> = []
@@ -491,14 +497,30 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     say(now!, encoded, size)
     return size
   }
+  /**
+   * A frame's encoding as the data of its parts, in order, each no longer than a part as it crosses. A piece of the
+   * encoding may be longer as data than it was (text in JSON, with each quote in it said in two), so one that is
+   * too long is cut again, in half, until it is not or is one character.
+   */
+  const partsOf = (encoded: Message): Message[] => {
+    const all: Message[] = []
+    const add = (piece: Message, within: number): void => {
+      const data = codec.encode(piece)
+      if (sizeOf(data) <= part || within <= 1) { all.push(data); return }
+      const half = Math.ceil(within / 2)
+      for (const smaller of cut(piece, half)) add(smaller, half)
+    }
+    for (const piece of cut(encoded, part)) add(piece, part)
+    return all
+  }
   /** Numbers a frame, in parts if it is longer than a part, each in turn. */
   const number = (encoded: Message, size: number, about: About): void => {
     const first = sent + 1
     let crossing = 0
     if (size <= part) crossing = unit([['frame', encoded]], about, true)
     else {
-      const pieces = cut(encoded, part)
-      pieces.forEach((piece, at) => { crossing += unit([['part', codec.encode(at)], ['of', codec.encode(pieces.length)], ['data', codec.encode(piece)]], about, at === 0) })
+      const pieces = partsOf(encoded)
+      pieces.forEach((data, at) => { crossing += unit([['part', codec.encode(at)], ['of', codec.encode(pieces.length)], ['data', data]], about, at === 0) })
     }
     tap(seen('out', first, crossing, about))
     watch(false)
@@ -651,8 +673,12 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     if (seq !== heard + 1) { end({ why: 'out of order', expected: heard + 1, got: seq }); return }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
     if (at === 0 ? parting !== undefined : parting?.of !== of || parting.pieces.length !== at) { unknown(on); return }
-    if (at === 0) parting = { first: seq, of, pieces: [], size: 0, ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
+    if (at === 0) parting = { first: seq, of, pieces: [], bytes: 0, size: 0, ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = parting!
+    // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is
+    // bounded, however many parts it is said to be in. A part holds something, so they are no more than that many.
+    whole.bytes += sizeOf(data)
+    if (sizeOf(data) === 0 || whole.bytes > largest) { unknown(on); return }
     whole.pieces.push(data)
     if (taps.length) whole.size += sizeOf(codec.encode(arrived))
     heard = seq

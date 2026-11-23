@@ -163,3 +163,106 @@ describe('fifty megabytes over a WebSocket', () => {
     }
   }, 60_000)
 })
+
+describe('a part as it crosses', () => {
+  const bytes = (message: Message): number => (typeof message === 'string' ? new TextEncoder().encode(message).byteLength : message.byteLength)
+  /** One end on something that takes no message longer than `most`, noting how long each it is handed is. */
+  const narrow = (most: number) => {
+    const [left, right] = memoryPair()
+    const writes: number[] = []
+    const transport: Transport = { ...left, most, send: (message) => { writes.push(bytes(message)); left.send(message) } }
+    return { transport, right, writes }
+  }
+
+  for (const [name, codec] of [['JSON', undefined], ['msgpack', msgpack]] as const) {
+    for (const [what, event] of [
+      ['quotes, each said in two as a part\'s data', '"'.repeat(960)],
+      ['backslashes', '\\'.repeat(960)],
+      ['what is said in six, with characters of more than one byte among it', '\u0001✓𝄞'.repeat(150)],
+      ['plain text', 'x'.repeat(1900)],
+    ] as const) {
+      it(`is no longer than what carries the link takes, whatever the frame holds, in ${name}: ${what}`, async () => {
+        // A frame may be 2048 bytes, a part nearly as long, and what carries the link takes no more than it must.
+        const most = 2048 + 128 + 2
+        const options = { bound: { frame: 2048 }, part: 1500, ...(codec ? { codec } : {}) }
+        const { transport, right, writes } = narrow(most)
+        const a = link(transport, options)
+        const heard: Frame[] = []
+        const ended: Ending[] = []
+        const b = link(right, options)
+        b.onFrame((frame) => { heard.push(frame) })
+        b.onEnd((ending) => { ended.push(ending) })
+        a.send(tell(event), { cause: 'c'.repeat(40) })
+        await until(() => heard.length === 1 || ended.length > 0)
+        expect([ended, heard]).toEqual([[], [tell(event)]])
+        expect(Math.max(...writes)).toBeLessThanOrEqual(most)
+      })
+    }
+  }
+
+  it('holds no more than a part of data, in bytes as it crosses, down to the shortest a part may be', async () => {
+    for (const part of [16, 17, 50, 333]) {
+      const [left, right] = memoryPair()
+      const said: Array<Record<string, unknown>> = []
+      const a = link({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
+      const heard: Frame[] = []
+      link(right, { part }).onFrame((frame) => { heard.push(frame) })
+      // The second is nothing but what is said in two, and in two again as data: cut once more is not enough for it.
+      const frames = [tell('"\\\u0001✓𝄞 plain '.repeat(60)), tell('"'.repeat(200))]
+      for (const frame of frames) a.send(frame)
+      await until(() => heard.length === 2)
+      expect(heard).toEqual(frames)
+      const data = said.filter((one) => 'part' in one).map((one) => JSON.stringify(one.data))
+      expect([part, Math.max(...data.map(bytes)) <= part]).toEqual([part, true])
+    }
+    expect(() => link(memoryPair()[0], { part: 15 })).toThrow(RangeError)
+  })
+})
+
+describe('the parts of a frame, as they arrive', () => {
+  const part = (seq: number, at: number, of: number, data: string) => ({ seq, part: at, of, data })
+  const hello = { link: 1, session: 'bare', taken: 0 }
+  /** A link that takes frames of 2048 bytes at most, facing a bare end. */
+  const facing = () => {
+    const [bare, right] = memoryPair()
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const b = link(right, { bound: { frame: 2048 } })
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    bare.send(JSON.stringify([hello]))
+    return { bare, heard, ended }
+  }
+
+  it('end the link once they add up to more than a frame may be, however many more are said to be coming', async () => {
+    const { bare, heard, ended } = facing()
+    const piece = 'x'.repeat(1000)
+    const last = JSON.stringify([part(3, 2, 1_000_000, piece)])
+    bare.send(JSON.stringify([part(1, 0, 1_000_000, piece)]))
+    bare.send(JSON.stringify([part(2, 1, 1_000_000, piece)]))
+    await turn()
+    expect(ended).toEqual([])
+    // The third is past 2048 bytes.
+    bare.send(last)
+    for (let at = 3; at < 50; at++) bare.send(JSON.stringify([part(at + 1, at, 1_000_000, piece)]))
+    await turn()
+    expect([heard, ended]).toEqual([[], [{ why: 'not a frame', size: last.length }]])
+  })
+
+  it('are taken when they add up to exactly as much as a frame may be', async () => {
+    const { bare, heard, ended } = facing()
+    const frame = tell('x'.repeat(2048 - JSON.stringify(tell('')).length))
+    const text = JSON.stringify(frame)
+    bare.send(JSON.stringify([part(1, 0, 2, text.slice(0, 1024)), part(2, 1, 2, text.slice(1024))]))
+    await turn()
+    expect([heard, ended]).toEqual([[frame], []])
+  })
+
+  it('end the link when one of them holds nothing', async () => {
+    const { bare, heard, ended } = facing()
+    const text = JSON.stringify([part(1, 0, 1_000_000, '{"kind":'), part(2, 1, 1_000_000, '')])
+    bare.send(text)
+    await turn()
+    expect([heard, ended]).toEqual([[], [{ why: 'not a frame', size: text.length }]])
+  })
+})
