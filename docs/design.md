@@ -366,6 +366,33 @@ arrive. A link sends text today and takes either: bytes are read as UTF-8.
 
 Which of these apack's windows and tools are carried on is apack's to decide; a link is the same over each.
 
+## What an end does, and what does it
+
+An end is in two pieces. `src/core.ts` is what an end does with nothing done: it is handed what the end holds and
+one thing that happened (a frame sent, a message arriving on a connection, a connection closing, a turn ending, a
+clock running out) and it changes what the end holds and returns what is to be done about it: write these to that
+connection, close it, say when this turn is over, put this on a clock, open a connection, hand this frame over, say
+the link has ended. It sends nothing, waits on nothing and calls nobody. `src/link.ts` is what does it: it holds
+the transports, the clocks and the listeners, tells the core each thing that happens, and does what comes back, in
+order.
+
+Three things follow, and they are why it is built so.
+
+- **A step is whole before anything it asked for happens.** A listener that sends or closes as it is called, and a
+  transport that says it closed as it is closed, find the end as that step left it, and what they do is a step of
+  its own. Nothing of the link's is half done under anything it calls. A frame handed over is the last thing a
+  step asks for: once whoever it was handed to has been called, the rest of the message it came in is taken, so a
+  listener that closes the link is handed nothing after.
+- **What an end holds is values.** Each connection and each thing on a clock is a number. So an end can be copied,
+  compared and written down, and a copy goes on as the original would have.
+- **What an end does can be run with nothing real under it.** `tests/support/space.ts` steps the cores of two ends
+  by hand over a network that is only values, and from every state tries everything that can happen next. A state
+  reached by a thousand orders is looked at once.
+
+What the core is given beside what happened is whatever it would otherwise have had to ask for: how many bytes a
+transport has not yet written comes with the event it is counted for. What an end is set with (`Setup`) does not
+change while it lasts.
+
 ## How it is known to hold
 
 Where order matters, a spec is run under every order. `src/testing/schedule.ts` stands in for the event loop:
@@ -392,6 +419,19 @@ session lost while every end is still there, a goodbye nobody said, and, at rest
 sent by the one it is talking to and has not been handed. A scenario says what its systems should see. The model
 says what no scenario has to: that whatever else happened, nothing was handed over that a queue would not have
 handed over. `tests/model.spec.ts` shows it able to fail, on ends that are wrong in one way each.
+
+And the core is run from every state two ends can reach (`tests/core.spec.ts`): both sending, a connection that
+drops, more sent than may be kept, a first connection that reaches nobody, a listener that restarts, a goodbye from
+either end, a quiet connection watched and let go, a connection that goes at one end before the other so that the next
+reaches an end still on it, a view's results overtaken where they wait, and a frame in parts across a drop. Each state is held to the same model, kept as counts (a
+frame handed over is the next one the other end sent, by the one end this one talks to), to no ending for what
+crossed and no session lost with every end there, and to what an end holds adding up: what is kept is exactly what
+was numbered and not let go, and the sizes counted are the sizes held. At rest, two ends still there have each been
+handed all the other sent. An end that has ended holds nothing and has nothing on a clock, and one that has not
+has on a clock exactly what it holds a number for. More can happen here than on a schedule: a clock runs out and a turn ends at any
+moment, where a schedule keeps each in a lane. For one frame each way and one drop that is 7,004 states, where the
+schedule runs 10,992 orderings of fewer. The same spec spoils what a step asked for, one way at a time, and each is
+found.
 
 What a consumer gets is held too. `npm run reference:check` compares `REFERENCE.md` with what each entry exports,
 and fails for an export no spec uses, read from the type checker. `npm run package:smoke` packs the package,

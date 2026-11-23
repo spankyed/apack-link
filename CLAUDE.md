@@ -9,8 +9,11 @@ know before changing it.
 - `src/frames.ts` is every frame there is, and what tells one from anything else that arrives (`asFrame`). A link
   carries what states say to each other and nothing else, so a new frame is a new thing a state can say, and is
   added with the kernel that says it.
-- `src/link.ts` is one end: frames numbered as they are sent, taken only in turn, and the link closed where one
-  arrives out of place.
+- `src/core.ts` is what one end does, with nothing done: given what an end holds and one thing that happened, what
+  it holds after and what is to be done. Frames numbered as they are sent, taken only in turn, and the link closed
+  where one arrives out of place. It imports no transport and no clock, and calls nobody.
+- `src/link.ts` is one end on what it is handed: it tells the core what happened, and does what the core says, on
+  transports, clocks and listeners. Nothing is decided there.
 - `src/codec.ts` is what batches are encoded in: JSON built in, any other handed in.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory. `src/socket.ts`, `src/port.ts`
   and `src/stream.ts` are a WebSocket, a message port and a stream of bytes, none of them imported.
@@ -19,6 +22,7 @@ know before changing it.
   scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios every end is
   held to (`scenarios.ts`), written against what the package exports and nothing else. `model.ts` is what a link
   is with nothing about how, a queue each way, and what holds a run of real ends to it.
+- `tests/support/space.ts` runs the core from every state two ends can reach, each state once.
 - `docs/wire.md` is everything an end sends, ending in a recorded exchange that `tests/wire.spec.ts` holds the
   package to text for text. `REFERENCE.md` is every export, made by `npm run reference:update`.
 - `scripts/` is what CI and a release run: the reference, the package smoke, and the check that no workflow
@@ -45,6 +49,8 @@ know before changing it.
 - **The wire is one number.** Until a release exists that an end could be left on, a change to what crosses is
   made at both ends at once and `LINK` stays as it is. From the first release on, any change to what crosses
   takes a new number, and an end that says another is refused.
+- **The core does nothing.** Whatever sends, closes, waits or calls a listener is `link.ts`, doing what a step
+  returned. A step asks for a frame to be handed over last, and what an end holds stays values that can be copied.
 - **No dependencies at run time.** It runs in a window and in Node from one source.
 - **A spec says what holds, not how.** A case every rewrite that keeps the behaviour would fail is a case about
   the code.
