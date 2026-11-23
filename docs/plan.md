@@ -412,6 +412,22 @@ Done when: every scenario passes under the model in every order it is run in, an
 each of a frame out of turn, twice, changed, from nowhere or after an ending; an ending for what crossed; a
 session lost with every end there; and what was sent and not handed over at rest.
 
+## Step 12. What an end does, apart from what does it
+
+Built: `src/core.ts` (`core`, `setup`, `start`, `ready`, with `State`, `Event` and `Effect`), `src/link.ts` as what
+tells it each thing that happens and does what it says, `tests/support/space.ts` and `tests/core.spec.ts`. Nothing
+that crosses changed, and no spec that was there before did.
+
+A link was one closure: what it held, its transports, its clocks and its listeners in one place, each reaching the
+others in the middle of whatever it was doing. Every fix to it touched three or four of those at once. Here what an
+end does is a function of what it holds and what happened, returning what is to be done, and everything real is
+outside it. A step is whole before anything it asked for is done, so nothing a listener or a transport does
+arrives in the middle of one.
+
+Done when: every spec there was passes as it was written, the recorded exchange in `docs/wire.md` is the same text
+for text, and the core is run from every state two ends can reach under a script (sending, dropping, restarting,
+closing, a watched connection), each state held to the model and to what an end holds adding up.
+
 ## What is not this plan's to build
 
 These land with apack-state, by whoever is doing that work, and are here so the seam is known.
@@ -427,4 +443,4 @@ These land with apack-state, by whoever is doing that work, and are here so the 
 
 Steps 0 to 3 in order: each is the ground the next stands on. After step 3, steps 4, 8 and 10 touch different
 files and can be done side by side. Step 5 needs 3; 6 and 7 need 5; 9 needs 4 and 5. Step 11 needs 5, and is the ground for anything that changes how a
-link does what it does.
+link does what it does. Step 12 needs 11.
