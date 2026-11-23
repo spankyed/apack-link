@@ -136,7 +136,7 @@ A frame crosses as `{ "seq": n, "frame": { … } }`, with `"cause"` and `"privat
   length a link is carried on and the size of what it sends cannot be set apart from each other: the link
   reads the one and keeps to it. `accept` hands a link the transport's `most` and `waiting` with it.
   - **Found as a connection is handed over.** What takes no message as long as a frame the link may send (the
-    frame, 64 bytes around it, and the batch's two) does not carry the link: `link`, `carry` and `accept` close
+    frame, 128 bytes around it, and the batch's two) does not carry the link: `link`, `carry` and `accept` close
     it and throw a `RangeError`, and a link that opened it for itself counts it as a connection that did not
     hold. So a frame's size is held to one thing, `bound.frame`, known when it is sent; no frame is taken on that
     some later connection cannot carry, and nothing is found out by how large a frame happens to be.
@@ -308,6 +308,15 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   private. The other end takes each in turn and says it took it, so a resume picks up within the frame, and hands
   the frame over whole once the last has arrived, in its first part's place. Anything between its parts other than
   the next one is not a frame.
+- **A part is no longer than a part as it crosses.** What a part carries is a piece of the frame's encoding, said
+  as data, and a piece can be longer as data than it was: text in JSON has each quote and backslash in it said in
+  two. So a piece too long as data is cut again, in half, until it fits or is one character, and `part` is 16
+  bytes at least so that one character always does. With what goes around it, a part is then never longer than
+  what carries the link was found wide enough for, whatever the frame holds.
+- **What a frame's parts add up to is bounded where they arrive.** An end keeps the parts of one frame until the
+  last, and takes no more of them than a frame may be (`bound.frame`), nor one that holds nothing: past that the
+  link ends `not a frame`, however many parts were said to be coming. Without it, what an end kept would be
+  bounded by nothing the moment a frame was said to be in parts.
 - **A batch leaves once it is as long as a part**, as well as at the end of the turn, so no one write is much longer
   than a part, and a resume sends again what was kept the same way.
 - **A tap's `size`** is how many bytes a frame is as it crosses, numbered and with its cause: for a frame in parts,
