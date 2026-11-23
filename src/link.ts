@@ -18,7 +18,11 @@
 // on; since a frame is taken only in turn, nothing is taken twice. A link given what opens a connection opens
 // another when one closes; a link made with nothing is handed each connection (`carry`), as a backend's are by
 // `accept`. Neither is given a time to wait: whoever holds a link says when the other end is gone, with `close`.
-import type { Frame, Sent } from './frames.ts'
+//
+// What is kept is bounded. How far behind the other end is, is what it has not said it took: past a mark, a link
+// stops numbering, and what is sent waits unnumbered, where a view's result that a later one has overtaken can be
+// let go. What waits is bounded too, and past it, with nothing left to let go, the link ends `overrun`.
+import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
 
 /** Which link this is. Both ends ship together, so there is one, and an end that says another is refused. */
@@ -40,6 +44,11 @@ export type Ending =
   | { readonly why: 'out of order'; readonly expected: number; readonly got: number }
   /** What arrived was not something a link says. `size` is the length of its text, which is all that is kept of it. */
   | { readonly why: 'not a frame'; readonly size: number }
+  /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
+  | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
+
+/** How much: a count of frames, and the length of their text. */
+export interface Size { readonly frames: number; readonly size: number }
 
 export interface Link {
   /**
@@ -62,6 +71,8 @@ export interface Link {
   carry(transport: Transport): void
   /** How many frames this end keeps because the other has not said it took them. */
   kept(): number
+  /** How many frames wait to be numbered, because the other end is behind or there is no connection. */
+  waiting(): number
 }
 
 /** What an end says of itself. None takes a number. */
@@ -77,7 +88,17 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 export interface Options {
   /** What puts the batch off until the end of the turn. A microtask unless given; a spec gives a schedule's lane. */
   later?(run: () => void): void
+  /**
+   * `kept`: how much sent and not yet taken there may be before a link stops numbering what is sent, counted as
+   * well against what the transport says it has not yet written. `waiting`: how much may wait to be numbered
+   * before the link ends `overrun`.
+   */
+  bound?: { readonly kept?: Size; readonly waiting?: Size }
 }
+
+/** A link a little behind sends at once; one far behind lets a view's results be overtaken; one past it ends. */
+const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
+const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
 
 const decoder = new TextDecoder()
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
@@ -96,8 +117,16 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   let heard = 0
   /** The last number this end has said it took. */
   let told = 0
-  /** What was sent and not yet taken, as it is on the wire, oldest first. */
+  /** What was sent and not yet taken, as it is on the wire, oldest first, and the length of all of it. */
   let kept: Array<{ readonly seq: number; readonly text: string }> = []
+  let keptSize = 0
+  const mark = { ...KEPT, ...options.bound?.kept }
+  const bound = { ...WAITING, ...options.bound?.waiting }
+  /** What was sent and waits to be numbered, as each frame's own text, oldest first, and the length of all of it. */
+  let waiting: Array<{ text: string; readonly view?: number }> = []
+  let waitingSize = 0
+  /** For each view with a result waiting, that result: a later one takes its place. */
+  const showing = new Map<number, (typeof waiting)[number]>()
   let ending: Ending | undefined
   const hears: Array<(frame: Frame) => void> = []
   const ends: Array<(ending: Ending) => void> = []
@@ -121,7 +150,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
 
   const flush = (on: Connection): void => {
     on.due = false
-    if (!on.batch.length || ending || now !== on) return
+    if (ending || now !== on) return
+    if (!on.batch.length && !(on.met && heard > told)) return
     // What this end has taken goes with it, when there is more to say of it: last, behind a hello if there is one.
     if (on.met && heard > told) { on.batch.push(JSON.stringify({ taken: heard } satisfies Taken)); told = heard }
     const text = `[${on.batch.join(',')}]`
@@ -139,6 +169,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     if (ending) return
     ending = why
     kept = []
+    waiting = []
+    showing.clear()
     const was = now
     now = undefined
     was?.transport.close()
@@ -155,9 +187,29 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const letGo = (taken: number): boolean => {
     if (taken > sent) return false
     let first = 0
-    while (first < kept.length && kept[first]!.seq <= taken) first++
+    while (first < kept.length && kept[first]!.seq <= taken) keptSize -= kept[first++]!.text.length
     if (first) kept = kept.slice(first)
     return true
+  }
+
+  /** Whether what is sent now can be numbered: there is a connection, and the other end is not too far behind. */
+  const roomy = (): boolean => !!now?.live && kept.length < mark.frames && keptSize < mark.size && (now.transport.waiting?.() ?? 0) < mark.size
+  /** Numbers a frame and puts it in this turn's batch. Joining text cannot fail. */
+  const number = (frameText: string): void => {
+    sent++
+    const text = `{"seq":${sent},"frame":${frameText}}`
+    kept.push({ seq: sent, text })
+    keptSize += text.length
+    say(now!, text)
+  }
+  /** Numbers what waits, oldest first, for as long as there is room. */
+  const pump = (): void => {
+    while (waiting.length && !ending && roomy()) {
+      const one = waiting.shift()!
+      waitingSize -= one.text.length
+      if (one.view !== undefined && showing.get(one.view) === one) showing.delete(one.view)
+      number(one.text)
+    }
   }
 
   const take = (on: Connection, arrived: unknown, unknown: () => void): void => {
@@ -167,13 +219,12 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       if (arrived.link !== LINK) { end({ why: 'version', mine: LINK, theirs: arrived.link }); return }
       const { session, taken, again } = arrived
       if (typeof session !== 'string' || !isCount(taken) || (again !== undefined && again !== true)) { unknown(); return }
-      // Another session than the one this link was talking to, one going on with something when this end is new,
-      // one that took what was never sent to it, or one that wants what is no longer held: what each end has is not
-      // what the other thinks.
+      // Another session than the one this link was talking to, one going on with something when this end is new, or
+      // one that took what was never sent to it: what each end has is not what the other thinks. What it has not
+      // taken is all still kept: numbering stops at the bound, so nothing is let go before it is taken.
       if (theirs !== undefined && session !== theirs) { lose(on); return }
       if (again && on.first) { lose(on); return }
       if (!letGo(taken)) { lose(on); return }
-      if (kept.length && kept[0]!.seq !== taken + 1) { lose(on); return }
       theirs = session
       on.met = true
       if (!on.live) {
@@ -198,6 +249,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     if (typeof seq !== 'number' || !isObject(frame) || typeof frame.kind !== 'string') { unknown(); return }
     if (seq !== heard + 1) { end({ why: 'out of order', expected: heard + 1, got: seq }); return }
     heard = seq
+    // This end says it took it with its next batch, and has one leave for that alone if none is to.
+    if (!on.due) { on.due = true; later(() => flush(on)) }
     for (const hear of hears) hear(frame as Frame)
   }
 
@@ -227,6 +280,9 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
         if (ending || now !== on) return
         take(on, one, unknown)
       }
+      // Anything arriving is when a link looks again at whether there is room to number what waits: a transport
+      // that had not written all it was given says nothing when it has.
+      pump()
     })
     say(on, JSON.stringify({ link: LINK, session: mine, taken: heard, ...(on.first ? {} : { again: true }) } satisfies Hello))
     told = heard
@@ -236,10 +292,23 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     send: (frame) => {
       if (ending) return
       // Put into text before it is numbered: a frame that cannot be is refused alone, and leaves no gap behind it.
-      const text = JSON.stringify({ seq: sent + 1, frame } satisfies Sent)
-      sent++
-      kept.push({ seq: sent, text })
-      if (now?.live) say(now, text)
+      const text = JSON.stringify(frame)
+      if (!waiting.length && roomy()) { number(text); return }
+      // A view's result waiting to be numbered is overtaken by a later one, which takes its place in the order.
+      const view = frame.kind === 'shown' ? frame.id : undefined
+      const overtaken = view === undefined ? undefined : showing.get(view)
+      if (overtaken) {
+        waitingSize += text.length - overtaken.text.length
+        overtaken.text = text
+      } else {
+        const one = { text, ...(view === undefined ? {} : { view }) }
+        waiting.push(one)
+        waitingSize += text.length
+        if (view !== undefined) showing.set(view, one)
+      }
+      if (waiting.length > bound.frames || waitingSize > bound.size) {
+        end({ why: 'overrun', waiting: { frames: waiting.length, size: waitingSize }, bound: { frames: bound.frames, size: bound.size } })
+      }
     },
     onFrame: (hear) => { hears.push(hear) },
     onEnd: (ended) => { if (ending) ended(ending); else ends.push(ended) },
@@ -254,6 +323,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     },
     carry,
     kept: () => kept.length,
+    waiting: () => waiting.length,
   }
   if (typeof over === 'object') carry(over)
   else if (typeof over === 'function') carry(over())

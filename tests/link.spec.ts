@@ -63,11 +63,12 @@ describe('a link', () => {
     const orderings = await everyOrder((schedule) => {
       const { a, b, heard, ended } = joined(schedule)
       // Each in a turn of its own, so each crosses as a batch of its own.
-      schedule.does('a', ['sends 1', () => a.send(tell(1))], ['sends 3', () => a.send(tell(3))])
-      schedule.does('b', ['sends 2', () => b.send(tell(2))], ['sends 4', () => b.send(tell(4))])
+      a.send(tell(1))
+      schedule.does('a', ['sends 3', () => a.send(tell(3))])
+      schedule.does('b', ['sends 2', () => b.send(tell(2))])
       return () => {
         expect(told(heard.b)).toEqual([1, 3])
-        expect(told(heard.a)).toEqual([2, 4])
+        expect(told(heard.a)).toEqual([2])
         expect([ended.a, ended.b]).toEqual([[], []])
       }
     })

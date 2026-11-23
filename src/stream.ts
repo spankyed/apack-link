@@ -5,6 +5,8 @@ import { once, type Message, type Transport } from './transport.ts'
 /** What a Node `Duplex` has, and all a link uses of one. */
 export interface DuplexLike {
   write(chunk: Uint8Array): unknown
+  /** How much of what was written is not yet handed on. */
+  readonly writableLength?: number
   end(): unknown
   on(event: 'data', listener: (chunk: Uint8Array) => void): unknown
   on(event: 'end' | 'close', listener: () => void): unknown
@@ -67,6 +69,7 @@ export function stream(duplex: DuplexLike): Transport {
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
+    waiting: () => duplex.writableLength ?? 0,
     close: () => {
       if (closes.fired) return
       duplex.end()

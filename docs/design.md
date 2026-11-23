@@ -160,6 +160,27 @@ A link outlives what carries it (`src/link.ts`).
 
 An ask is delivered at most once, because a frame is: an answer lost on the way is one of the frames sent again.
 
+## A bound
+
+- **How far behind the other end is, is what it has not said it took.** It is counted the same over anything a
+  link is carried on: a message port has no buffer to ask about and pushes back on nothing. A transport that can
+  say how much it has not yet written (`waiting()`: a socket's `bufferedAmount`, a stream's `writableLength`) is
+  counted as well.
+- **Past a mark** (`bound.kept`, in frames and in length of text) a link stops numbering. What is sent then waits,
+  in order, and is numbered as room comes back. A link looks again whenever anything arrives, since a transport
+  that has written its backlog says nothing when it does. Nothing sent passes what waits.
+- **What can be let go is.** A `shown` waiting for a view that already has one waiting takes that one's place: the
+  later result, in the earlier one's place in the order. Letting the earlier one go and keeping the later where it
+  was would put what was said between them, an answer among it, ahead of any result showing it. That would break
+  the hold. Nothing else is let go.
+- **An end says what it took** with its next batch, and sends a batch for that alone when it has none of its own
+  to send: an end that only listens still says.
+- **Past the bound on what waits** (`bound.waiting`), with nothing left to let go, the link ends
+  `{ why: 'overrun', waiting, bound }`, each in frames and length. A link that grew without end would end the
+  process instead.
+- **What is kept is never let go before it is taken.** Numbering stops at its mark, so it does not pass its
+  bound, and a resume never finds what it needs gone.
+
 ## What a link is carried on
 
 A `Transport` hands over whole messages, `string | Uint8Array`, in order, and says once when nothing more will
@@ -253,7 +274,7 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-step 4 (a socket, a port and a stream) and step 5 (a connection that comes back).
+step 4 (a socket, a port and a stream) step 5 (a connection that comes back) and step 6 (a bound).
 
 ## What is not decided
 

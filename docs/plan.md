@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 5.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 6.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -292,6 +292,11 @@ Done when: those hold, and the mutants are caught: nothing sent again, everythin
 advanced, a resume that should be refused taken.
 
 ## Step 6. A bound
+
+Built, in `src/link.ts`, with `Transport.waiting()` on a socket and a stream. Two things differ from what is
+below. An overtaken `shown` is replaced in place, the later result in the earlier one's place, not dropped: what
+was said between them must not pass a result that shows it. And what is kept never passes its bound, because
+numbering stops at the mark. So nothing kept is let go, and a resume is never refused for it.
 
 - What waits to be sent, and what is kept until it is taken, each have a size, counted in frames and in bytes of
   text, set where the link is made.

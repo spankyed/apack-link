@@ -6,6 +6,8 @@ import { once, type Message, type Transport } from './transport.ts'
 export interface WebSocketLike {
   /** 0 opening, 1 open, 2 closing, 3 closed. */
   readonly readyState: number
+  /** How much of what was sent is not yet written to the network. */
+  readonly bufferedAmount: number
   binaryType: string
   send(data: string | Uint8Array): void
   close(): void
@@ -44,6 +46,7 @@ export function socket(ws: WebSocketLike): Transport {
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
+    waiting: () => ws.bufferedAmount + waiting.reduce((all, message) => all + (typeof message === 'string' ? message.length : message.byteLength), 0),
     close: () => {
       if (closes.fired) return
       ws.close()
