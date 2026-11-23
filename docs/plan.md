@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 6.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 7.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -320,6 +320,9 @@ memory and over a message port; ten thousand answers past the bound end the link
 listens is not taken for one that is behind; the order of what does arrive is the order sent.
 
 ## Step 7. Knowing the other end is there
+
+Built, in `src/link.ts`: `Options.there = { window, clock }`, `Clock.after(ms, run)`, and `Link.awaiting()`, which
+a peer calls for each ask it waits on. It asks at half the window and lets the connection go at the whole of it.
 
 - **What carries a link saying it closed is the first word, and for two ends on one machine the only one needed.**
   A process that ends closes its sockets.
