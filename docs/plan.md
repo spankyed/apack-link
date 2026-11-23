@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 2.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 3.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -211,6 +211,9 @@ Done when: those hold, and the mutants are caught: nothing held, everything rele
 `shown` held too, `soon` always or never.
 
 ## Step 3. One write a turn
+
+Built, in `src/link.ts`. `link(transport, { later })` takes what puts the batch off. `close` sends what was said
+before it closes, with a goodbye last.
 
 What an end sends within one turn of the event loop crosses as one text.
 

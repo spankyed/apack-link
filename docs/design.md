@@ -94,22 +94,33 @@ run once since the call.
 
 ## What a link says about itself
 
-Beside frames, an end says a few things of its own. Each is a text of its own and takes no number: only a frame is
-numbered. A link that numbered its own words would have more to keep for a resume the longer it sat idle.
+What an end says within one turn crosses as one text, a batch: a JSON array of what it said, in order. Beside
+frames, an end says a few things of its own, each an element of a batch like a frame, and none takes a number:
+only a frame is numbered. A link that numbered its own words would have more to keep for a resume the longer it sat idle.
 
 | Text | Says |
 |---|---|
-| `{ "link": 1 }` | Hello: which link this end is. The first thing each end sends, and nothing is taken before it |
+| `{ "link": 1 }` | Hello: which link this end is. The first thing in the first batch, and nothing is taken before it |
 | `{ "bye": "restarting" }` | This end is going on purpose and is to be reached again |
 | `{ "bye": "ended" }` | This end is going on purpose and is not coming back |
 
-A frame crosses as `{ "seq": n, "frame": { … } }`.
+A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing in the last batch.
+
+```
+[{"link":1},{"seq":1,"frame":{"kind":"follow","id":1,…}},{"seq":2,"frame":{"kind":"ask","id":1,…}}]
+[{"seq":3,"frame":{"kind":"left","id":1}},{"bye":"ended"}]
+```
 
 ## What holds, and how
 
 - **Order.** A frame is numbered as it is sent and taken only in turn. What carries a link is expected to keep
   order, as a socket does; the number is how a link knows it did, and what a resumed link will say it has.
-- **One bad frame is one refusal.** A frame is put into text before it takes its number.
+- **One bad frame is one refusal.** A frame is put into text before it takes its number, when it is sent, and a
+  batch is those texts joined: joining cannot fail, so nothing that can runs between a number and the transport.
+- **One write a turn.** A batch leaves when `link`'s `later` says, a microtask unless given, so what one turn says
+  is one write. Order is by number, within a batch and across batches. A link that closes sends what it has said
+  first.
+- **A batch is taken in order**, and nothing in it after what ended the link.
 - **Ending is said once**, to both ends, with why (`Ending`, `src/link.ts`). An end that heard a goodbye ends
   `{ why: 'goodbye', bye }`; without one, a backend that restarted and one that ended both look like a connection
   that was lost.
@@ -174,7 +185,8 @@ something arriving done in a lane of its own, so it falls in every place among w
 ## Order of work
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
-memory, step 0 (the schedule, hello and goodbye), step 1 (peers) and step 2 (the hold).
+memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold) and step 3 (one write a
+turn).
 
 ## What is not decided
 

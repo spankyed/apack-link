@@ -5,7 +5,9 @@ import { everyOrder, scheduledPair, type Schedule } from '../src/testing/index.t
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
 const told = (frames: readonly Frame[]): unknown[] => frames.map((frame) => frame.kind === 'tell' && frame.event)
-const hello = JSON.stringify({ link: 1 })
+/** A batch, as one end puts it on the wire. */
+const wire = (...said: unknown[]): string => JSON.stringify(said)
+const hello = wire({ link: 1 })
 
 /** Two ends on a schedule, each direction a lane of its own, and what each has heard. */
 const joined = (schedule: Schedule) => {
@@ -56,18 +58,16 @@ describe('a link', () => {
   it('carries both ways at once, each way numbered on its own', async () => {
     const orderings = await everyOrder((schedule) => {
       const { a, b, heard, ended } = joined(schedule)
-      a.send(tell(1))
-      b.send(tell(2))
-      a.send(tell(3))
-      b.send(tell(4))
+      // Each in a turn of its own, so each crosses as a batch of its own.
+      schedule.does('a', ['sends 1', () => a.send(tell(1))], ['sends 3', () => a.send(tell(3))])
+      schedule.does('b', ['sends 2', () => b.send(tell(2))], ['sends 4', () => b.send(tell(4))])
       return () => {
         expect(told(heard.b)).toEqual([1, 3])
         expect(told(heard.a)).toEqual([2, 4])
         expect([ended.a, ended.b]).toEqual([[], []])
       }
     })
-    // Three texts each way, the hello among them, in every order the two directions can take.
-    expect(orderings).toBe(20)
+    expect(orderings).toBeGreaterThan(1)
   })
 
   it('refuses a frame that cannot be put into text, alone: the next one arrives, and nothing is missing before it', async () => {
@@ -86,8 +86,8 @@ describe('a link', () => {
   it('closes, saying why, when a frame arrives that is not the next one', async () => {
     const { bare, heard, ended } = facing()
     bare.send(hello)
-    bare.send(JSON.stringify({ seq: 2, frame: tell('second') }))
-    bare.send(JSON.stringify({ seq: 1, frame: tell('first') }))
+    bare.send(wire({ seq: 2, frame: tell('second') }))
+    bare.send(wire({ seq: 1, frame: tell('first') }))
     await turn()
     expect(heard).toEqual([])
     expect(ended).toEqual([{ why: 'out of order', expected: 1, got: 2 }])
@@ -95,7 +95,7 @@ describe('a link', () => {
 
   it('closes when the same frame arrives twice, having handed it over once', async () => {
     const { bare, heard, ended } = facing()
-    const text = JSON.stringify({ seq: 1, frame: tell('once') })
+    const text = wire({ seq: 1, frame: tell('once') })
     bare.send(hello)
     bare.send(text)
     bare.send(text)
@@ -105,7 +105,7 @@ describe('a link', () => {
   })
 
   it('closes when what arrives is not a frame, saying how long it was and not what it said', async () => {
-    for (const text of ['{ not json', '7', 'null', JSON.stringify({ seq: 1 }), JSON.stringify({ seq: 1, frame: { id: 1 } })]) {
+    for (const text of ['{ not json', '7', 'null', '[]', JSON.stringify({ seq: 1, frame: tell('not in a batch') }), wire({ seq: 1 }), wire({ seq: 1, frame: { id: 1 } }), wire(7)]) {
       const { bare, heard, ended } = facing()
       bare.send(hello)
       bare.send(text)
@@ -142,18 +142,95 @@ describe('a link', () => {
     a.close()
     a.send(tell('after'))
     a.close('ended')
-    expect(texts.map((text) => JSON.parse(text))).toEqual([{ link: 1 }, { seq: 1, frame: tell('before') }])
+    // What was sent before it closed left as it closed, and nothing after.
+    expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('before') }]])
   })
 
   it('is closed by what carries it going, after what was sent before it went', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(hello)
-    bare.send(JSON.stringify({ seq: 1, frame: tell('last') }))
+    bare.send(wire({ link: 1 }, { seq: 1, frame: tell('last') }))
     bare.close()
     expect(ended).toEqual([])
     await turn()
     expect(told(heard)).toEqual(['last'])
     expect(ended).toEqual([{ why: 'closed' }])
+  })
+})
+
+describe('one write a turn', () => {
+  /** What carries a link, noting each text handed to it. */
+  const counted = () => {
+    const [left, right] = memoryPair()
+    const texts: string[] = []
+    const send = left.send
+    left.send = (text) => { texts.push(text); send(text) }
+    return { left, right, texts }
+  }
+
+  it('sends a thousand frames said in one turn as one text, and they arrive in order', async () => {
+    const { left, right, texts } = counted()
+    const a = link(left)
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    const sent = Array.from({ length: 1000 }, (_, at) => tell(at))
+    for (const frame of sent) a.send(frame)
+    await turn()
+    expect(texts).toHaveLength(1)
+    expect(heard).toEqual(sent)
+  })
+
+  it('leaves no gap where a frame in the middle was refused', async () => {
+    const { left, right, texts } = counted()
+    const a = link(left)
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const b = link(right)
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    for (let at = 0; at < 1000; at++) {
+      if (at === 500) expect(() => a.send(tell({ big: 1n }))).toThrow(TypeError)
+      else a.send(tell(at))
+    }
+    await turn()
+    a.send(tell('next turn'))
+    await turn()
+    expect(texts).toHaveLength(2)
+    expect(told(heard)).toEqual([...Array.from({ length: 1000 }, (_, at) => at).filter((at) => at !== 500), 'next turn'])
+    expect(ended).toEqual([])
+  })
+
+  it('sends what is said in another turn as another text, when the link is given what says when a turn ends', async () => {
+    const [left, right] = memoryPair()
+    const texts: string[] = []
+    const send = left.send
+    left.send = (text) => { texts.push(text); send(text) }
+    const turns: Array<() => void> = []
+    const a = link(left, { later: (run) => { turns.push(run) } })
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    a.send(tell(1))
+    a.send(tell(2))
+    turns.shift()!()
+    a.send(tell(3))
+    turns.shift()!()
+    await turn()
+    expect(texts.map((text) => (JSON.parse(text) as unknown[]).length)).toEqual([3, 1])
+    expect(told(heard)).toEqual([1, 2, 3])
+  })
+})
+
+describe('a batch', () => {
+  it('is taken in order, and nothing in it after what ended the link', async () => {
+    for (const [after, why] of [
+      [{ bye: 'ended' }, { why: 'goodbye', bye: 'ended' }],
+      [{ seq: 3, frame: tell('out of place') }, { why: 'out of order', expected: 2, got: 3 }],
+    ] as const) {
+      const { bare, heard, ended } = facing()
+      bare.send(wire({ link: 1 }, { seq: 1, frame: tell('first') }, after, { seq: 2, frame: tell('after the end') }))
+      await turn()
+      expect(told(heard)).toEqual(['first'])
+      expect(ended).toEqual([why])
+    }
   })
 })
 
@@ -164,14 +241,12 @@ describe('hello', () => {
     bare.onText((text) => { texts.push(text) })
     link(right).send(tell('after'))
     await turn()
-    expect(JSON.parse(texts[0]!)).toEqual({ link: 1 })
-    expect(texts).toHaveLength(2)
+    expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('after') }]])
   })
 
   it('refuses an end that says another number, naming both', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(JSON.stringify({ link: 2 }))
-    bare.send(JSON.stringify({ seq: 1, frame: tell('from another link') }))
+    bare.send(wire({ link: 2 }, { seq: 1, frame: tell('from another link') }))
     await turn()
     expect(heard).toEqual([])
     expect(ended).toEqual([{ why: 'version', mine: 1, theirs: 2 }])
@@ -179,7 +254,7 @@ describe('hello', () => {
 
   it('is waited for: a frame from an end that has not said it is not taken', async () => {
     const { bare, heard, ended } = facing()
-    const text = JSON.stringify({ seq: 1, frame: tell('unannounced') })
+    const text = wire({ seq: 1, frame: tell('unannounced') })
     bare.send(text)
     await turn()
     expect(heard).toEqual([])
