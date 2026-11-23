@@ -8,8 +8,8 @@
 // What a system says to the other end waits until the views it runs for that end have caught up: the hold. A view's
 // `shown` and `over` are what is waited for, and go at once; everything else the system says is one queue, in the
 // order it was said, and leaves a round at a time once every view the round asked has called back.
-import { toText, type Failure, type Frame, type Id } from './frames.ts'
-import type { Link } from './link.ts'
+import type { Failure, Frame, Id } from './frames.ts'
+import type { Link, Prepared } from './link.ts'
 
 /** How an ask ended. A system's own outcomes pass through as they are; these are the ones a link makes. */
 export type Outcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly failure: Failure }
@@ -63,6 +63,8 @@ interface Work {
 /** Something the system said, waiting in the hold. */
 interface Held {
   readonly frame: Frame
+  /** The frame as the link put it into text when it was held: what is sent, whatever becomes of the frame after. */
+  ready?: Prepared
   /** The ask it is for, on this end's side: once that is spoiled, it is not sent. */
   readonly of?: Work
   /** What to do when it cannot be sent. Returns the frame to send in its place, if there is one. */
@@ -98,7 +100,7 @@ export function join(link: Link, mine: Port): Port {
   /** Sends one thing the system said. What cannot be sent is refused alone, with what goes in its place. */
   const emit = (one: Held): void => {
     if (one.of?.spoiled) return
-    try { link.send(one.frame) } catch (error) {
+    try { link.send(one.ready ?? one.frame) } catch (error) {
       if (!one.refused) throw error
       const instead = one.refused()
       if (instead) link.send(instead)
@@ -115,9 +117,8 @@ export function join(link: Link, mine: Port): Port {
         while (let_out < round.upTo) {
           const one = held.shift()!
           let_out++
-          // A tell whose event changed after it was told into something that cannot be sent goes nowhere: nobody
-          // waits on it, and there is nobody here to throw to.
-          try { emit(one) } catch { /* refused */ }
+          // Put into text when it was held, so it is not refused now.
+          emit(one)
         }
       }
     } finally { releasing = false }
@@ -136,7 +137,8 @@ export function join(link: Link, mine: Port): Port {
     const views = [...running.values()].filter((work) => work.caughtUp)
     if (!held.length && !views.length) { emit(one); return }
     // Found to be unsendable where it was said, as when it is sent at once: what is refused is refused there.
-    try { toText(one.frame) } catch (error) {
+    // It is put into text here, once, and that text is what leaves: what it holds may change after and it will not.
+    try { one.ready = link.prepare(one.frame) } catch (error) {
       if (!one.refused) throw error
       const instead = one.refused()
       if (instead) hand({ frame: instead })

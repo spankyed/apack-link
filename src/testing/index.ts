@@ -9,7 +9,7 @@ import type { Schedule } from './schedule.ts'
 export { carried } from './carried.ts'
 export { holds, same } from './check.ts'
 export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
-export { droppingMemoryEnds, type Dropping } from './dropping.ts'
+export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.ts'
 export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.ts'
 export { made, type Made } from './views.ts'
 

@@ -1,5 +1,6 @@
 // A link carried on a WebSocket: a browser's, or Node's `ws`, or anything with the parts of one they share. Neither
 // is imported. The socket is opened by whoever holds it, with whatever it needs to be let in.
+import { bytesOf } from './frames.ts'
 import { once, type Message, type Transport } from './transport.ts'
 
 /** What a browser's `WebSocket` and Node's `ws` both have, and all a link uses of either. */
@@ -46,7 +47,7 @@ export function socket(ws: WebSocketLike): Transport {
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
-    waiting: () => ws.bufferedAmount + waiting.reduce((all, message) => all + (typeof message === 'string' ? message.length : message.byteLength), 0),
+    waiting: () => ws.bufferedAmount + waiting.reduce((all, message) => all + (typeof message === 'string' ? bytesOf(message) : message.byteLength), 0),
     close: () => {
       if (closes.fired) return
       ws.close()

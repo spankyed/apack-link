@@ -14,8 +14,13 @@ export interface Transport {
   onClose(closed: () => void): void
   /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
   close(): void
-  /** How much of what was sent it has not yet written, where it can say. A link counts it against its bound. */
+  /** How many bytes of what was sent it has not yet written, where it can say. A link counts it against its bound. */
   waiting?(): number
+  /**
+   * The longest message it carries, in bytes, where there is one. A link hands it nothing longer: a batch that
+   * would be crosses as more than one, and a frame that would be is refused where it is sent.
+   */
+  readonly most?: number
 }
 
 /**

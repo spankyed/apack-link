@@ -729,6 +729,8 @@ export const withoutTheHold: readonly KitScenario[] = needsTheHold(false)
 
 export interface DroppingScenario {
   readonly name: string
+  /** How many of the first end's connections are to reach nobody before one does: `droppingMemoryEnds` is given it. */
+  readonly unreachable?: number
   play(schedule: Schedule, ends: Dropping): () => void
 }
 
@@ -812,6 +814,58 @@ export const resume: readonly DroppingScenario[] = [
         same(ended, [{ why: 'lost' }], 'how the window\'s link ended')
         same(made.ended, [{ ok: false, failure: { kind: 'disconnected', message: 'The link closed' } }], 'how the ask ended')
         same(view.over, [{ kind: 'disconnected', message: 'The link closed' }], 'how the view ended')
+      }
+    },
+  },
+  {
+    name: 'a window that starts before its backend listens reaches it once it does, and what it said meanwhile crosses once',
+    unreachable: 2,
+    play: (schedule, ends) => {
+      const answers = { label: 'the backend answers' }
+      const backend = desk({ ask: (asked) => schedule.later(answers, () => asked.ended({ ok: true, value: asked.args })) })
+      const window = desk()
+      join(ends.b, backend.port).tell('y', 'from the backend')
+      const toBackend = join(ends.a, window.port)
+      toBackend.tell('x', 1)
+      const made = asking(toBackend, 'threads', 'CREATE', 'one')
+      const ended: Ending[] = []
+      ends.a.onEnd((ending) => { ended.push(ending) })
+      schedule.does('the window', ['tells 2', () => toBackend.tell('x', 2)])
+      return () => {
+        same(ended, [], 'how the window\'s link ended')
+        same(ends.connections, 3, 'connections opened')
+        same(backend.told.map((told) => told.event), [1, 2], 'what the backend was told')
+        same(window.told.map((told) => told.event), ['from the backend'], 'what the window was told')
+        same(made.ended, [{ ok: true, value: 'one' }], 'how the ask ended')
+        same(backend.asks.length, 1, 'times the backend was asked')
+      }
+    },
+  },
+  {
+    name: 'a backend that restarts while the connection drops is asked at most once, old and new together',
+    play: (schedule, ends) => {
+      // Each answers as it is asked: when is not what this is about, and a lane for it is more orders than can be run.
+      const answering = (): ReturnType<typeof desk> => desk({ ask: (asked) => asked.ended({ ok: true, value: asked.args }) })
+      const before = answering()
+      const after = answering()
+      join(ends.b, before.port)
+      const made = asking(join(ends.a, desk().port), 'threads', 'CREATE', 'one')
+      const ended: Ending[] = []
+      ends.a.onEnd((ending) => { ended.push(ending) })
+      dropsOnce(schedule, ends)
+      schedule.does('the backend', ['restarts', () => { ends.restart(); join(ends.now, after.port) }])
+      return () => {
+        const asked = before.asks.length + after.asks.length
+        holds(asked <= 1, `the ask reached one backend at most: ${asked}`)
+        // A window that had met the backend that went is lost; one that had met nobody starts with the new one.
+        if (ended.length) {
+          same(ended, [{ why: 'lost' }], 'how the window\'s link ended')
+          same(made.ended.length, 1, 'times the ask ended')
+          same(after.asks.length, 0, 'times the new backend was asked')
+        } else {
+          same(made.ended, [{ ok: true, value: 'one' }], 'how the ask ended')
+          same(asked, 1, 'times a backend was asked')
+        }
       }
     },
   },

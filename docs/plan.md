@@ -256,10 +256,13 @@ output.
 
 Built, in `src/link.ts`: `link(open)`, `link()` with `carry`, `accept`, and `kept()`. The scenarios are `resume` in
 the kit, run over `droppingMemoryEnds`, whose connection a lane drops, or whose second end a lane restarts. Two
-things beyond what is below. A hello on every connection after an end's first says `again`, and an end hearing
-it on its own first connection finds the session lost. Without it, a window whose first connection dropped
-before it heard anything could hand its frames to a new backend. And `open` is called again at once when a
-connection closes: whoever gives it paces it.
+things beyond what is below. A hello says which session it is going on with (`resumes`) once its end has met
+one, and a link that can come back numbers nothing until it has met the other end: an end that has met nobody
+has handed nothing to anybody, so a window whose first connection reached nobody, or dropped before it heard
+anything, starts afresh with whichever backend it meets, and a backend that restarted finds a window going on
+with another session and says `lost`. And `open` is called again when a clock handed in says
+(`Options.reopen`, without which such a link is not made), waiting longer for each connection in a row that did
+not hold, and not at all after one that did.
 
 A link outlives what carries it.
 

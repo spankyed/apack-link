@@ -6,8 +6,9 @@ know before changing it.
 ## Layout
 
 - `src/index.ts` is the door: what it exports is the package.
-- `src/frames.ts` is every frame there is. A link carries what states say to each other and nothing else, so a new
-  frame is a new thing a state can say, and is added with the kernel that says it.
+- `src/frames.ts` is every frame there is, and what tells one from anything else that arrives (`asFrame`). A link
+  carries what states say to each other and nothing else, so a new frame is a new thing a state can say, and is
+  added with the kernel that says it.
 - `src/link.ts` is one end: frames numbered as they are sent, taken only in turn, and the link closed where one
   arrives out of place.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory. `src/socket.ts`, `src/port.ts`
@@ -23,9 +24,21 @@ know before changing it.
 
 - **Order is the point.** Nothing is added that hands a frame over ahead of one sent before it. A second stream
   beside the first, for any kind of frame, is that.
-- **A frame that cannot be sent is refused where it was sent**, and takes no number. Nothing that can fail runs
-  between a frame taking its number and its text being handed to the transport.
-- **A link never waits on a clock.** What it knows of the other end it knows from what arrives.
+- **A frame that cannot be sent is refused where it was sent**, and takes no number: one that cannot be put into
+  text, and one too large. Nothing that can fail runs between a frame taking its number and its text being handed
+  to the transport, and nothing about one frame ends the link.
+- **A link never waits on a clock.** What it knows of the other end it knows from what arrives. Where a pause is
+  wanted (a quiet connection, opening one again) it is on a `Clock` handed in, and without one nothing is timed:
+  a link that would need one to be safe is not made without it.
+- **A link that is handed its connections ends for nothing a connection says before a hello that fits.** It turns
+  the connection away, and keeps the one it is on until another fits. Only the end that opened a connection ends
+  for what it met there.
+- **What a listener or a system throws is never the link's.** Everything after it is still taken and handed over,
+  and what was thrown goes to `thrown`.
+- **A size is in bytes**, of text as UTF-8 (`bytesOf`), wherever one is counted, compared or reported.
+- **The wire is one number.** Until a release exists that an end could be left on, a change to what crosses is
+  made at both ends at once and `LINK` stays as it is. From the first release on, any change to what crosses
+  takes a new number, and an end that says another is refused.
 - **No dependencies at run time.** It runs in a window and in Node from one source.
 - **A spec says what holds, not how.** A case every rewrite that keeps the behaviour would fail is a case about
   the code.

@@ -46,11 +46,17 @@ const watched = (clock: Clock) => {
     bare.onData((message: Message) => { side.texts.push(JSON.parse(message as string) as unknown[]) })
     sides.push(side)
     return left
-  }, { there: { window: WINDOW, clock } })
+  // Opened again on the same clock: after a connection that met the other end, with no wait.
+  }, { there: { window: WINDOW, clock }, reopen: { clock } })
   const ended: Ending[] = []
   window.onEnd((ending) => { ended.push(ending) })
   /** The other end, saying hello on the latest connection. */
-  const hello = (taken = 0): void => { sides.at(-1)!.bare.send(JSON.stringify([{ link: 1, session: 'backend', taken, ...(sides.length > 1 ? { again: true } : {}) }])) }
+  /** The other end, saying hello on the latest connection: once it has met the window, as going on with it. */
+  let met: string | undefined
+  const hello = (taken = 0): void => {
+    sides.at(-1)!.bare.send(JSON.stringify([{ link: 1, session: 'backend', taken, ...(met === undefined ? {} : { resumes: met }) }]))
+    met = (sides.at(-1)!.texts[0]?.[0] as { session: string } | undefined)?.session ?? met
+  }
   const said = (): unknown[] => sides.flatMap((side) => side.texts.flat())
   return { window, sides, ended, hello, said }
 }
