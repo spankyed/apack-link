@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { accept, join, link, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
-import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, type Desk, type Schedule } from '../src/testing/index.ts'
+import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Desk, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 describe('resuming, over memory', () => {
   for (const scenario of resume) {
     it(scenario.name, async () => {
       // When a connection is found to have held is one more thing in the order: a few of these are past everyOrder's usual limit.
-      expect(await everyOrder((schedule) => scenario.play(schedule, droppingMemoryEnds(schedule, { unreachable: scenario.unreachable ?? 0 })), { limit: 500_000 })).toBeGreaterThan(1)
+      expect(await everyOrder((schedule) => underModel((held) => scenario.play(schedule, droppingMemoryEnds(schedule, { unreachable: scenario.unreachable ?? 0 }, held))), { limit: 500_000 })).toBeGreaterThan(1)
     }, 300_000)
   }
 })
@@ -15,7 +15,7 @@ describe('resuming, over memory', () => {
 describe('resuming, over memory, in msgpack', () => {
   for (const scenario of resume) {
     it(scenario.name, async () => {
-      expect(await everyOrder((schedule) => scenario.play(schedule, droppingMemoryEnds(schedule, { codec: msgpack, unreachable: scenario.unreachable ?? 0 })), { limit: 500_000 })).toBeGreaterThan(1)
+      expect(await everyOrder((schedule) => underModel((held) => scenario.play(schedule, droppingMemoryEnds(schedule, { codec: msgpack, unreachable: scenario.unreachable ?? 0 }, held)), { codec: msgpack }), { limit: 500_000 })).toBeGreaterThan(1)
     }, 300_000)
   }
 })

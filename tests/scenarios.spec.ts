@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
 import { link, port, socket, stream, type Frame, type Message, type Transport } from '../src/index.ts'
 import { msgpack } from './support/msgpack.ts'
-import { carried, everyOrder, hold, memoryEnds, peers, sample, type KitScenario } from '../src/testing/index.ts'
+import { carried, everyOrder, hold, memoryEnds, peers, sample, underModel, type KitScenario } from '../src/testing/index.ts'
 
 const scenarios: readonly KitScenario[] = [...peers, ...hold]
 /** How many orders each scenario is run under over something real. */
@@ -86,7 +86,7 @@ const streams = async (): Promise<Carrier> => {
 describe('over memory', () => {
   for (const scenario of scenarios) {
     it(scenario.name, async () => {
-      expect(await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))).toBeGreaterThan(0)
+      expect(await everyOrder((schedule) => underModel((held) => scenario.play(schedule, memoryEnds(schedule, {}, held))))).toBeGreaterThan(0)
     })
   }
 })
@@ -94,7 +94,7 @@ describe('over memory', () => {
 describe('over memory, in msgpack', () => {
   for (const scenario of scenarios) {
     it(scenario.name, async () => {
-      expect(await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule, { codec: msgpack })))).toBeGreaterThan(0)
+      expect(await everyOrder((schedule) => underModel((held) => scenario.play(schedule, memoryEnds(schedule, { codec: msgpack }, held)), { codec: msgpack }))).toBeGreaterThan(0)
     })
   }
 })
@@ -112,7 +112,7 @@ for (const [name, start] of [['a WebSocket', websockets], ['a message port', por
         let used = 0
         const ran = await sample((schedule) => {
           const [left, right] = carried(schedule, pairs[used++]!)
-          return scenario.play(schedule, { a: link(left), b: link(right) })
+          return underModel((held) => scenario.play(schedule, { a: held.end(link(left), 'a'), b: held.end(link(right), 'b') }))
         }, { seed: at + 1, runs: RUNS })
         if (ran.failure) throw new Error(`Failed (replay with [${ran.failure.choices.join(', ')}]):\n  ${ran.failure.taken.join('\n  ')}`, { cause: ran.failure.error })
         expect(ran.orderings).toBe(RUNS)
