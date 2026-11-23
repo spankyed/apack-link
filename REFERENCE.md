@@ -234,9 +234,10 @@ interface Link {
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not
    * come back, and on a connection of an end that has never met anybody, which has nothing sent before to be out
-   * of step with. Then a goodbye, if one is given, on whatever connection there is, so the other end's ending
-   * says which it was. What waited with no connection, or on one where an end met before has not been met again,
-   * has nowhere to go, and is let go with what was kept. This is also how whoever holds a link says the other end
+   * of step with. Then a goodbye, if one is given, on the connection it is on, so the other end's ending says
+   * which it was. What waited with no connection, or on one where an end met before has not been met again,
+   * has nowhere to go, and is let go with what was kept. An end that listens says nothing, a goodbye included,
+   * on a connection where nobody has said hello, unless it has met nobody at all. This is also how whoever holds a link says the other end
    * is gone for good.
    */
   close(bye?: Bye): void
@@ -268,7 +269,8 @@ link is carried on it alone and ends when it closes. Given nothing, it is handed
 as a backend's links are by `accept`, and ends for nothing any of them says before a hello that fits.
 
 ```ts
-listen(over?: Transport, options?: Options): Listener
+listen(over: Transport, options?: Options): Link
+listen(over?: undefined, options?: Options): Listener
 ```
 
 ### `Listener`

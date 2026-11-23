@@ -354,9 +354,12 @@ describe('a link handed a connection while it is on one where the other end has 
       second.say(typeof hello === 'object' && 'resumes' in hello && hello.resumes === 'MINE' ? { ...hello, resumes: mine } : hello, { seq: 1, frame: tell('from whoever it is') })
       await turn()
       expect(second.closed()).toBe(1)
-      // Told the session is lost where it would otherwise wait on it, behind a hello; another link, which link
-      // this is, so that it ends saying both; and what is not a link's, nothing.
-      expect(second.texts).toEqual(told === true ? [[expect.objectContaining({ link: 1, session: mine }), { lost: true }]] : told ? [[expect.objectContaining({ link: 1, session: mine })]] : [])
+      // Told the session is lost where it would otherwise wait on it, behind a hello that names no session;
+      // another link, which link this is, so that it ends saying both; and what is not a link's, nothing.
+      const named = { link: 1, session: '', taken: 0 }
+      expect(second.texts).toEqual(told === true ? [[named, { lost: true }]] : told ? [[named]] : [])
+      // Nothing of the session it is in: not its own, and not the one it talks to.
+      expect(JSON.stringify(second.texts)).not.toMatch(new RegExp(`${mine}|"w"`))
       first.say({ seq: 1, frame: tell('on the first') })
       backend.send(tell('to the first'))
       await turn()

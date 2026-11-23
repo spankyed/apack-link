@@ -129,6 +129,17 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 export const isHello = (said: unknown): said is Hello => isObject(said) && said.link === LINK && typeof said.session === 'string' && isCount(said.taken)
   && (said.resumes === undefined || typeof said.resumes === 'string') && (said.most === undefined || (isCount(said.most) && said.most > 0))
 
+/**
+ * The first thing a message says, where it is a list of things said, as every message of a link's is. What is not
+ * one says nothing: what it holds under a name is not something said.
+ */
+export const firstOf = (codec: Codec, message: Message): unknown => {
+  try {
+    const said = codec.decode(message)
+    return Array.isArray(said) ? (said as unknown[])[0] : undefined
+  } catch { return undefined }
+}
+
 /** A link a little behind sends at once; one far behind lets a view's results be overtaken; one past it ends. */
 const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
 const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
@@ -802,8 +813,11 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     pump()
     watch(true)
   }
-  /** Puts the end on a connection, in place of the one it has, and says hello on it. */
-  const begin = (id: number, most: number | undefined): Connection => {
+  /**
+   * Puts the end on a connection, in place of the one it has, and says hello on it: at the end of this turn, or,
+   * where what is said on it leaves before then, with that.
+   */
+  const begin = (id: number, most: number | undefined, turns = true): Connection => {
     off(s.reopening)
     delete s.reopening
     off(s.holding)
@@ -814,7 +828,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const on: Connection = { id, ...(most === undefined ? {} : { most }), met: false, live: dials && once, held: false, told: s.heard, takes: Infinity, batch: [], sizes: [], due: false }
     s.now = on
     if (was) out.push({ do: 'close', on: was.id, thrown: 'reported' })
-    say(on, hello(most))
+    if (turns) say(on, hello(most))
+    else put(on, hello(most))
     return on
   }
 
@@ -842,12 +857,13 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (s.ending) return
     // What was said before closing leaves before it closes, what waited for room with it, and a goodbye last. It
     // is the last this end sends, so the mark that room is counted against no longer holds anything back.
-    // An end that listens and is on no connection says what it has left to say on the one that waits, though
-    // nobody has said hello there: it is the last it says.
-    const waited = s.now ? undefined : s.pending
+    // An end that listens, is on no connection and has met nobody says what it has left to say on the one that
+    // waits, though nobody has said hello there: it is the last it says, and there is no session for it to say
+    // anything of. One that has met somebody says nothing to whoever may be there.
+    const waited = s.now || s.theirs !== undefined ? undefined : s.pending
     if (waited) {
       delete s.pending
-      begin(waited.id, waited.most)
+      begin(waited.id, waited.most, false)
     }
     const on = s.now
     if (on) {
@@ -874,14 +890,13 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const waited = s.pending
     if (s.ending || waited?.id !== id) return
     delete s.pending
-    let first: unknown
-    try { first = (codec.decode(message) as unknown[])[0] } catch { /* not a hello */ }
-    const fits = greeting(first)
+    const fits = greeting(firstOf(codec, message))
     if ('no' in fits) {
-      // Turned away, and told why where it would otherwise wait: this end's hello, so that another link ends
-      // saying both numbers, and that the session is lost. What is not a link's is told nothing. The end stays
-      // on the connection it has, and one that had this one alone ends with it.
-      const told = fits.no === 'not a frame' ? [] : [hello(waited.most), ...(toldLost(fits) ? [word({ lost: true })] : [])]
+      // Turned away, and told why where it would otherwise wait: which link this is, so that another link ends
+      // saying both numbers, and that the session is lost. It is told nothing of the session this end is in: a
+      // hello that names no session, and has taken nothing. What is not a link's is told nothing at all. The end
+      // stays on the connection it has, and one that had this one alone ends with it.
+      const told = fits.no === 'not a frame' ? [] : [word({ link: LINK, session: '', taken: 0 }), ...(toldLost(fits) ? [word({ lost: true })] : [])]
       out.push({ do: 'away', on: id, ...(told.length ? { message: codec.list(told) } : {}) })
       if (once) end({ why: 'closed' })
       return

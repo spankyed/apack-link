@@ -376,7 +376,9 @@ the end that opened it, and `listen` the other. Where neither did, two ports of 
 - **The end that listens says nothing on a connection until a hello that fits has arrived on it**, and ends for
   nothing said before one. Whoever reaches it may be anybody. It turns away what does not fit, telling it why
   where it would otherwise wait, and stays on the connection it has. It is never on a connection where nobody
-  has been met, so nothing of a session's is said to a stranger and no stranger's word ends a session.
+  has been met, so nothing of a session's is said to a stranger and no stranger's word ends a session. What it
+  tells one it turns away names no session: the two sessions' names are all a connection needs to say to go on
+  with one, so neither is said to anybody who has not said both.
 
 Before this an end was one of three kinds by what it was made with, each with its own rule for when it spoke
 and when it ended, and both ends said hello at once. A link handed a connection while on another had to be made

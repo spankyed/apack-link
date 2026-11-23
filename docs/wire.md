@@ -66,9 +66,14 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
   waits for a backend's.
 - An end that listens turns away a connection whose first word does not fit, and goes on: it keeps the
   connection it has until a hello that fits arrives on another. What it turned away it tells why, where it would
-  otherwise wait: its own hello, to one that said another `link`, so that end ends naming both; its hello and
-  `{"lost":true}`, to one whose hello does not fit; and nothing, to what is not a link's. Only the end that
-  dialled ends for what it met.
+  otherwise wait: a hello, to one that said another `link`, so that end ends naming both; a hello and
+  `{"lost":true}`, to one whose hello does not fit; and nothing, to what is not a link's. That hello is
+  `{"link":1,"session":"","taken":0}`: it names no session and has taken nothing, so whoever is turned away
+  learns nothing of the session this end is in. Only the end that dialled ends for what it met.
+- A message is a list. What is not one says nothing, whatever it holds: a hello under a name is not a hello.
+- An end that listens and is closed says a goodbye on the connection it is on. Where it is on none and one
+  waits, it says its hello, what it had to send and its goodbye there only if it has met nobody: an end that
+  has been in a session says nothing to a connection where nobody has said who they are.
 - Each numbered thing is one more than the one before it from that end; one that is not ends the link
   `out of order`. A resume sends again everything after the `taken` the other end's hello names, and a frame in
   parts picks up at the part it got to.

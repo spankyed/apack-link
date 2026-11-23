@@ -2,7 +2,7 @@
 // meets there. The one that listens says nothing on a connection until a hello that fits has arrived on it, and
 // ends for nothing said before one.
 import { describe, expect, it } from 'vitest'
-import { dial, LINK, listen, memoryPair, type Ending, type Frame, type Link, type Message, type Transport } from '../src/index.ts'
+import { accept, dial, LINK, listen, memoryPair, type Ending, type Frame, type Link, type Listener, type Message, type Transport } from '../src/index.ts'
 import { setup } from '../src/core.ts'
 import { everyOrder, scheduledPair } from '../src/testing/index.ts'
 
@@ -16,7 +16,7 @@ const bare = () => {
   let closed = 0
   mine.onData((message) => { said.push(...(JSON.parse(message as string) as unknown[])) })
   mine.onClose(() => { closed++ })
-  return { transport: theirs, said, closed: () => closed, say: (...words: unknown[]) => { mine.send(JSON.stringify(words)) }, close: () => { mine.close() } }
+  return { transport: theirs, said, closed: () => closed, say: (...words: unknown[]) => { mine.send(JSON.stringify(words)) }, raw: (text: string) => { mine.send(text) }, close: () => { mine.close() } }
 }
 const watched = (link: Link) => {
   const heard: Frame[] = []
@@ -80,19 +80,20 @@ describe('the end that listens', () => {
     })
   }
 
-  for (const [what, first, told] of [
+  for (const [what, first, told, whole] of [
     ['something that is not a link\'s', 7, []],
     ['a frame with no hello before it', { seq: 1, frame: tell('unannounced') }, []],
-    ['a hello of another link', { ...hello, link: LINK + 1 }, [{ link: LINK, session: expect.any(String), taken: 0 }]],
-    ['a hello going on with a session that is not this one', { ...hello, resumes: 'somebody else' }, [{ link: LINK, session: expect.any(String), taken: 0 }, { lost: true }]],
-    ['a hello that says it took what was never sent', { ...hello, taken: 3 }, [{ link: LINK, session: expect.any(String), taken: 0 }, { lost: true }]],
+    ['a hello of another link', { ...hello, link: LINK + 1 }, [{ link: LINK, session: '', taken: 0 }]],
+    ['a hello going on with a session that is not this one', { ...hello, resumes: 'somebody else' }, [{ link: LINK, session: '', taken: 0 }, { lost: true }]],
+    ['a hello that says it took what was never sent', { ...hello, taken: 3 }, [{ link: LINK, session: '', taken: 0 }, { lost: true }]],
+    ['a hello held under a name, in what is not a list', { 0: hello }, [], true],
   ] as const) {
     it(`handed its connections, ends for nothing: ${what} is turned away, and the next connection is taken up`, async () => {
       const b = listen()
       const { heard, ended } = watched(b)
       const stranger = bare()
       b.carry(stranger.transport)
-      stranger.say(first, { seq: 1, frame: tell('from a stranger') })
+      if (whole) stranger.raw(JSON.stringify(first)); else stranger.say(first, { seq: 1, frame: tell('from a stranger') })
       await turn()
       // Told why where it would otherwise wait, and closed.
       expect([stranger.said, stranger.closed()]).toEqual([told, 1])
@@ -107,12 +108,58 @@ describe('the end that listens', () => {
     it(`on one connection alone, ends closed, and for nothing else, when ${what} is said on it`, async () => {
       const stranger = bare()
       const { heard, ended } = watched(listen(stranger.transport))
-      stranger.say(first, { seq: 1, frame: tell('from a stranger') })
+      if (whole) stranger.raw(JSON.stringify(first)); else stranger.say(first, { seq: 1, frame: tell('from a stranger') })
       await turn()
       expect([stranger.said, stranger.closed()]).toEqual([told, 1])
       expect([heard, ended]).toEqual([[], [{ why: 'closed' }]])
     })
   }
+
+  it('in a session, is ended by nothing a stranger says on another connection, and tells it nothing of the session', async () => {
+    const b = listen()
+    const { heard, ended } = watched(b)
+    const window = bare()
+    b.carry(window.transport)
+    window.say(hello)
+    await turn()
+    const mine = (window.said[0] as { session: string }).session
+    for (const first of [{ 0: { ...hello, resumes: mine } }, 7, { ...hello, link: LINK + 1 }, { ...hello, session: 'a stranger' }, { ...hello, taken: 9, resumes: mine }]) {
+      const stranger = bare()
+      b.carry(stranger.transport)
+      stranger.raw(JSON.stringify(Array.isArray(first) || typeof first !== 'object' || 'link' in first ? [first] : first))
+      await turn()
+      expect([stranger.closed(), ended]).toEqual([1, []])
+      expect(JSON.stringify(stranger.said)).not.toMatch(new RegExp(`${mine}|${hello.session}`))
+    }
+    // And the session goes on, on the connection it was on.
+    window.say({ seq: 1, frame: tell('still here') })
+    b.send(tell('and so is this end'))
+    await turn()
+    expect(heard).toEqual([tell('still here')])
+    expect(window.said).toContainEqual({ seq: 1, frame: tell('and so is this end') })
+  })
+
+  it('that has met somebody says nothing, a goodbye included, on a connection where nobody has said hello', async () => {
+    const b = listen()
+    const window = bare()
+    b.carry(window.transport)
+    window.say(hello)
+    await turn()
+    window.close()
+    await turn()
+    const unknown = bare()
+    b.carry(unknown.transport)
+    b.close('ended')
+    await turn()
+    expect([unknown.said, unknown.closed()]).toEqual([[], 1])
+  })
+
+  it('on one connection alone, is not handed another: it has nothing to be handed one with', () => {
+    const b = listen(bare().transport)
+    // @ts-expect-error an end that listens on one connection alone ends with it
+    expect(b.carry).toBeUndefined()
+    expect(listen().carry).toBeTypeOf('function')
+  })
 
   it('on one connection alone, ends closed when it closes with nothing said on it', async () => {
     const other = bare()
@@ -140,6 +187,26 @@ describe('the end that listens', () => {
     b.close('ended')
     await turn()
     expect(other.said).toEqual([{ link: LINK, session: expect.any(String), taken: 0 }, { seq: 1, frame: tell('all it had to say') }, { bye: 'ended' }])
+  })
+})
+
+describe('what accepts connections', () => {
+  it('hands on links that are not handed connections by anybody else, and makes none for what it turns away', async () => {
+    const made: Link[] = []
+    const take = accept((one) => { made.push(one) }, { bound: { frame: 4096 }, part: 2048 })
+    for (const first of [{ 0: hello }, 7, { ...hello, link: LINK + 1 }, { ...hello, most: 100 }, { ...hello, taken: 2 }]) {
+      const stranger = bare()
+      take(stranger.transport)
+      stranger.raw(JSON.stringify('link' in Object(first) ? [first] : first))
+      await turn()
+      expect([stranger.closed(), made.length]).toEqual([1, 0])
+    }
+    const window = bare()
+    take(window.transport)
+    window.say(hello)
+    await turn()
+    expect(made).toHaveLength(1)
+    expect((made[0] as Partial<Listener>).carry).toBeUndefined()
   })
 })
 

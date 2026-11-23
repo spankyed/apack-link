@@ -843,7 +843,7 @@ describe('closing', () => {
     expect(ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
   })
 
-  it('says goodbye and lets go of what waited, on a connection where an end it met before has not been met again', async () => {
+  it('says nothing, a goodbye included, and lets go of what waited, on a connection where an end it met before has not been met again', async () => {
     const a = listen()
     const [first, there] = memoryPair()
     a.carry(there)
@@ -853,13 +853,15 @@ describe('closing', () => {
     await turn()
     const [bare, right] = memoryPair()
     const texts: unknown[] = []
+    let closed = 0
     bare.onData((text) => { texts.push(JSON.parse(text as string)) })
+    bare.onClose(() => { closed++ })
     a.carry(right)
     a.send(tell('waits to meet again'))
     a.close('ended')
     await turn()
-    // What it sent before may be out of step with what the other end took: nothing more is numbered.
-    expect(texts).toEqual([[{ ...saidHello, resumes: HELLO.session }, { bye: 'ended' }]])
+    // Whoever is there has not said who it is: it is told nothing of the session, and the connection is closed.
+    expect([texts, closed]).toEqual([[], 1])
   })
 })
 

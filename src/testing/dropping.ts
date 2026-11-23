@@ -27,14 +27,24 @@ export function laneClock(schedule: Schedule, lane: Lane): Clock {
 function kept(transport: Transport): Transport {
   const arrived: Message[] = []
   let hears: Array<(message: Message) => void> | undefined
+  const closes: Array<() => void> = []
+  /** Whether it has closed, and whether this end closed it: then nothing more that arrived is handed over. */
+  let closed = false
+  let shut = false
+  const gone = (): void => { for (const then of closes.splice(0)) then() }
   transport.onData((message) => { if (hears) for (const heard of hears) heard(message); else arrived.push(message) })
+  // That it closed is heard after what arrived before it did, by whoever listens then.
+  transport.onClose(() => { closed = true; if (hears) gone() })
   return {
     ...transport,
     onData: (heard) => {
       if (hears) { hears.push(heard); return }
       hears = [heard]
-      for (const message of arrived.splice(0)) heard(message)
+      for (const message of arrived.splice(0)) if (!shut) heard(message)
+      if (closed) gone()
     },
+    onClose: (then) => { if (closed && hears) then(); else closes.push(then) },
+    close: () => { shut = true; transport.close() },
   }
 }
 
