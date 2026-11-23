@@ -247,7 +247,10 @@ A link outlives what carries it (`src/link.ts`).
   nobody closes keeps what it has for a window that is gone, for good, and `accept` keeps the link: a backend
   whose windows come and go without their links being closed grows by one link's bound for each. The host is
   expected to close a window's link when it learns the window is gone (Electron says when a window is
-  destroyed), or, where it cannot learn that, by a rule of its own, on its own clock. None is built in.
+  destroyed), or, where it cannot learn that, by a rule of its own, on its own clock. None is built in. What is
+  built in is knowing whose a link is: `accept` hands `onLink` the transport the session began on, the very one
+  the host handed over, so a host that notes which window each connection is from can close that window's link.
+  Until it does, the link's views go on being run and its asks stay open, as well as what is kept.
 
 An ask is delivered at most once, because a frame is: an answer lost on the way is one of the frames sent again.
 

@@ -248,3 +248,55 @@ describe('how an end is set', () => {
     }
   })
 })
+
+describe('whose a link is', () => {
+  it('is known to whoever accepts: each link comes with the transport its session began on, as it was handed over', async () => {
+    const began: Array<{ link: Link; on: Transport }> = []
+    const take = accept((link, on) => { began.push({ link, on }) })
+    const [first, second] = [bare(), bare()]
+    take(first.transport)
+    take(second.transport)
+    // The second says hello first: a link is its session's, whenever its connection arrived.
+    second.say({ ...hello, session: 'the second window' })
+    first.say({ ...hello, session: 'the first window' })
+    await turn()
+    expect(began.map(({ on }) => on)).toEqual([second.transport, first.transport])
+    expect(began[0]!.on).toBe(second.transport)
+  })
+
+  it('lets a backend close the link of a window that is gone, and only that one, and is not told again of one that came back', async () => {
+    const windows = new Map<Transport, string>()
+    const links = new Map<string, Link>()
+    const ended: string[] = []
+    const take = accept((link, on) => {
+      const window = windows.get(on)!
+      links.set(window, link)
+      link.onEnd(() => { ended.push(window) })
+    })
+    const connect = (window: string, session: string, more: object = {}) => {
+      const made = bare()
+      windows.set(made.transport, window)
+      take(made.transport)
+      made.say({ ...hello, session, ...more })
+      return made
+    }
+    const one = connect('one', 'the session of one')
+    connect('two', 'the session of two')
+    await turn()
+    // The first window's connection drops, and it comes back: the same link, and nothing said of a new one.
+    const mine = (one.said[0] as { session: string }).session
+    one.close()
+    await turn()
+    connect('one, again', 'the session of one', { resumes: mine })
+    await turn()
+    expect([...links.keys()]).toEqual(['one', 'two'])
+    // The first window is destroyed: the backend closes its link, which is all it takes.
+    links.get('one')!.close()
+    expect(ended).toEqual(['one'])
+    // What comes back saying that session finds it gone.
+    const late = connect('one, once more', 'the session of one', { resumes: mine })
+    await turn()
+    expect(late.said).toEqual([{ link: LINK, session: expect.any(String), taken: 0 }, { lost: true }])
+    expect([...links.keys()]).toEqual(['one', 'two'])
+  })
+})

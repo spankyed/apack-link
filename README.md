@@ -136,9 +136,18 @@ import { accept, dial, socket, timers } from '@apackdev/link'
 // A window: opens a socket now, and another after each one closes, on the clock it is handed.
 const toBackend = dial(() => socket(new WebSocket(url, [token])), { reopen: { clock: timers } })
 
-// A backend: a new session is a new link; a known one is handed back to the link it was.
-const take = accept((link) => { /* join(link, backendPort) */ })
-server.on('connection', (ws) => take(socket(ws)))
+// A backend: a new session is a new link; a known one is handed back to the link it was. The link comes with the
+// connection its session began on, so the backend knows whose it is, and closes it when that window is gone.
+const windows = new Map() // each connection handed over, to the window it is from
+const take = accept((link, began) => {
+  /* join(link, backendPort) */
+  windows.get(began).once('closed', () => link.close())
+})
+server.on('connection', (ws, request) => {
+  const carried = socket(ws)
+  windows.set(carried, windowOf(request))
+  take(carried)
+})
 ```
 
 A link has no clock of its own, and one that opens its own connections is not made without being handed one:
@@ -152,9 +161,12 @@ slowly, and a connection that drops after doing its work is dialled again at onc
 A transport that throws where it is handed something to send is a connection that has gone: what it was handed
 is sent again on the next, and what it threw goes to `thrown`, since none of the transports here throws.
 
-Whoever holds a link says when the other end is gone for good, with `close()`: until then what was sent is kept.
-`accept` keeps each link until it ends, so a backend closes the link of a window it knows is gone; nothing ends
-one by a clock.
+Whoever holds a link says when the other end is gone for good, with `close()`: until then what was sent is kept,
+the views that end follows go on being run, and its asks stay open. `accept` keeps each link until it ends, so a
+backend closes the link of a window it knows is gone; nothing ends one by a clock. To know whose a link is,
+`onLink` is handed the transport its session began on, which is the one the backend handed to `accept`: the
+backend notes which window each is from as it hands it over, and closes the link when that window is destroyed.
+A window that only dropped comes back to the same link, and `onLink` is not called for it again.
 
 A link authenticates nobody. A connection that says a window's session and a hello that does not fit is turned
 away, and the window's link goes on; one that says a hello that does fit is the window, as far as a link can

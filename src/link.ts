@@ -352,9 +352,11 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
  *
  * A link is kept, with what it holds for its window, until it ends. Nothing here ends one for a window that has
  * stopped coming back, since nothing a link sees tells that from one that is slow to: whoever takes the links
- * closes each when it knows its window is gone for good.
+ * closes each when it knows its window is gone for good. So that it can know whose a link is, `onLink` is handed,
+ * with the link, the connection its session began on: the transport that was handed here, itself, which whoever
+ * handed it over can tell from every other. A connection that goes on with a session is not handed on again.
  */
-export function accept(onLink: (link: Link) => void, options: Options = {}): (transport: Transport) => void {
+export function accept(onLink: (link: Link, began: Transport) => void, options: Options = {}): (transport: Transport) => void {
   const codec = options.codec ?? json
   const links = new Map<string, Listener>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
@@ -410,7 +412,7 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
         made.onEnd(() => { links.delete(session) })
         // Handing it its connections is this function's, and nobody else's.
         const { carry, ...link } = made
-        onLink(link)
+        onLink(link, transport)
         carry(relay)
       }
       for (const heard of hears) heard(message)
