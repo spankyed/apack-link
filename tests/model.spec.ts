@@ -327,6 +327,8 @@ describe('what the model finds', () => {
     expect(found(({ right, a }) => { a.send(tell(null)); right.hand(tell(NaN)) })).toMatch(/not the next one/)
     expect(found(({ right, a }) => { a.send(tell({ n: 1 })); right.hand(tell({ n: 1, more: undefined })) })).toMatch(/not the next one/)
     expect(found(({ right, a }) => { a.send(tell({ n: 1 })); right.hand(tell(Object.create({ n: 1 }) as object)) })).toMatch(/not the next one/)
+    // What it holds only by what it was made from is not what it holds.
+    expect(found(({ right, a }) => { a.send(tell({ n: 1 })); right.hand(tell(Object.assign(Object.create({ n: 1 }) as object, { m: 1 }))) })).toMatch(/not the next one/)
   })
 
   it('an end lost, or told goodbye, for an end that was never one it could be talking to', () => {
