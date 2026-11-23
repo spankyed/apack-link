@@ -100,14 +100,16 @@ only a frame is numbered. A link that numbered its own words would have more to 
 
 | Text | Says |
 |---|---|
-| `{ "link": 1 }` | Hello: which link this end is. The first thing in the first batch, and nothing is taken before it |
+| `{ "link": 1, "session": s, "taken": n }` | Hello: which link, which session this end is, and the last number it took. First on each connection, and nothing is taken before it. `"again": true` on every connection after an end's first |
+| `{ "taken": n }` | The last number this end took. In a batch when it has more to say of it |
+| `{ "lost": true }` | The session cannot be picked up again; the link ends `lost` |
 | `{ "bye": "restarting" }` | This end is going on purpose and is to be reached again |
 | `{ "bye": "ended" }` | This end is going on purpose and is not coming back |
 
 A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing in the last batch.
 
 ```
-[{"link":1},{"seq":1,"frame":{"kind":"follow","id":1,…}},{"seq":2,"frame":{"kind":"ask","id":1,…}}]
+[{"link":1,"session":"…","taken":0},{"seq":1,"frame":{"kind":"follow","id":1,…}},{"seq":2,"frame":{"kind":"ask","id":1,…}}]
 [{"seq":3,"frame":{"kind":"left","id":1}},{"bye":"ended"}]
 ```
 
@@ -130,6 +132,33 @@ A frame crosses as `{ "seq": n, "frame": { … } }`. A goodbye is the last thing
   nothing of the text.
 - **Closing is in order too.** What an end sent before it closed is handed over before the other end hears that
   it closed. A socket does this, and the ends in memory do: it is what lets a goodbye arrive.
+
+## A connection that comes back
+
+A link outlives what carries it (`src/link.ts`).
+
+- **Kept until taken.** Each end keeps every frame it sent, as text, until the other says it took it. The other
+  says so with `{ taken }` in a batch, and in its hello.
+- **A new connection.** Each end's hello says its session and the last number it took. Each sends again what the
+  other has not taken, in order, then goes on. A frame is taken only in turn, so nothing is taken twice. On a
+  connection after an end's first, nothing new goes out until hellos have crossed. On the first connection, frames
+  go at once.
+- **Lost.** A link ends `{ why: 'lost' }`, saying `{ lost: true }` to the other end, when the hello is from another
+  session than the one it was talking to, or says it took more than was sent, or wants frames no longer kept. It
+  also ends lost when the hello says `again` on this end's own first connection: the other end is going on with
+  something, and this end is new. That last rule is what stops a window whose first connection dropped before it
+  heard anything from handing its frames to a backend that restarted. The window never learned the old backend's
+  session, so it cannot tell. Every ask and view then ends as when a link closes.
+- **Who opens.** `link(open)` opens a connection now, and another each time one closes, at once. Whoever gives
+  `open` decides when it actually connects. `link()` waits to be handed each connection with `carry`. `accept`
+  takes connections as they arrive at a backend: a new session is a new link, a known one goes back to its link,
+  and one that says `again` for a session it does not know is told `lost`.
+- **Goodbye.** `ended` ends the other end, which is not reached again. `restarting` does not end a link that comes
+  back: it reconnects, and an end that restarted is a new session, which is lost.
+- **Gone for good** is the host's to say, with `close()`. Nothing a link sees tells a crashed window from a slow
+  one, and a link is given no time to wait. What is kept is bounded by step 6 and by nothing else.
+
+An ask is delivered at most once, because a frame is: an answer lost on the way is one of the frames sent again.
 
 ## What a link is carried on
 
@@ -189,6 +218,22 @@ Read 2026-11-22, before peers were built. Written down so that it is not argued 
 How it is shown, for peers: each scenario in `src/testing/scenarios.ts` has whatever a system does in answer to
 something arriving done in a lane of its own, so it falls in every place among what crosses the link.
 
+**MQTT** 5.0's sessions (Clean Start, Session Expiry Interval, session state, Keep Alive, Receive Maximum).
+
+- Taken: **both ends keep state, and a reconnect says whether there is a session.** MQTT keeps unacknowledged
+  messages on both sides and has the server say `Session Present`. Here each hello says its session and where it
+  got to, and either end can find the session lost.
+- Taken: **a client with no state that is told there is one closes.** That is the `again` rule turned around.
+- Declined: **Session Expiry Interval.** MQTT discards a session after a time. Whoever holds a link says when the
+  other end is gone (`close()`); a link is given no time to wait.
+- Declined: **acknowledgement per message, and QoS 2's four-step handshake.** Exactly-once here comes from
+  numbering in one ordered stream and taking only in turn. One number, the last taken, acknowledges everything
+  before it.
+- Declined: **Keep Alive's one and a half times the interval.** Step 7 has a link ask only while it is owed
+  something.
+- Kept for step 6: **Receive Maximum**, the receiver saying how much it will take. A bound counted by what the
+  other end has not said it took is the same idea.
+
 **The Language Server Protocol's base protocol** (3.17).
 
 - Taken: **the three shapes.** A request and its response are `ask` and `answer`, a notification is `tell`.
@@ -208,7 +253,7 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-and step 4 (a socket, a port and a stream).
+step 4 (a socket, a port and a stream) and step 5 (a connection that comes back).
 
 ## What is not decided
 

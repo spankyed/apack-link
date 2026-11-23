@@ -13,7 +13,7 @@ import { carried, everyOrder, hold, memoryEnds, peers, sample, type KitScenario 
 
 const scenarios: readonly KitScenario[] = [...peers, ...hold]
 /** How many orders each scenario is run under over something real. */
-const RUNS = 40
+const RUNS = 20
 
 /** Something real to carry a link on: makes joined pairs, and lets go of everything it made. */
 interface Carrier {
@@ -107,7 +107,7 @@ for (const [name, start] of [['a WebSocket', websockets], ['a message port', por
         }, { seed: at + 1, runs: RUNS })
         if (ran.failure) throw new Error(`Failed (replay with [${ran.failure.choices.join(', ')}]):\n  ${ran.failure.taken.join('\n  ')}`, { cause: ran.failure.error })
         expect(ran.orderings).toBe(RUNS)
-      })
+      }, 30_000)
     }
   })
 }

@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 4.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 5.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -253,6 +253,13 @@ Done when: the same scenario file runs over memory, a socket, a message port and
 output.
 
 ## Step 5. A connection that comes back
+
+Built, in `src/link.ts`: `link(open)`, `link()` with `carry`, `accept`, and `kept()`. The scenarios are `resume` in
+the kit, run over `droppingMemoryEnds`, whose connection a lane drops, or whose second end a lane restarts. Two
+things beyond what is below. A hello on every connection after an end's first says `again`, and an end hearing
+it on its own first connection finds the session lost. Without it, a window whose first connection dropped
+before it heard anything could hand its frames to a new backend. And `open` is called again at once when a
+connection closes: whoever gives it paces it.
 
 A link outlives what carries it.
 

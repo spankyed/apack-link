@@ -7,7 +7,11 @@ const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
 const told = (frames: readonly Frame[]): unknown[] => frames.map((frame) => frame.kind === 'tell' && frame.event)
 /** A batch, as one end puts it on the wire. */
 const wire = (...said: unknown[]): string => JSON.stringify(said)
-const hello = wire({ link: 1 })
+/** A hello, as a bare end says it. */
+const HELLO = { link: 1, session: 'the bare end', taken: 0 }
+const hello = wire(HELLO)
+/** A hello as a link says it: its session is its own. */
+const saidHello = { link: 1, session: expect.any(String), taken: 0 }
 
 /** Two ends on a schedule, each direction a lane of its own, and what each has heard. */
 const joined = (schedule: Schedule) => {
@@ -143,12 +147,12 @@ describe('a link', () => {
     a.send(tell('after'))
     a.close('ended')
     // What was sent before it closed left as it closed, and nothing after.
-    expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('before') }]])
+    expect(texts.map((text) => JSON.parse(text))).toEqual([[saidHello, { seq: 1, frame: tell('before') }]])
   })
 
   it('takes a batch that arrives as bytes', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(new TextEncoder().encode(wire({ link: 1 }, { seq: 1, frame: tell('as bytes ✓') })))
+    bare.send(new TextEncoder().encode(wire(HELLO, { seq: 1, frame: tell('as bytes ✓') })))
     await turn()
     expect(told(heard)).toEqual(['as bytes ✓'])
     expect(ended).toEqual([])
@@ -156,7 +160,7 @@ describe('a link', () => {
 
   it('is closed by what carries it going, after what was sent before it went', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(wire({ link: 1 }, { seq: 1, frame: tell('last') }))
+    bare.send(wire(HELLO, { seq: 1, frame: tell('last') }))
     bare.close()
     expect(ended).toEqual([])
     await turn()
@@ -234,7 +238,7 @@ describe('a batch', () => {
       [{ seq: 3, frame: tell('out of place') }, { why: 'out of order', expected: 2, got: 3 }],
     ] as const) {
       const { bare, heard, ended } = facing()
-      bare.send(wire({ link: 1 }, { seq: 1, frame: tell('first') }, after, { seq: 2, frame: tell('after the end') }))
+      bare.send(wire(HELLO, { seq: 1, frame: tell('first') }, after, { seq: 2, frame: tell('after the end') }))
       await turn()
       expect(told(heard)).toEqual(['first'])
       expect(ended).toEqual([why])
@@ -249,12 +253,12 @@ describe('hello', () => {
     bare.onData((text) => { texts.push(text as string) })
     link(right).send(tell('after'))
     await turn()
-    expect(texts.map((text) => JSON.parse(text))).toEqual([[{ link: 1 }, { seq: 1, frame: tell('after') }]])
+    expect(texts.map((text) => JSON.parse(text))).toEqual([[saidHello, { seq: 1, frame: tell('after') }]])
   })
 
   it('refuses an end that says another number, naming both', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(wire({ link: 2 }, { seq: 1, frame: tell('from another link') }))
+    bare.send(wire({ ...HELLO, link: 2 }, { seq: 1, frame: tell('from another link') }))
     await turn()
     expect(heard).toEqual([])
     expect(ended).toEqual([{ why: 'version', mine: 1, theirs: 2 }])

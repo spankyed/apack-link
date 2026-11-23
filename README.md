@@ -35,6 +35,8 @@ and so can keep all of it in order.
 
 ## What holds
 
+- **Once, across a connection that drops.** A link outlives what carries it. Each end keeps what it sent until
+  the other says it took it, and a new connection picks up where each end got to. Nothing is taken twice.
 - **Order.** Every frame an end sends is numbered. The other end takes a frame only if it is the next one, and a
   frame lost, doubled or out of place closes the link, saying why.
 - **A window hears of a step after its views show it.** What a system says to the other end waits until the views
@@ -76,6 +78,24 @@ for it. A `Following`'s `stop` does the same for a view.
 A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `then` once this view has been
 shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
 the other end after the views that end follows show what the answer is about.
+
+A link that comes back is given what opens a connection, and a backend takes connections as they arrive and hands
+each to its link:
+
+```ts
+import { accept, link, socket } from '@apackdev/link'
+
+// A window: opens a socket now, and another whenever one closes.
+const toBackend = link(() => socket(new WebSocket(url, [token])))
+
+// A backend: a new session is a new link; a known one is handed back to the link it was.
+const take = accept((link) => { /* join(link, backendPort) */ })
+server.on('connection', (ws) => take(socket(ws)))
+```
+
+Nothing waits on a clock. When a connection closes, `open` is called again at once, so whoever gives it decides
+when it actually connects. Whoever holds a link says when the other end is gone for good, with `close()`: until
+then what was sent is kept.
 
 A `Transport` is anything that takes a message, text or bytes, at one end and hands it over at the other, in
 order, until it closes. Four are here, and none imports what it is carried on:
@@ -144,7 +164,7 @@ be done:
 2. The hold: what a step sends a window waits until that window's views have caught up. **Built.**
 3. One write a turn. **Built.**
 4. A socket, a message port and a stream of bytes to be carried on. **Built.**
-5. A connection that comes back, with nothing taken twice.
+5. A connection that comes back, with nothing taken twice. **Built.**
 6. A bound on what waits, with a view's overtaken update let go.
 7. Knowing the other end is there by what it does, never by a time to reply.
 8. What caused a frame, a tap that never sees what one carries, and frames that are private.
