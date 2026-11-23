@@ -56,27 +56,26 @@ and so can keep all of it in order.
   message, unless it is longer than a part (`part`, 1 MiB unless given). Where what carries it takes no message
   that long (`Transport.most`), or the other end says it takes none that long (each says so in its hello), it
   crosses as the fewest that fit, cut between what was said, in order: a link never hands over more than is
-  taken. What takes no message as long as a part and what goes with one is not carried on at all: `link`, `carry`
-  and `accept` throw as it is handed over. A frame longer than a part crosses as parts, each numbered, and is
+  taken. What takes no message as long as a part and what goes with one is not carried on at all: `dial`, `listen`,
+  `carry` and `accept` throw as it is handed over. A frame longer than a part crosses as parts, each numbered, and is
   handed over whole in the place of its first; a resume picks up within it.
 - **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.
-- **A connection takes a link's place only once it fits.** A link on a connection where the other end has been
-  met keeps it when it is handed another, and says nothing on the new one, until a hello that fits has arrived
-  there. One that does not fit is closed, and the link goes on. A link that is handed its connections, a
-  backend's, never ends for what a connection says before such a hello: it turns the connection away. Only the
-  end that opened a connection ends `lost` for what it met there.
+- **A connection takes a link's place only once it fits.** The end that listens, a backend's, says nothing on a
+  connection it is handed, and keeps the one it has, until a hello that fits has arrived there. One that does not
+  fit is closed, told why, and the link goes on: it never ends for what a connection says before such a hello.
+  Only the end that dials, which opened the connection, ends `lost` for what it met there.
 - **Bounded.** How far behind the other end is, is what it has not said it took. Past a mark a link stops
   numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
   matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
-  `link(transport, { bound: { kept, waiting, frame } })` sets them, in frames and in bytes. Every size a link counts or
+  `dial(transport, { bound: { kept, waiting, frame } })` sets them, in frames and in bytes. Every size a link counts or
   reports is in bytes of text as UTF-8, which is what a transport counts what it has not written in.
 - **Never a time to answer in.** What carries a link saying it closed is how an end knows the other has gone. For
-  a connection that can go quiet without closing, `link(open, { there: { window, clock } })`: while this end is
+  a connection that can go quiet without closing, `dial(open, { there: { window, clock } })`: while this end is
   owed something, a `taken` or an answer, and nothing at all has arrived for half the window, it asks whether the
   other end is there. After a whole window with nothing arriving, it opens another connection. An ask that takes an
   hour is not a link that has gone.
 - **A listener that throws loses nothing.** Every frame of the batch is still taken, in order, every other
-  listener is still called, and the link goes on. What was thrown is handed to `link(…, { thrown })`, or thrown
+  listener is still called, and the link goes on. What was thrown is handed to `dial(…, { thrown })`, or thrown
   again in a turn of its own, to be reported as anything uncaught is. A system joined to a link is a listener:
   one that throws where it is told, answered or shown is told, answered and shown everything after.
 - **Closing sends what was sent.** `close()` sends everything sent before it, what waited for room included, and
@@ -102,7 +101,7 @@ A system offers a `Port`: what it can be told, asked and have followed. `join` p
 returns the port of the system at the other end.
 
 ```ts
-import { join, link, memoryPair, type Port } from '@apackdev/link'
+import { dial, join, listen, memoryPair, type Port } from '@apackdev/link'
 
 const backend: Port = {
   tell: (to, event) => {},
@@ -110,11 +109,16 @@ const backend: Port = {
   follow: (feature, view, args, shown, over) => { shown(0); return { stop: () => {} } },
 }
 const [left, right] = memoryPair()
-join(link(right), backend)
-const toBackend = join(link(left), { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) })
+join(listen(right), backend)
+const toBackend = join(dial(left), { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) })
 
 toBackend.ask('threads', 'CREATE', { topic: 'one' }, (update) => {}, (outcome) => console.log(outcome))
 ```
+
+A link has two ends that are not alike. The one that opened the connection dials: `dial` says hello first, and
+ends for what it meets. The other listens: `listen` says nothing on a connection until a hello that fits has
+arrived on it, and ends for nothing said before one. Where neither opened it, a pair of message ports, one of the
+two is chosen to dial. Two that both listen never say anything.
 
 What `ask` returns is to be called when whoever asked has gone: the other end is told, and nothing more is heard
 for it. A `Following`'s `stop` does the same for a view.
@@ -123,14 +127,14 @@ A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `
 shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
 the other end after the views that end follows show what the answer is about.
 
-A link that comes back is given what opens a connection, and a backend takes connections as they arrive and hands
-each to its link:
+An end that dials is given what opens a connection, and comes back when one drops. A backend takes connections
+as they arrive and hands each to the link that listens for it:
 
 ```ts
-import { accept, link, socket, timers } from '@apackdev/link'
+import { accept, dial, socket, timers } from '@apackdev/link'
 
 // A window: opens a socket now, and another after each one closes, on the clock it is handed.
-const toBackend = link(() => socket(new WebSocket(url, [token])), { reopen: { clock: timers } })
+const toBackend = dial(() => socket(new WebSocket(url, [token])), { reopen: { clock: timers } })
 
 // A backend: a new session is a new link; a known one is handed back to the link it was.
 const take = accept((link) => { /* join(link, backendPort) */ })
@@ -138,7 +142,7 @@ server.on('connection', (ws) => take(socket(ws)))
 ```
 
 A link has no clock of its own, and one that opens its own connections is not made without being handed one:
-`link(open, { reopen: { clock, first, most } })` (`timers` is a clock on `setTimeout`, to hand it). A connection
+`dial(open, { reopen: { clock, first, most } })` (`timers` is a clock on `setTimeout`, to hand it). A connection
 has held once it has stayed up, after the other end said hello on it, for as long as the wait before it was
 opened, and `first` at least. After one that held, the next is opened at once. After one that did not, met or
 not, the link waits `first` milliseconds (100), doubled for each such connection in a row, `most` (10 000) at
@@ -189,13 +193,13 @@ loop: each direction of a link is a lane, a lane keeps its order, and a scenario
 choosing between lanes.
 
 ```ts
-import { link } from '@apackdev/link'
+import { dial, listen } from '@apackdev/link'
 import { everyOrder, scheduledPair } from '@apackdev/link/testing'
 
 await everyOrder((schedule) => {
   const [left, right] = scheduledPair(schedule)
-  const a = link(left)
-  const b = link(right)
+  const a = dial(left)
+  const b = listen(right)
   // ... what each end does ...
   return () => { /* what must hold once everything has come to rest */ }
 })

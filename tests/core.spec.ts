@@ -74,8 +74,8 @@ describe('an end that did otherwise is found', () => {
 })
 
 describe('a step', () => {
-  const set = setup({ kind: 'once', session: 'here' })
-  const other = setup({ kind: 'once', session: 'there' })
+  const set = setup({ role: 'dials', connections: 'one', session: 'here' })
+  const other = setup({ role: 'dials', connections: 'one', session: 'there' })
   const tell = (event: string): Event => ({ is: 'send', one: ready(set, { kind: 'tell', to: 'x', event }, {}), backlog: 0 })
   /** Every step of an end that says hello, is met, sends, is sent a frame and is closed, with what each asked for. */
   const run = (): { state: State; asked: Effect[][] } => {
@@ -132,7 +132,7 @@ describe('a step', () => {
   const does = (effects: Effect[]): string[] => effects.map((effect) => effect.do)
 
   it('writes nothing when a turn ends for a connection the end has left', () => {
-    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const step = core(setup({ role: 'dials', connections: 'opened', session: 'here' }))
     const state = start()
     step(state, { is: 'carry', on: 1 })
     step(state, { is: 'carry', on: 2 })
@@ -141,16 +141,16 @@ describe('a step', () => {
   })
 
   it('takes nothing more from a connection it turned away, whatever is said on it next', () => {
-    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const step = core(setup({ role: 'listens', connections: 'handed', session: 'here' }))
     const state = start()
     step(state, { is: 'carry', on: 1 })
-    expect(does(step(state, { is: 'data', on: 1, message: '["not a hello"]', backlog: 0 }))).toEqual(['write', 'close'])
+    expect(does(step(state, { is: 'data', on: 1, message: '["not a hello"]', backlog: 0 }))).toEqual(['away'])
     expect(step(state, { is: 'data', on: 1, message: helloOf('there'), backlog: 0 })).toEqual([])
     expect(state.theirs).toBeUndefined()
   })
 
   it('takes nothing from a connection that waited and closed', () => {
-    const step = core(setup({ kind: 'handed', session: 'here' }))
+    const step = core(setup({ role: 'listens', connections: 'handed', session: 'here' }))
     const state = start()
     step(state, { is: 'carry', on: 1 })
     step(state, { is: 'data', on: 1, message: helloOf('there'), backlog: 0 })
@@ -161,7 +161,7 @@ describe('a step', () => {
   })
 
   it('opens no connection for a clock that was called off, or while it is on one', () => {
-    const step = core(setup({ kind: 'opens', session: 'here' }))
+    const step = core(setup({ role: 'dials', connections: 'opened', session: 'here' }))
     const state = start()
     step(state, { is: 'carry', on: 1 })
     // It could not be carried after all, though the end was put on it: another is to be opened, when the clock says.
@@ -177,7 +177,7 @@ describe('a step', () => {
   })
 
   it('refuses a setting no end could work with', () => {
-    expect(() => setup({ kind: 'once', session: 'x', part: 8 })).toThrow(RangeError)
-    expect(() => setup({ kind: 'once', session: 'x', bound: { frame: 100 } })).toThrow(RangeError)
+    expect(() => setup({ role: 'dials', connections: 'one', session: 'x', part: 8 })).toThrow(RangeError)
+    expect(() => setup({ role: 'dials', connections: 'one', session: 'x', bound: { frame: 100 } })).toThrow(RangeError)
   })
 })

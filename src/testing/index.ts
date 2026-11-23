@@ -1,7 +1,7 @@
 // What a spec of a link is written with, here and anywhere an end of a link is built: a schedule that runs a
 // scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios themselves,
 // to be run over any pair of ends.
-import { link, type Options } from '../link.ts'
+import { dial, listen, type Options } from '../link.ts'
 import { memoryPair, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
@@ -31,11 +31,11 @@ export function scheduledPair(schedule: Schedule, names: readonly [string, strin
 }
 
 /**
- * Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run
- * over. Given a model, each end is put under it.
+ * Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
+ * this package's own scenarios are run over. Given a model, each end is put under it.
  */
 export function memoryEnds(schedule: Schedule, options: Options = {}, held?: Model): Ends {
   const [left, right] = scheduledPair(schedule)
-  const [a, b] = [link(left, options), link(right, options)]
+  const [a, b] = [dial(left, options), listen(right, options)]
   return held ? { a: held.end(a, 'a'), b: held.end(b, 'b') } : { a, b }
 }

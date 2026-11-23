@@ -211,7 +211,7 @@ Done when: those hold, and the mutants are caught: nothing held, everything rele
 
 ## Step 3. One write a turn
 
-Built, in `src/link.ts`. `link(transport, { later })` takes what puts the batch off. `close` sends what was said
+Built, in `src/link.ts`. `dial(transport, { later })` takes what puts the batch off. `close` sends what was said
 before it closes, with a goodbye last.
 
 What an end sends within one turn of the event loop crosses as one text.
@@ -253,7 +253,7 @@ output.
 
 ## Step 5. A connection that comes back
 
-Built, in `src/link.ts`: `link(open)`, `link()` with `carry`, `accept`, and `kept()`. The scenarios are `resume` in
+Built, in `src/link.ts`: `dial(open)`, `listen()` with `carry`, `accept`, and `kept()`. The scenarios are `resume` in
 the kit, run over `droppingMemoryEnds`, whose connection a lane drops, or whose second end a lane restarts. Two
 things beyond what is below. A hello says which session it is going on with (`resumes`) once its end has met
 one, and a link that can come back numbers nothing until it has met the other end: an end that has met nobody
@@ -428,6 +428,20 @@ Done when: every spec there was passes as it was written, the recorded exchange 
 for text, and the core is run from every state two ends can reach under a script (sending, dropping, restarting,
 closing, a watched connection), each state held to the model and to what an end holds adding up.
 
+## Step 13. An end that dials, and one that listens
+
+Built: `dial` and `listen` in place of `link`, `Listener` (a `Link` with `carry`), `role` and `connections` in the
+core's `Setup`, and `tests/roles.spec.ts`. What crosses changed: an end that listens says nothing on a connection
+before a hello that fits, and tells a link of another number which link it is.
+
+An end was one of three kinds, by what it was made with, and both said hello at once; who waited for whom was a
+case inside one of them. Here the two ends are named for what they are. The one that opened the connection says
+hello first and ends for what it meets, and the other answers, and ends for nothing a stranger says.
+
+Done when: every scenario passes over an end that dials and one that listens, in every order and from every
+state; an end that listens says nothing before a hello that fits, on one connection or handed many; it is ended
+by nothing said before one; and an end cannot be set to dial and be handed connections, or to listen and open them.
+
 ## What is not this plan's to build
 
 These land with apack-state, by whoever is doing that work, and are here so the seam is known.
@@ -443,4 +457,4 @@ These land with apack-state, by whoever is doing that work, and are here so the 
 
 Steps 0 to 3 in order: each is the ground the next stands on. After step 3, steps 4, 8 and 10 touch different
 files and can be done side by side. Step 5 needs 3; 6 and 7 need 5; 9 needs 4 and 5. Step 11 needs 5, and is the ground for anything that changes how a
-link does what it does. Step 12 needs 11.
+link does what it does. Step 12 needs 11, and 13 needs 12.

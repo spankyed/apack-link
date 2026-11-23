@@ -8,7 +8,7 @@ import { join as joinPath } from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
-import { link, port, socket, stream, type Frame, type Message, type Transport } from '../src/index.ts'
+import { dial, listen, port, socket, stream, type Frame, type Message, type Transport } from '../src/index.ts'
 import { msgpack } from './support/msgpack.ts'
 import { carried, everyOrder, hold, memoryEnds, peers, sample, underModel, type KitScenario } from '../src/testing/index.ts'
 
@@ -112,7 +112,7 @@ for (const [name, start] of [['a WebSocket', websockets], ['a message port', por
         let used = 0
         const ran = await sample((schedule) => {
           const [left, right] = carried(schedule, pairs[used++]!)
-          return underModel((held) => scenario.play(schedule, { a: held.end(link(left), 'a'), b: held.end(link(right), 'b') }))
+          return underModel((held) => scenario.play(schedule, { a: held.end(dial(left), 'a'), b: held.end(listen(right), 'b') }))
         }, { seed: at + 1, runs: RUNS })
         if (ran.failure) throw new Error(`Failed (replay with [${ran.failure.choices.join(', ')}]):\n  ${ran.failure.taken.join('\n  ')}`, { cause: ran.failure.error })
         expect(ran.orderings).toBe(RUNS)
@@ -222,11 +222,11 @@ describe('a WebSocket', () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
     await eventOnce(server, 'listening')
     const heard: Frame[] = []
-    server.on('connection', (accepted) => { link(socket(accepted as never)).onFrame((frame) => { heard.push(frame) }) })
+    server.on('connection', (accepted) => { listen(socket(accepted as never)).onFrame((frame) => { heard.push(frame) }) })
     const client = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}`)
     try {
       expect(client.readyState).toBe(WebSocket.CONNECTING)
-      const a = link(socket(client as never))
+      const a = dial(socket(client as never))
       a.send({ kind: 'tell', to: 'x', event: 1 })
       await Promise.resolve()
       a.send({ kind: 'tell', to: 'x', event: 2 })

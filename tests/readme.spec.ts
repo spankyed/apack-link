@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { join, link, memoryPair, type Outcome, type Port } from '../src/index.ts'
+import { join, dial, listen, memoryPair, type Outcome, type Port } from '../src/index.ts'
 
 // The README's example, as it is written there.
 it('runs the README example', async () => {
@@ -9,8 +9,8 @@ it('runs the README example', async () => {
     follow: (_feature, _view, _args, shown) => { shown(0); return { stop: () => {} } },
   }
   const [left, right] = memoryPair()
-  join(link(right), backend)
-  const toBackend = join(link(left), { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) })
+  join(listen(right), backend)
+  const toBackend = join(dial(left), { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) })
   const ended = new Promise<Outcome>((resolve) => { toBackend.ask('threads', 'CREATE', { topic: 'one' }, () => {}, resolve) })
   expect(await ended).toEqual({ ok: true, value: { id: 'THR-1' } })
 })

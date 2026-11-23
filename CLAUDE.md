@@ -12,7 +12,7 @@ know before changing it.
 - `src/core.ts` is what one end does, with nothing done: given what an end holds and one thing that happened, what
   it holds after and what is to be done. Frames numbered as they are sent, taken only in turn, and the link closed
   where one arrives out of place. It imports no transport and no clock, and calls nobody.
-- `src/link.ts` is one end on what it is handed: it tells the core what happened, and does what the core says, on
+- `src/link.ts` is one end on what it is handed, `dial` the one that opened the connection and `listen` the other: it tells the core what happened, and does what the core says, on
   transports, clocks and listeners. Nothing is decided there.
 - `src/codec.ts` is what batches are encoded in: JSON built in, any other handed in.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory. `src/socket.ts`, `src/port.ts`
@@ -40,9 +40,9 @@ know before changing it.
 - **A link never waits on a clock.** What it knows of the other end it knows from what arrives. Where a pause is
   wanted (a quiet connection, opening one again) it is on a `Clock` handed in, and without one nothing is timed:
   a link that would need one to be safe is not made without it.
-- **A link that is handed its connections ends for nothing a connection says before a hello that fits.** It turns
-  the connection away, and keeps the one it is on until another fits. Only the end that opened a connection ends
-  for what it met there.
+- **The end that listens says nothing on a connection before a hello that fits, and ends for nothing said before
+  one.** It turns the connection away, and keeps the one it is on until another fits. Only the end that dials
+  speaks first, and only it ends for what it met there.
 - **What a listener or a system throws is never the link's.** Everything after it is still taken and handed over,
   and what was thrown goes to `thrown`.
 - **A size is in bytes**, of text as UTF-8 (`bytesOf`), wherever one is counted, compared or reported.

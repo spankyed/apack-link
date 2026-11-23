@@ -23,7 +23,7 @@ try {
   fs.writeFileSync(path.join(consumer, 'entries.mjs'), `
 import * as link from '@apackdev/link'
 import * as testing from '@apackdev/link/testing'
-for (const name of ['join', 'link', 'accept', 'socket', 'port', 'stream', 'memoryPair', 'json']) if (typeof link[name] === 'undefined') throw new Error('@apackdev/link has no ' + name)
+for (const name of ['join', 'dial', 'listen', 'accept', 'socket', 'port', 'stream', 'memoryPair', 'json']) if (typeof link[name] === 'undefined') throw new Error('@apackdev/link has no ' + name)
 for (const name of ['everyOrder', 'explore', 'scheduledPair', 'memoryEnds', 'peers', 'hold']) if (typeof testing[name] === 'undefined') throw new Error('@apackdev/link/testing has no ' + name)
 `)
   execFileSync(process.execPath, ['entries.mjs'], { cwd: consumer, stdio: 'inherit' })

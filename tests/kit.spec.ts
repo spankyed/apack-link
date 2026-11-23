@@ -1,7 +1,7 @@
 // The codec built in, and the pieces of the testing kit a spec of another end is written with: each does what its
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
-import { asFrame, join, json, link, memoryPair, type Port } from '../src/index.ts'
+import { asFrame, join, json, dial, listen, memoryPair, type Port } from '../src/index.ts'
 import { asking, desk, everyOrder, holds, made, same, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
@@ -67,8 +67,8 @@ describe('same and holds', () => {
 describe('asking and watching', () => {
   const ends = (mine: Port): Port => {
     const [left, right] = memoryPair()
-    join(link(right), mine)
-    return join(link(left), desk().port)
+    join(listen(right), mine)
+    return join(dial(left), desk().port)
   }
 
   it('note what an asker hears and how it ended, in order', async () => {

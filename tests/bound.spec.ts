@@ -2,7 +2,7 @@
 // go, nothing else is, and past the bound with nothing left to let go the link ends by name.
 import { MessageChannel } from 'node:worker_threads'
 import { describe, expect, it } from 'vitest'
-import { link, memoryPair, port, type Ending, type Frame, type Message, type Transport } from '../src/index.ts'
+import { dial, memoryPair, port, type Ending, type Frame, type Message, type Transport } from '../src/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const until = async (done: () => boolean): Promise<void> => { while (!done()) await turn() }
@@ -20,7 +20,7 @@ const held = () => {
   }
 }
 const listening = (to: Transport) => {
-  const end = link(to)
+  const end = dial(to)
   const heard: Frame[] = []
   const ended: Ending[] = []
   end.onFrame((frame) => { heard.push(frame) })
@@ -31,7 +31,7 @@ const listening = (to: Transport) => {
 describe('a view that changes while nothing is taken', () => {
   it('crosses as one frame once taking goes on, over memory', async () => {
     const { left, right, release } = held()
-    const a = link(left, { bound: { kept: { frames: 4, size: 1 << 20 } } })
+    const a = dial(left, { bound: { kept: { frames: 4, size: 1 << 20 } } })
     const b = listening(right)
     for (let result = 1; result <= 10_000; result++) {
       a.send(shown(1, result))
@@ -47,7 +47,7 @@ describe('a view that changes while nothing is taken', () => {
 
   it('crosses as one frame once taking goes on, over a message port', async () => {
     const channel = new MessageChannel()
-    const a = link(port(channel.port1), { bound: { kept: { frames: 4, size: 1 << 20 } } })
+    const a = dial(port(channel.port1), { bound: { kept: { frames: 4, size: 1 << 20 } } })
     for (let result = 1; result <= 10_000; result++) {
       a.send(shown(1, result))
       if (result % 1000 === 0) await turn()
@@ -65,7 +65,7 @@ describe('a view that changes while nothing is taken', () => {
 describe('what does arrive', () => {
   it('is in the order it was sent, with a view never behind what was said after it', async () => {
     const { left, right, release } = held()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
     const b = listening(right)
     const sent: Frame[] = [tell('first'), shown(1, 1), tell('A'), shown(2, 1), shown(1, 2), tell('B'), shown(1, 3), shown(2, 2), tell('C')]
     for (const frame of sent) a.send(frame)
@@ -80,7 +80,7 @@ describe('what does arrive', () => {
 describe('past the bound', () => {
   it('ends the link by name, when nothing waiting can be let go', async () => {
     const { left, right } = held()
-    const a = link(left, { bound: { kept: { frames: 10, size: 1 << 20 }, waiting: { frames: 1000, size: 1 << 30 } } })
+    const a = dial(left, { bound: { kept: { frames: 10, size: 1 << 20 }, waiting: { frames: 1000, size: 1 << 30 } } })
     listening(right)
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
@@ -91,7 +91,7 @@ describe('past the bound', () => {
 
   it('lets no progress go, however much of it there is for one ask', async () => {
     const { left, right, release } = held()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 100_000, size: 1 << 30 } } })
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 100_000, size: 1 << 30 } } })
     const b = listening(right)
     for (let part = 1; part <= 1000; part++) a.send({ kind: 'progress', id: 1, update: part })
     release()
@@ -101,7 +101,7 @@ describe('past the bound', () => {
 
   it('counts the length of what waits as well as how many', () => {
     const { left } = held()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 1000, size: 100 } } })
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 1000, size: 100 } } })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
     a.send(tell('numbered'))
@@ -116,7 +116,7 @@ describe('an end that only listens', () => {
   it('says what it took, so the one sending is not taken to be behind', async () => {
     const [left, right] = memoryPair()
     // About thirty characters a frame: what was taken has to be let go by length as well, or the mark is soon passed.
-    const a = link(left, { bound: { kept: { frames: 150, size: 6000 }, waiting: { frames: 200, size: 1 << 20 } } })
+    const a = dial(left, { bound: { kept: { frames: 150, size: 6000 }, waiting: { frames: 200, size: 1 << 20 } } })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
     const b = listening(right)
@@ -137,7 +137,7 @@ describe('a transport that says how much it has not written', () => {
     const [left, right] = memoryPair()
     let unwritten = 0
     const counted: Transport = { ...left, send: (message: Message) => left.send(message), waiting: () => unwritten }
-    const a = link(counted, { bound: { kept: { frames: 1000, size: 1000 } } })
+    const a = dial(counted, { bound: { kept: { frames: 1000, size: 1000 } } })
     const b = listening(right)
     a.send(tell(1))
     await until(() => b.heard.length === 1)

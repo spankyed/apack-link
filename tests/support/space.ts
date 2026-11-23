@@ -45,7 +45,8 @@ export interface Script {
 type Crossing = Message | null
 
 interface End {
-  readonly kind: 'once' | 'opens' | 'handed'
+  readonly role: 'dials' | 'listens'
+  readonly connections: 'one' | 'opened' | 'handed'
   readonly session: string
   readonly state: State
   /** The connections a turn is to end for, and what is on a clock. */
@@ -77,14 +78,14 @@ export function space(script: Script): { readonly states: number; readonly rests
   const setOf = (end: End): ReturnType<typeof setup> => {
     let set = sets.get(end.session)
     if (!set) {
-      set = setup({ kind: end.kind, session: end.session, ...(script.window === undefined ? {} : { window: script.window }), ...(script.kept === undefined ? {} : { bound: { kept: { frames: script.kept } } }), ...(typeof script.frames === 'object' ? { part: script.frames.part } : {}) })
+      set = setup({ role: end.role, connections: end.connections, session: end.session, ...(script.window === undefined ? {} : { window: script.window }), ...(script.kept === undefined ? {} : { bound: { kept: { frames: script.kept } } }), ...(typeof script.frames === 'object' ? { part: script.frames.part } : {}) })
       sets.set(end.session, set)
       steps.set(end.session, core(set))
     }
     return set
   }
-  const make = (world: World, kind: End['kind'], session: string): number => {
-    world.ends.push({ kind, session, state: start(), turns: [], timers: [], byes: [], out: 0, got: 0 })
+  const make = (world: World, role: End['role'], connections: End['connections'], session: string): number => {
+    world.ends.push({ role, connections, session, state: start(), turns: [], timers: [], byes: [], out: 0, got: 0 })
     setOf(world.ends.at(-1)!)
     return world.ends.length - 1
   }
@@ -141,7 +142,7 @@ export function space(script: Script): { readonly states: number; readonly rests
   /** Who a connection opened now reaches: the listener, or a new one where that has ended by itself. */
   const listening = (world: World): number => {
     const now = world.ends[world.listener]!
-    return now.ended ? make(world, 'handed', `b${world.ends.length}`) : world.listener
+    return now.ended ? make(world, 'listens', 'handed', `b${world.ends.length}`) : world.listener
   }
   const open = (world: World, at: number): void => {
     world.opened++
@@ -262,7 +263,7 @@ export function space(script: Script): { readonly states: number; readonly rests
         }
         if (act.does === 'restart') {
           tell(w, w.listener, { is: 'close' })
-          w.listener = make(w, 'handed', `b${w.ends.length}`)
+          w.listener = make(w, 'listens', 'handed', `b${w.ends.length}`)
           return
         }
         const at = act.by === 'a' ? 0 : w.listener
@@ -319,14 +320,14 @@ export function space(script: Script): { readonly states: number; readonly rests
 
   const first: World = { ends: [], wires: [], at: script.lanes.map(() => 0), listener: 1, opened: 0, quiet: script.quiet ?? 0 }
   if (script.kind === 'once') {
-    make(first, 'once', 'a')
-    make(first, 'once', 'b')
+    make(first, 'dials', 'one', 'a')
+    make(first, 'listens', 'one', 'b')
     first.wires.push({ ends: [0, 1], open: [true, true], crossing: [[], []] })
     tell(first, 0, { is: 'carry', on: 0 })
     tell(first, 1, { is: 'carry', on: 0 })
   } else {
-    make(first, 'opens', 'a')
-    make(first, 'handed', 'b')
+    make(first, 'dials', 'opened', 'a')
+    make(first, 'listens', 'handed', 'b')
     open(first, 0)
   }
   const seen = new Set<string>([key(first)])

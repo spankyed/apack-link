@@ -59,14 +59,16 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
   something without having met anybody, or says a `taken` past what was sent or before what it said last. One
   whose `most` is shorter than this end may need for one thing it numbers (a part, or a frame no longer than one,
   with what caused it and what goes around it) is `too narrow`.
-- An end handed its connections, a backend's, turns away a connection whose first word does not fit, and goes on.
-  Only the end that opened a connection ends for what it met there. An end already met on one connection keeps it
-  until a hello that fits arrives on a new one.
-- The end that opened a connection says its hello first on it. An end that is on a connection where the other
-  has been met says nothing on a new one, its own hello included, until a hello that fits has arrived there:
-  then it closes the old one and says its hello on the new, with what it had taken by then. On a connection it
-  is handed while it is on none, or on one where nobody has been met, an end says its hello at once. So a client
-  written to this must not wait for a backend's hello before sending its own.
+- The two ends are not alike. The end that opened a connection dials: it says its hello first on it, and ends
+  for what it meets there. The other listens: it says nothing on a connection, its own hello included, until a
+  hello that fits has arrived there. Then it closes the connection it was on, if it was on one, and says its
+  hello on the new, with what it had taken by then. So a client written to this says its hello first, and never
+  waits for a backend's.
+- An end that listens turns away a connection whose first word does not fit, and goes on: it keeps the
+  connection it has until a hello that fits arrives on another. What it turned away it tells why, where it would
+  otherwise wait: its own hello, to one that said another `link`, so that end ends naming both; its hello and
+  `{"lost":true}`, to one whose hello does not fit; and nothing, to what is not a link's. Only the end that
+  dialled ends for what it met.
 - Each numbered thing is one more than the one before it from that end; one that is not ends the link
   `out of order`. A resume sends again everything after the `taken` the other end's hello names, and a frame in
   parts picks up at the part it got to.
