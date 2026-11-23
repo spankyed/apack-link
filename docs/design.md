@@ -140,18 +140,33 @@ anything an end sends is a change to that file.
   messages that fit, cut between the things said, in order, the hello still first and a goodbye still last. The
   length a link is carried on and the size of what it sends cannot be set apart from each other: the link
   reads the one and keeps to it. `accept` hands a link the transport's `most` and `waiting` with it.
-  - **Found as a connection is handed over.** What takes no message as long as the link may need for one thing it
-    numbers does not carry the link: `link`, `carry` and `accept` close it and throw a `RangeError`, and a link
-    that opened it for itself counts it as a connection that did not hold. What it may need is a part, or a
-    frame no longer than one, with what caused it (1024 bytes at most), 128 bytes around them and the batch's
-    two; and never more than a whole frame would need, where a frame may be no longer than a part. A frame
-    longer than a part never crosses whole, so what carries a link has to have room for a part and not for a
-    frame. So a frame's size is held to one thing, `bound.frame`, known when it is sent; no frame is taken on
-    that some later connection cannot carry, and nothing is found out by how large a frame happens to be.
-  - **Both ends.** Each end says in its hello the longest message it takes on that connection, and a batch is cut
-    to the shorter of what the two take. An end that takes none as long as a frame the other may send is one the
-    other cannot talk to: the one that opened the connection ends `{ why: 'too narrow', most, needs }`. A link
-    that sends before it has met the other end, one given one transport, cuts to its own until it has.
+  - **Cut to fit, not set to match.** How long a part is, is not something set against what carries the link.
+    A link numbers a frame once the other end has been met, so it knows what the transport takes and what the
+    other end said it takes: a frame crosses whole where it, what caused it, 102 bytes around them and the
+    batch's two fit in the less of those, and otherwise in parts, each as long as fits. `part` is only the most
+    a part may be, for a host that wants no write longer. So a server that takes a megabyte, and a link left
+    as it comes, talk: the parts are a little under a megabyte.
+  - **Found as a connection is handed over.** What takes no message of `LEAST` bytes does not carry a link:
+    `dial`, `listen`, `carry` and `accept` close it and throw a `RangeError`, and a link that opened it for
+    itself counts it as a connection that did not hold. That is all a transport is held to as it is handed
+    over. `LEAST` is 1144: the shortest part there is (16), the
+    longest cause (1024), 102 around them and the batch's two. It depends on nothing a link is set with.
+  - **What is around a frame is counted, not allowed for.** The 102 is the most JSON puts around a thing
+    numbered: a first part that is private and has a cause,
+    `{"seq":,"part":,"of":,"data":,"cause":,"private":true}`, which is 54 bytes, and three numbers of
+    sixteen digits, the longest a count is. A frame whole has less around it. The core measures it from the
+    codec built in, and an end is not made with a codec that puts more (a `TypeError`): what a link cuts to
+    fit then fits, whatever it is encoded in.
+  - **Both ends.** Each end says in its hello the longest message it takes on that connection, and what is sent
+    is cut to the shorter of what the two take. One that says less than `LEAST` is one the other cannot talk
+    to: the one that dialled ends `{ why: 'too narrow', most, needs }`.
+  - **What is kept is sent again as it was.** So a connection that takes less than something an end numbered
+    and still keeps cannot carry it. Whether it still keeps it is not known until the hello on that connection
+    says what was taken, so it is found there and nowhere sooner, the same whether it is the transport that
+    takes less or the other end: the hello is `too narrow`, with `needs` saying how long that thing is. The end
+    that dialled ends, and the end that listens turns the connection away and goes on. Once it has been taken, anything that takes `LEAST`
+    will do. An end that dials on one connection alone sends before it has met the other end, cut to its own
+    transport: if the other end then says it takes less than what was sent, that is where this is found.
 - **A batch is taken in order**, and nothing in it after what ended the link.
 - **What arrives is checked to be a frame** (`asFrame`, `src/frames.ts`): one of the nine kinds, an id a whole
   number from 1, a name text, a failure a kind and a message, both text. Anything else ends the link
@@ -348,9 +363,8 @@ arrive. A link sends text today and takes either: bytes are read as UTF-8.
 - **`socket`**, over anything shaped like a browser's `WebSocket` (Node's `ws` is). Sent while opening, it waits
   and leaves in order once open. Bytes arrive as `ArrayBuffer` and are handed over as `Uint8Array`. A socket
   does not say how long a message the other end takes, and a server that takes none past some length closes on
-  one that is: `socket(ws, { most })` is told it, and says it as any transport does, so the link cuts to it and
-  is not opened to a server too narrow for it. Without it, what keeps a link under a server's limit is only
-  that a part is shorter.
+  one that is: `socket(ws, { most })` is told it, and says it as any transport does, so the link cuts what it
+  sends to it. Without it, what keeps a link under a server's limit is only that a part is shorter.
 - **`port`**, over a message port that takes listeners as an event target (a browser's, Node's) or as an emitter
   handing over an event (Electron's). A port closing is not heard at the other end everywhere, so closing posts
   `null` first, after what was sent before it; a port's own `close` event is heard as well.

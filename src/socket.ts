@@ -19,8 +19,8 @@ export interface WebSocketLike {
 export interface SocketOptions {
   /**
    * The longest message, in bytes, the other end of the socket takes, where it takes none longer: a server's limit
-   * on a message. The transport says it (`most`), so a link carried on it sends nothing longer, and is not
-   * carried on it at all if that is less than it may need to send. A socket says nothing of this itself.
+   * on a message. The transport says it (`most`), so a link carried on it cuts what it sends to fit, and is not
+   * carried on it at all if that is less than `LEAST` or what it still keeps. A socket says nothing of this itself.
    */
   readonly most?: number
 }

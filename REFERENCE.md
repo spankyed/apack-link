@@ -127,9 +127,9 @@ type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as this end may need for one thing it numbers: the longest it said it
-   * takes, and how many bytes this end needs (a part, or a frame no longer than one, with what caused it and
-   * what goes around it). The two ends are not set to talk to each other.
+   * The connection takes no message as long as this end needs: the longest the other end said it takes, or what
+   * carries it does where that is less, and how many bytes this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
+   * connection that took longer messages, as many bytes as that is.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
 ```
@@ -201,6 +201,16 @@ Text, as JSON. What arrives as bytes is read as UTF-8.
 
 ```ts
 json: Codec
+```
+
+### `LEAST`
+
+The shortest message a link is carried on at all: one that holds the shortest part there is, the longest cause
+there may be beside it, what is put around them, and the batch's own two. On anything that takes this, and on
+an end that says it does, a link cuts what it sends to fit.
+
+```ts
+LEAST: number
 ```
 
 ### `Link`
@@ -284,7 +294,9 @@ interface Listener extends Link {
    * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
    * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
    * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
-   * `RangeError`, having closed it, for a transport that takes no message as long as this link may need.
+   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes. One that takes none
+   * as long as something this link numbered, and the hello on it does not say was taken, is turned away as one
+   * whose hello does not fit.
    */
   carry(transport: Transport): void
 }
@@ -345,9 +357,9 @@ interface Options {
   /** What batches are encoded in. Both ends are given the same. JSON unless given. */
   codec?: Codec
   /**
-   * How many bytes a part may be: a frame longer crosses in parts, and a batch longer crosses as more than one
-   * message. 1 MiB unless given, and 16 at least. What carries a link has to take a message this long and a
-   * little more, so a server with a limit on a message is given a part under it.
+   * How many bytes a part may be at most: a frame longer crosses in parts, and a batch longer crosses as more
+   * than one message. 1 MiB unless given, and 16 at least. Where what carries the link, or the other end, takes
+   * less, a part is as much shorter as fits: nothing has to be set to match.
    */
   part?: number
 }
@@ -453,8 +465,8 @@ socket(ws: WebSocketLike, options?: SocketOptions): Transport
 interface SocketOptions {
   /**
    * The longest message, in bytes, the other end of the socket takes, where it takes none longer: a server's limit
-   * on a message. The transport says it (`most`), so a link carried on it sends nothing longer, and is not
-   * carried on it at all if that is less than it may need to send. A socket says nothing of this itself.
+   * on a message. The transport says it (`most`), so a link carried on it cuts what it sends to fit, and is not
+   * carried on it at all if that is less than `LEAST` or what it still keeps. A socket says nothing of this itself.
    */
   readonly most?: number
 }
@@ -528,7 +540,7 @@ interface Transport {
   waiting?(): number
   /**
    * The longest message it carries, in bytes, where there is one. A link hands it nothing longer: a batch that
-   * would be crosses as more than one, and a frame that would be is refused where it is sent.
+   * would be crosses as more than one, and a frame that would be is cut into parts.
    */
   readonly most?: number
 }

@@ -56,10 +56,13 @@ and so can keep all of it in order.
   message, unless it is longer than a part (`part`, 1 MiB unless given). Where what carries it takes no message
   that long (`Transport.most`), or the other end says it takes none that long (each says so in its hello), it
   crosses as the fewest that fit, cut between what was said, in order: a link never hands over more than is
-  taken. What takes no message as long as a part and what goes with one is not carried on at all: `dial`, `listen`,
-  `carry` and `accept` throw as it is handed over. A frame longer than a part crosses as parts, each numbered, and is
-  handed over whole in the place of its first; a resume picks up within it.
+  taken. A frame longer than a part, or than a connection has room for, crosses as parts, each numbered, and is
+  handed over whole in the place of its first; a resume picks up within it. A part is as long as fits what
+  carries the link and what the other end takes, and `part` is only the most it may be: nothing has to be set
+  to match anything else. What takes no message of `LEAST` bytes (1144) carries no link at all: `dial`,
+  `listen`, `carry` and `accept` throw as it is handed over.
 - **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.
+  One that puts more around a frame than JSON does, 102 bytes, is refused where the link is made.
 - **A connection takes a link's place only once it fits.** The end that listens, a backend's, says nothing on a
   connection it is handed, and keeps the one it has, until a hello that fits has arrived there. One that does not
   fit is closed, told why, and the link goes on: it never ends for what a connection says before such a hello.
@@ -87,8 +90,8 @@ and so can keep all of it in order.
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
-  says another number is closed on, naming both. So is one that takes no message as long as this end may need for
-  a part and what goes with one (`too narrow`).
+  says another number is closed on, naming both. So is one that takes no message as long as any link needs, or
+  as what this end still keeps to send again was cut for (`too narrow`).
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
   that cannot be put into text is refused with a `TypeError` of the link's own.
 - **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and

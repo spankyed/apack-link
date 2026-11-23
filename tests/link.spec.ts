@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accept, bytesOf, join, dial, listen, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
+import { accept, bytesOf, join, dial, LEAST, listen, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
 import { asking, desk, everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -591,9 +591,7 @@ describe('what carries a link taking no message longer than it says', () => {
     return { narrow, right, texts, noted }
   }
   const bytes = (text: string): number => new TextEncoder().encode(text).length
-  /** A frame may be 1024 bytes, so what carries the link takes 1154 at least: the frame, what is put around it, and the batch's two. */
   const bound = { frame: 1024 }
-  const LEAST = 1024 + 128 + 2
   /** Frames past one byte a character, so that it is bytes the texts are cut by. */
   const frames = (count: number): Frame[] => Array.from({ length: count }, (_, at) => tell(`✓é ${'x'.repeat(100 + at)}`))
 
@@ -667,9 +665,9 @@ describe('what carries a link taking no message longer than it says', () => {
     expect(crossed.map((one) => one.frame)).toEqual(sent)
   })
 
-  it('does not carry a link at all when it takes no message as long as a frame the link may send: found as it is handed over, and closed', () => {
-    const wide = limited(LEAST)
-    expect(() => dial(wide.narrow, { bound })).not.toThrow()
+  it('does not carry a link at all when it takes no message as long as any link needs: found as it is handed over, and closed', () => {
+    // Whatever a frame may be, and however long a part: what is sent is cut to what carries it.
+    for (const options of [{ bound }, {}, { part: 64 }]) expect(() => dial(limited(LEAST).narrow, options)).not.toThrow()
     const once = limited(LEAST - 1)
     expect(() => dial(once.narrow, { bound })).toThrow(RangeError)
     expect(once.noted.closed).toBe(1)
@@ -681,8 +679,6 @@ describe('what carries a link taking no message longer than it says', () => {
     const arriving = limited(LEAST - 1)
     expect(() => accept(() => {}, { bound })(arriving.narrow)).toThrow(RangeError)
     expect(arriving.noted.closed).toBe(1)
-    // With the 64 MiB a frame may be unless told, 1154 bytes is nowhere near.
-    expect(() => dial(limited(LEAST).narrow)).toThrow(RangeError)
     // The first of a link that opens its own.
     const opening = limited(LEAST - 1)
     expect(() => dial(() => opening.narrow, { bound, reopen: { clock: { after: () => () => {} } } })).toThrow(RangeError)
@@ -727,7 +723,6 @@ describe('what carries a link taking no message longer than it says', () => {
 
 describe('the longest message an end takes', () => {
   const bound = { frame: 1024 }
-  const LEAST = 1024 + 128 + 2
   const bytes = (text: string): number => new TextEncoder().encode(text).length
   const frames = (count: number): Frame[] => Array.from({ length: count }, (_, at) => tell(`✓é ${'x'.repeat(100 + at)}`))
   /** A link on a transport that takes any length, facing a bare end, with each text the link sends. */

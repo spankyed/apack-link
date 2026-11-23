@@ -18,7 +18,7 @@ export interface Transport {
   waiting?(): number
   /**
    * The longest message it carries, in bytes, where there is one. A link hands it nothing longer: a batch that
-   * would be crosses as more than one, and a frame that would be is refused where it is sent.
+   * would be crosses as more than one, and a frame that would be is cut into parts.
    */
   readonly most?: number
 }

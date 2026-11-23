@@ -57,8 +57,13 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
 - A hello naming another `link` ends the link `version`. A hello does not fit, and the session is `lost`, when it
   names another session than the one this link talks to, resumes a session that is not this end's, says it took
   something without having met anybody, or says a `taken` past what was sent or before what it said last. One
-  whose `most` is shorter than this end may need for one thing it numbers (a part, or a frame no longer than one,
-  with what caused it and what goes around it) is `too narrow`.
+  whose `most` is less than 1144 bytes, which is the least any link is carried on, is `too narrow`; so is one
+  on a connection that takes less, by its `most` or by what carries it, than something this end numbered and
+  still keeps past the `taken` that hello names, with the batch's two, since that is sent again as it was.
+- What an end numbers it cuts to fit: a frame crosses whole where it, what caused it, 102 bytes around them and
+  the batch's two are no more than the transport and the other end take, and no more than a part may be; and in
+  parts where they are, each as long as fits. The 102 is the most there is around a thing numbered: a first
+  part with a cause, said to be private, and each of its three numbers sixteen digits.
 - The two ends are not alike. The end that opened a connection dials: it says its hello first on it, and ends
   for what it meets there. The other listens: it says nothing on a connection, its own hello included, until a
   hello that fits has arrived there. Then it closes the connection it was on, if it was on one, and says its
