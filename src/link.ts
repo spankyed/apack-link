@@ -193,8 +193,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const perform = (effect: Effect, transport: Transport | undefined): void => {
     switch (effect.do) {
       case 'write':
-        // A transport that cannot send is a connection that has gone. None of the frames written throws, so
-        // what one threw is handed on as well.
+        // A transport that cannot send is a connection that has gone: the end is told, and goes on as it does
+        // for any connection that went. What was thrown is the transport's, and is handed on.
         try { for (const message of effect.messages) transport!.send(message) } catch (error) {
           tell({ is: 'broke', on: effect.on })
           try { transport!.close() } catch { /* it has gone already */ }
@@ -255,8 +255,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
     transport.onClose(() => tell({ is: 'closed', on }))
     transport.onData((message) => {
-      // A frame handed over is the last thing a step does: once whoever it was handed to has been called, the
-      // rest of the message is taken, a frame at a time.
+      // A frame handed over is the last thing a step asks for: once whoever it was handed to has been called,
+      // the rest of the message is taken, as far as the next. Should doing any of it throw, none is left over.
       const taking = state.taking.length
       try {
         tell({ is: 'data', on, message, backlog: backlog(on) })
