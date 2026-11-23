@@ -207,10 +207,11 @@ describe('a part as it crosses', () => {
       const a = link({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
       const heard: Frame[] = []
       link(right, { part }).onFrame((frame) => { heard.push(frame) })
-      const frame = tell('"\\\u0001✓𝄞 plain '.repeat(60))
-      a.send(frame)
-      await until(() => heard.length === 1)
-      expect(heard).toEqual([frame])
+      // The second is nothing but what is said in two, and in two again as data: cut once more is not enough for it.
+      const frames = [tell('"\\\u0001✓𝄞 plain '.repeat(60)), tell('"'.repeat(200))]
+      for (const frame of frames) a.send(frame)
+      await until(() => heard.length === 2)
+      expect(heard).toEqual(frames)
       const data = said.filter((one) => 'part' in one).map((one) => JSON.stringify(one.data))
       expect([part, Math.max(...data.map(bytes)) <= part]).toEqual([part, true])
     }
