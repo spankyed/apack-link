@@ -623,6 +623,50 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     const sent = writes.flatMap((message) => JSON.parse(message as string) as Array<Record<string, unknown>>)
     expect(sent.some((one) => one.lost === true)).toBe(true)
     expect(sent.some((one) => 'frame' in one)).toBe(false)
+    // Its hello is still said, and first: whoever is told the session is lost is told by which link.
+    expect(sent[0]).toMatchObject({ link: 1, taken: 0 })
+  })
+
+  it('says its hello and that the session is lost in messages no longer than the other end said it takes, however short that is', () => {
+    const writes: Message[] = []
+    let deliver!: (message: Message) => void
+    const transport: Transport = { send: (message) => { writes.push(message) }, onData: (heard) => { deliver = heard }, onClose: () => {}, close: () => {} }
+    const pending: Array<() => void> = []
+    const a = dial(transport, { ...options, later: (run) => { pending.push(run) } })
+    const { ended } = watched(a)
+    // Each of the two is shorter than 75 bytes, and the two as one message are longer.
+    deliver(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most: 75 }]))
+    expect(ended).toMatchObject([{ why: 'too narrow', most: 75, needs: LEAST }])
+    expect(writes.flatMap((message) => JSON.parse(message as string) as unknown[])).toMatchObject([{ link: 1 }, { lost: true }])
+    expect(Math.max(...writes.map(bytes))).toBeLessThanOrEqual(75)
+  })
+
+  it('says, ending too narrow, what it needs for what the other end has not taken, and not for what it has', async () => {
+    const pairs = [memoryPair(), memoryPair()]
+    let opened = 0
+    const a = dial(() => pairs[opened++]![1], { ...options, reopen: { clock: { after: (_, run) => { queueMicrotask(run); return () => {} } } } })
+    const { ended } = watched(a)
+    const hello: Array<{ session?: string }> = []
+    const crossed: number[] = []
+    pairs[0]![0].onData((message) => {
+      hello.push(...(JSON.parse(message as string) as typeof hello))
+      crossed.push(bytes(message))
+    })
+    await turn()
+    pairs[0]![0].send(JSON.stringify([{ link: 1, session: 'peer', taken: 0 }]))
+    await turn()
+    a.send(tell('x'.repeat(5000)))
+    await turn()
+    a.send(tell('y'.repeat(3000)))
+    await turn()
+    const second = crossed.at(-1)!
+    pairs[0]![0].close()
+    await until(() => opened === 2)
+    await turn()
+    // It took the first, and takes nothing as long as the second.
+    pairs[1]![0].send(JSON.stringify([{ link: 1, session: 'peer', taken: 1, resumes: hello[0]!.session, most: 2000 }]))
+    await turn()
+    expect(ended).toEqual([{ why: 'too narrow', most: 2000, needs: second }])
   })
 })
 
