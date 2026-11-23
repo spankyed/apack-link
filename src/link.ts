@@ -6,6 +6,10 @@
 //
 // Beside frames, a link says a few things about itself: a hello first, and a goodbye when it goes on purpose.
 // Those take no number. Only a frame is numbered.
+//
+// What an end says within one turn crosses as one text: a batch, `[hello?, ...said]`. A frame is put into text when
+// it is sent, so one that cannot be is refused there alone, and the batch is those texts joined. The batch leaves
+// when `later` says, a microtask unless given.
 import type { Frame, Sent } from './frames.ts'
 import type { Transport } from './transport.ts'
 
@@ -37,7 +41,10 @@ export interface Link {
   onFrame(heard: (frame: Frame) => void): void
   /** Called once, when the link has closed, with why. */
   onEnd(ended: (ending: Ending) => void): void
-  /** Closes the link. Given a goodbye, says it first, so the other end's ending says which it was. */
+  /**
+   * Closes the link, once what was sent before has left. Given a goodbye, says it last, so the other end's ending
+   * says which it was.
+   */
   close(bye?: Bye): void
 }
 
@@ -47,7 +54,13 @@ type Goodbye = { readonly bye: Bye }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
-export function link(transport: Transport): Link {
+export interface Options {
+  /** What puts the batch off until the end of the turn. A microtask unless given; a spec gives a schedule's lane. */
+  later?(run: () => void): void
+}
+
+export function link(transport: Transport, options: Options = {}): Link {
+  const later = options.later ?? queueMicrotask
   let sent = 0
   let heard = 0
   /** Whether the other end has said hello. Nothing else is taken before it. */
@@ -55,6 +68,22 @@ export function link(transport: Transport): Link {
   let ending: Ending | undefined
   const hears: Array<(frame: Frame) => void> = []
   const ends: Array<(ending: Ending) => void> = []
+  /** What this end has said this turn, each already text, and whether it is to leave. */
+  let batch: string[] = []
+  let due = false
+  const flush = (): void => {
+    due = false
+    if (!batch.length) return
+    const text = `[${batch.join(',')}]`
+    batch = []
+    transport.send(text)
+  }
+  const say = (text: string): void => {
+    batch.push(text)
+    if (due) return
+    due = true
+    later(() => { if (!ending) flush() })
+  }
   const end = (why: Ending): void => {
     if (ending) return
     ending = why
@@ -65,8 +94,16 @@ export function link(transport: Transport): Link {
   transport.onText((text) => {
     if (ending) return
     const unknown = (): void => end({ why: 'not a frame', size: text.length })
-    let arrived: unknown
-    try { arrived = JSON.parse(text) } catch { unknown(); return }
+    let batch: unknown
+    try { batch = JSON.parse(text) } catch { unknown(); return }
+    if (!Array.isArray(batch) || !batch.length) { unknown(); return }
+    for (const one of batch as unknown[]) {
+      if (ending) return
+      take(one, unknown)
+    }
+  })
+  /** Takes one thing the other end said, in its turn. */
+  const take = (arrived: unknown, unknown: () => void): void => {
     if (!isObject(arrived)) { unknown(); return }
     if (!met) {
       if (typeof arrived.link !== 'number') { unknown(); return }
@@ -80,21 +117,23 @@ export function link(transport: Transport): Link {
     if (seq !== heard + 1) { end({ why: 'out of order', expected: heard + 1, got: seq }); return }
     heard = seq
     for (const hear of hears) hear(frame as Frame)
-  })
-  transport.send(JSON.stringify({ link: LINK } satisfies Hello))
+  }
+  say(JSON.stringify({ link: LINK } satisfies Hello))
   return {
     send: (frame) => {
       if (ending) return
       // Put into text before it is numbered: a frame that cannot be is refused alone, and leaves no gap behind it.
       const text = JSON.stringify({ seq: sent + 1, frame } satisfies Sent)
       sent++
-      transport.send(text)
+      say(text)
     },
     onFrame: (hear) => { hears.push(hear) },
     onEnd: (ended) => { if (ending) ended(ending); else ends.push(ended) },
     close: (bye) => {
       if (ending) return
-      if (bye) transport.send(JSON.stringify({ bye } satisfies Goodbye))
+      // What was said before closing leaves before it closes, and a goodbye last.
+      if (bye) batch.push(JSON.stringify({ bye } satisfies Goodbye))
+      flush()
       end({ why: 'closed' })
     },
   }

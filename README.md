@@ -41,6 +41,7 @@ and so can keep all of it in order.
   waited for, and go at once.
 - **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
   number. The link goes on, with nothing missing before the next frame.
+- **One write a turn.** What an end sends within one turn of the event loop crosses as one text.
 - **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
@@ -126,7 +127,7 @@ be done:
 0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye. **Built.**
 1. Peers: asks matched to their answers, views followed and let go. **Built.**
 2. The hold: what a step sends a window waits until that window's views have caught up. **Built.**
-3. One write a turn.
+3. One write a turn. **Built.**
 4. A socket and a message port to be carried on.
 5. A connection that comes back, with nothing taken twice.
 6. A bound on what waits, with a view's overtaken update let go.
