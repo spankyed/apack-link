@@ -2,7 +2,7 @@
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
 import { asFrame, join, json, dial, listen, memoryPair, type Port } from '../src/index.ts'
-import { asking, desk, everyOrder, holds, made, same, watching } from '../src/testing/index.ts'
+import { asking, desk, everyOrder, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
   it('gives back what it was given, from text and from the same text as bytes', () => {
@@ -61,6 +61,12 @@ describe('same and holds', () => {
       expect(() => same(actual, expected, 'the thing')).toThrow(/the thing/)
     }
     expect(() => holds(false, 'that one')).toThrow(/that one/)
+  })
+})
+
+describe('two ends in memory', () => {
+  it('are one that dials and one that listens: the second says nothing until the first has, so there is one order they meet in', async () => {
+    expect(await everyOrder((schedule) => { memoryEnds(schedule); return () => {} })).toBe(1)
   })
 })
 
