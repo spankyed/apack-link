@@ -106,8 +106,10 @@ const unused = items
   .filter(({ symbol }) => symbol.flags & ts.SymbolFlags.Value && !(symbol.declarations ?? []).some(declaration => used.has(declaration)))
   .map(({ name }) => name)
 if (unused.length > 0) problems.push(`No spec uses ${unused.length === 1 ? 'this' : 'these'}, so nothing fires if ${unused.length === 1 ? 'it breaks' : 'one breaks'}:\n  ${unused.join('\n  ')}`)
-if (process.argv.includes('--write')) fs.writeFileSync(OUT, text)
-else if (!fs.existsSync(OUT) || fs.readFileSync(OUT, 'utf8') !== text) problems.push('REFERENCE.md is not what the source says: run npm run reference:update and commit it')
+// Line endings are not the reference's: a checkout on Windows may turn each into \r\n, and the source's may be either
+const lf = (written) => written.replace(/\r\n/g, '\n')
+if (process.argv.includes('--write')) fs.writeFileSync(OUT, lf(text))
+else if (!fs.existsSync(OUT) || lf(fs.readFileSync(OUT, 'utf8')) !== lf(text)) problems.push('REFERENCE.md is not what the source says: run npm run reference:update and commit it')
 if (problems.length > 0) {
   console.error(problems.join('\n\n'))
   process.exit(1)

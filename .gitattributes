@@ -1,0 +1,3 @@
+# Generated files are compared with what makes them, line for line: kept with \n line endings in every checkout
+REFERENCE.md text eol=lf
+docs/wire.md text eol=lf
