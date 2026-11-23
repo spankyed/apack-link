@@ -127,8 +127,8 @@ type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as this end needs: the longest it said it takes, and how many bytes
-   * this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
+   * The connection takes no message as long as this end needs: the longest the other end said it takes, or what
+   * carries it does where that is less, and how many bytes this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
    * connection that took longer messages, as many bytes as that is.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
@@ -294,8 +294,9 @@ interface Listener extends Link {
    * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
    * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
    * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
-   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes, or none as long as
-   * something this link numbered and still keeps.
+   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes. One that takes none
+   * as long as something this link numbered, and the hello on it does not say was taken, is turned away as one
+   * whose hello does not fit.
    */
   carry(transport: Transport): void
 }

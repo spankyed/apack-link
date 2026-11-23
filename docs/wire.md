@@ -58,8 +58,8 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
   names another session than the one this link talks to, resumes a session that is not this end's, says it took
   something without having met anybody, or says a `taken` past what was sent or before what it said last. One
   whose `most` is less than 1144 bytes, which is the least any link is carried on, is `too narrow`; so is one
-  whose `most` is less than something this end numbered and still keeps past the `taken` that hello names, with the batch's
-  two, since that is sent again as it was.
+  on a connection that takes less, by its `most` or by what carries it, than something this end numbered and
+  still keeps past the `taken` that hello names, with the batch's two, since that is sent again as it was.
 - What an end numbers it cuts to fit: a frame crosses whole where it, what caused it, 102 bytes around them and
   the batch's two are no more than the transport and the other end take, and no more than a part may be; and in
   parts where they are, each as long as fits. The 102 is the most there is around a thing numbered: a first

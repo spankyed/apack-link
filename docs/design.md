@@ -148,7 +148,8 @@ anything an end sends is a change to that file.
     as it comes, talk: the parts are a little under a megabyte.
   - **Found as a connection is handed over.** What takes no message of `LEAST` bytes does not carry a link:
     `dial`, `listen`, `carry` and `accept` close it and throw a `RangeError`, and a link that opened it for
-    itself counts it as a connection that did not hold. `LEAST` is 1144: the shortest part there is (16), the
+    itself counts it as a connection that did not hold. That is all a transport is held to as it is handed
+    over. `LEAST` is 1144: the shortest part there is (16), the
     longest cause (1024), 102 around them and the batch's two. It depends on nothing a link is set with.
   - **What is around a frame is counted, not allowed for.** The 102 is the most JSON puts around a thing
     numbered: a first part that is private and has a cause,
@@ -160,8 +161,10 @@ anything an end sends is a change to that file.
     is cut to the shorter of what the two take. One that says less than `LEAST` is one the other cannot talk
     to: the one that dialled ends `{ why: 'too narrow', most, needs }`.
   - **What is kept is sent again as it was.** So a connection that takes less than something an end numbered
-    and still keeps cannot carry it: such a transport is refused as it is handed over, and such a hello is `too
-    narrow`, with `needs` saying how long that thing is. Once it has been taken, anything that takes `LEAST`
+    and still keeps cannot carry it. Whether it still keeps it is not known until the hello on that connection
+    says what was taken, so it is found there and nowhere sooner, the same whether it is the transport that
+    takes less or the other end: the hello is `too narrow`, with `needs` saying how long that thing is. The end
+    that dialled ends, and the end that listens turns the connection away and goes on. Once it has been taken, anything that takes `LEAST`
     will do. An end that dials on one connection alone sends before it has met the other end, cut to its own
     transport: if the other end then says it takes less than what was sent, that is where this is found.
 - **A batch is taken in order**, and nothing in it after what ended the link.

@@ -444,9 +444,16 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     first[0].close()
     await turn()
     const mine = said[0]!.session
-    // Handed something that takes less than that: refused as it is handed over, and the link goes on.
+    // Handed something that takes less than that: nothing is known of what was taken until a hello says, so it is
+    // taken as any other is, and turned away, told the session is lost, when the hello says that was not taken.
     const tight = narrow(3000)
-    expect(() => b.carry(tight.transport)).toThrow(RangeError)
+    const refused: unknown[] = []
+    tight.right.onData((message) => { refused.push(...(JSON.parse(message as string) as unknown[])) })
+    expect(() => b.carry(tight.transport)).not.toThrow()
+    expect(tight.closed()).toBe(0)
+    tight.right.send(JSON.stringify([{ link: 1, session: 'w', taken: 0, resumes: mine }]))
+    await turn()
+    expect(refused).toEqual([{ link: 1, session: '', taken: 0 }, { lost: true }])
     expect(tight.closed()).toBe(1)
     // One that says it takes less is turned away, told the session is lost.
     const saying = memoryPair()
@@ -639,6 +646,66 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(ended).toMatchObject([{ why: 'too narrow', most: 75, needs: LEAST }])
     expect(writes.flatMap((message) => JSON.parse(message as string) as unknown[])).toMatchObject([{ link: 1 }, { lost: true }])
     expect(Math.max(...writes.map(bytes))).toBeLessThanOrEqual(75)
+  })
+
+  it('is held, where an end is handed it or opens it for itself, to what the hello on it has not taken, and to no more', async () => {
+    // An end that listens keeps something cut for a wide connection, and is handed a narrow one by whoever took it.
+    const b = listen(undefined, options)
+    const listening = watched(b)
+    const first = memoryPair()
+    const said: Array<{ session?: string }> = []
+    first[0].onData((message) => { said.push(...(JSON.parse(message as string) as typeof said)) })
+    b.carry(first[1])
+    first[0].send(JSON.stringify([{ link: 1, session: 'w', taken: 0 }]))
+    await turn()
+    b.send(tell('x'.repeat(5000)))
+    await turn()
+    first[0].close()
+    await turn()
+    const tight = narrow(3000)
+    b.carry(tight.transport)
+    tight.right.send(JSON.stringify([{ link: 1, session: 'w', taken: 1, resumes: said[0]!.session }]))
+    await turn()
+    expect(b.kept()).toBe(0)
+    b.send(tell('y'.repeat(5000)))
+    await turn()
+    expect(tight.writes.length).toBeGreaterThan(1)
+    expect(Math.max(...tight.writes)).toBeLessThanOrEqual(3000)
+    expect([tight.closed(), listening.ended]).toEqual([0, []])
+
+    // An end that dials keeps the same, and the next connection it opens is a narrow one.
+    for (const taken of [1, 0]) {
+      const wide = memoryPair()
+      const next = narrow(3000)
+      const opening = [wide[1], next.transport]
+      let opened = 0
+      const thrown: unknown[] = []
+      const a = dial(() => opening[opened++]!, { ...options, thrown: (error) => { thrown.push(error) }, reopen: { clock: { after: (_, run) => { queueMicrotask(run); return () => {} } } } })
+      const dialling = watched(a)
+      const hello: Array<{ session?: string }> = []
+      const crossed: number[] = []
+      wide[0].onData((message) => { hello.push(...(JSON.parse(message as string) as typeof hello)); crossed.push(bytes(message)) })
+      await turn()
+      wide[0].send(JSON.stringify([{ link: 1, session: 'peer', taken: 0 }]))
+      await turn()
+      a.send(tell('x'.repeat(5000)))
+      await turn()
+      wide[0].close()
+      await until(() => opened === 2)
+      await turn()
+      // It is opened and spoken on, whatever is kept: what the other end took is not known before it says.
+      expect([taken, thrown, next.closed(), opened]).toEqual([taken, [], 0, 2])
+      next.right.send(JSON.stringify([{ link: 1, session: 'peer', taken, resumes: hello[0]!.session }]))
+      await turn()
+      if (taken) {
+        a.send(tell('y'.repeat(5000)))
+        await turn()
+        expect(dialling.ended).toEqual([])
+        expect(a.kept()).toBeGreaterThan(1)
+      } else expect(dialling.ended).toEqual([{ why: 'too narrow', most: 3000, needs: crossed.at(-1)! }])
+      expect(Math.max(...next.writes)).toBeLessThanOrEqual(3000)
+      expect(opened).toBe(2)
+    }
   })
 
   it('says, ending too narrow, what it needs for what the other end has not taken, and not for what it has', async () => {

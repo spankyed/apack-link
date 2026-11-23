@@ -34,7 +34,8 @@
 // What carries a link may take no message longer than it says (`most`), and each end says in its hello the
 // longest it takes. A batch that would be longer than either crosses as more than one, cut between frames, in
 // order, and a frame longer than fits crosses in parts. A link is not carried on what takes less than `LEAST`,
-// or less than something it still keeps to send again.
+// and a hello does not fit on a connection that takes less than something still kept that it does not say was
+// taken, whether it is the transport that takes less or the other end.
 //
 // The two ends are not alike. The one that dials opened the connection: it says hello first on it, and ends for
 // what it meets there. The one that listens says nothing on a connection, and keeps the one it has, until whoever
@@ -78,8 +79,8 @@ export type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as this end needs: the longest it said it takes, and how many bytes
-   * this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
+   * The connection takes no message as long as this end needs: the longest the other end said it takes, or what
+   * carries it does where that is less, and how many bytes this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
    * connection that took longer messages, as many bytes as that is.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
@@ -745,7 +746,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   /** Takes one thing said on the connection this end is on. Whether a frame was handed over for it. */
   const take = (on: Connection, arrived: unknown): boolean => {
     if (!on.met) {
-      const fits = greeting(arrived)
+      const fits = greeting(arrived, on.most)
       if ('no' in fits) { refuse(on, fits); return false }
       letGo(fits.taken)
       s.theirs = fits.session

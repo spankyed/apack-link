@@ -8,7 +8,7 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, firstOf, isHello, isObject, LEAST, limits, LINK, narrowest, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
+import { core, firstOf, isHello, isObject, LEAST, limits, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
 import { json, type Codec } from './codec.ts'
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
@@ -68,8 +68,9 @@ export interface Listener extends Link {
    * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
    * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
    * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
-   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes, or none as long as
-   * something this link numbered and still keeps.
+   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes. One that takes none
+   * as long as something this link numbered, and the hello on it does not say was taken, is turned away as one
+   * whose hello does not fit.
    */
   carry(transport: Transport): void
 }
@@ -139,7 +140,7 @@ export const timers: Clock = {
 const wideEnough = (transport: Transport, needed: number): void => {
   if (transport.most === undefined || transport.most >= needed) return
   try { transport.close() } catch { /* it is not this link's to report */ }
-  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least: what any link needs, or what this one still keeps to send again`)
+  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least: what any link needs`)
 }
 
 /**
@@ -300,7 +301,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
   }
   const carry = (transport: Transport): void => {
     if (state.ending) { transport.close(); return }
-    wideEnough(transport, narrowest(state))
+    wideEnough(transport, LEAST)
     hand(transport)
   }
 
