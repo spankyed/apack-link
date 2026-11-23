@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { accept, join, link, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
-import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Desk, type Schedule } from '../src/testing/index.ts'
+import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Model, type Desk, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 describe('resuming, over memory', () => {
@@ -142,7 +142,7 @@ describe('accepting connections', () => {
 
 describe('a window and a backend that accepts, under every order', () => {
   /** A window that dials and a backend that accepts, each direction a lane; the first `unreachable` dials reach nobody. */
-  const dialling = (schedule: Schedule, unreachable = 0) => {
+  const dialling = (schedule: Schedule, held: Model, unreachable = 0) => {
     const there = { label: 'window to backend' }
     const back = { label: 'backend to window' }
     const backends: Desk[] = []
@@ -152,18 +152,18 @@ describe('a window and a backend that accepts, under every order', () => {
     const start = (): void => {
       const backend = desk({ ask: (asked) => { asked.ended({ ok: true, value: asked.args }) } })
       backends.push(backend)
-      take = accept((one) => { made.push(one); join(one, backend.port) })
+      take = accept((one) => { made.push(one); join(held.end(one, `backend ${made.length}`), backend.port) })
     }
     start()
     let current: Transport | undefined
     let dials = 0
-    const window = link(() => {
+    const window = held.end(link(() => {
       const [left, right] = memoryPair((run) => schedule.later(there, run), (run) => schedule.later(back, run))
       current = left
       if (++dials <= unreachable) right.close()
       else take(right)
       return left
-    }, { reopen: { clock: laneClock(schedule, there) } })
+    }, { reopen: { clock: laneClock(schedule, there) } }), 'window')
     const ended: Ending[] = []
     window.onEnd((ending) => { ended.push(ending) })
     const ask = asking(join(window, desk().port), 'x', 'ASK', 'one')
@@ -171,20 +171,20 @@ describe('a window and a backend that accepts, under every order', () => {
   }
 
   it('a window that dials before its backend listens is answered once it does, once', async () => {
-    await everyOrder((schedule) => {
-      const { ended, ask, backends, made, dials } = dialling(schedule, 2)
+    await everyOrder((schedule) => underModel((held) => {
+      const { ended, ask, backends, made, dials } = dialling(schedule, held, 2)
       return () => {
         expect(ended).toEqual([])
         expect(ask.ended).toEqual([{ ok: true, value: 'one' }])
         expect(backends[0]!.asks).toHaveLength(1)
         expect([dials(), made.length]).toEqual([3, 1])
       }
-    })
+    }))
   })
 
   it('a connection that drops at any moment, a hello of either end lost with it, is picked up: the ask is answered once', async () => {
-    const orderings = await everyOrder((schedule) => {
-      const { ended, ask, backends, made, drop } = dialling(schedule)
+    const orderings = await everyOrder((schedule) => underModel((held) => {
+      const { ended, ask, backends, made, drop } = dialling(schedule, held)
       schedule.does('the network', ['drops', drop])
       return () => {
         expect(ended).toEqual([])
@@ -192,14 +192,15 @@ describe('a window and a backend that accepts, under every order', () => {
         expect(backends[0]!.asks).toHaveLength(1)
         expect(made).toHaveLength(1)
       }
-    })
+    }))
     expect(orderings).toBeGreaterThan(1)
   })
 
   it('a backend that restarts at any moment is asked at most once, old and new together, and a window that had met the old one is lost', async () => {
     const outcomes = new Set<string>()
-    await everyOrder((schedule) => {
-      const { ended, ask, backends, start, drop } = dialling(schedule)
+    // The old backend goes without closing its links, as a process does: a window lost for it is lost with every link still there.
+    await everyOrder((schedule) => underModel((held) => {
+      const { ended, ask, backends, start, drop } = dialling(schedule, held)
       schedule.does('the backend', ['restarts', () => { start(); drop() }])
       return () => {
         const asked = backends.map((backend) => backend.asks.length)
@@ -211,7 +212,7 @@ describe('a window and a backend that accepts, under every order', () => {
         } else expect([ask.ended, asked]).toEqual([[{ ok: true, value: 'one' }], [0, 1]])
         outcomes.add(`${ended.length ? 'lost' : 'went on'}, asked ${asked.join(' and ')}, ${ask.ended[0]!.ok ? 'answered' : 'not answered'}`)
       }
-    })
+    }, { may: ['lost'], unfinished: true }))
     // Every way it can go is one of these, and each of them comes about in some order.
     expect([...outcomes].sort()).toEqual(['lost, asked 1 and 0, answered', 'lost, asked 1 and 0, not answered', 'went on, asked 0 and 1, answered'])
   })

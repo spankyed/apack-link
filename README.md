@@ -220,8 +220,8 @@ stream of bytes as well as over memory.
 Beside what each scenario checks, a run can be held to the model: a queue each way between two ends, and whether
 each end is still there. `model()` is that, and each link put under it (`held.end(link, 'a')`, or the third thing
 `memoryEnds` and `droppingMemoryEnds` take) is noted as it is sent to, hands over and ends. Its `check` throws for
-the first thing an end did that the model could not have, with what led to it: a frame out of turn, twice, changed
-or from nowhere, anything handed over after an ending, an ending for what crossed, a session lost with both ends
+the first thing an end did that the model could not have, with what led to it: a frame out of turn, twice, changed,
+with another cause or from nowhere, anything handed over after an ending, an ending for what crossed, a session lost with both ends
 still there, and at rest, what was sent and never handed over. `underModel` puts its check after a scenario's own:
 
 ```ts

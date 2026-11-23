@@ -385,8 +385,8 @@ Every one of those runs is held to a model as well as to what its scenario check
 (`src/testing/model.ts`) is what two ends are to each other with nothing about how: a queue each way, where an end
 that is there puts a frame last, or a view's result in the place of the last result of that view still in the
 queue, and is handed the first; and whether each end is still there, after which it is handed nothing. Each link
-a scenario is given is put under it, and what it is sent, what it hands over and how it ends are noted as they
-happen. The first of those the model could not have done fails the run, with what led to it. So does an ending
+a scenario is given is put under it, and what it is sent, what it hands over, with what caused each, and how it
+ends are noted as they happen. The first of those the model could not have done fails the run, with what led to it. So does an ending
 that only a defect brings between two ends set alike (`out of order`, `not a frame`, `version`, `too narrow`), a
 session lost while every end is still there, a goodbye nobody said, and, at rest, anything an end still there was
 sent by the one it is talking to and has not been handed. A scenario says what its systems should see. The model

@@ -1,18 +1,18 @@
 // The model every scenario's ends are held to, shown able to fail: ends that are not a link's, each wrong in one
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
-import { link, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
-import { droppingMemoryEnds, everyOrder, memoryEnds, model, underModel, type Model, type Schedule } from '../src/testing/index.ts'
+import { link, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
+import { droppingMemoryEnds, everyOrder, memoryEnds, model, sample, underModel, type Model, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 /** An end that does what it is told to, and nothing a link does: it hands over what the spec says, when it says. */
 const puppet = (refuses: (frame: Frame) => boolean = () => false) => {
-  const hears: Array<(frame: Frame) => void> = []
+  const hears: Array<(frame: Frame, cause?: string) => void> = []
   const ends: Array<(ending: Ending) => void> = []
   const closed: Array<Bye | undefined> = []
   const made = {
     closed,
-    hand: (frame: Frame) => { for (const hear of hears) hear(frame) },
+    hand: (frame: Frame, cause?: string) => { for (const hear of hears) hear(frame, cause) },
     end: (ending: Ending) => { for (const ended of ends) ended(ending) },
     link: {
       send: (frame) => { if (!('prepared' in frame) && refuses(frame)) throw new RangeError('refused') },
@@ -137,6 +137,47 @@ describe('what the model lets pass', () => {
     held.check()
   })
 
+  it('what caused a frame, handed over with it, and a result that overtook another with its own', () => {
+    const { held, right, a } = two()
+    a.send(tell(1), { cause: 'a click' })
+    a.send(shown(1, 'first'), { cause: 'one change' })
+    a.send(shown(1, 'second'), { cause: 'another' })
+    a.send(a.prepare(tell(2), { cause: 'prepared' }))
+    right.hand(tell(1), 'a click')
+    right.hand(shown(1, 'second'), 'another')
+    right.hand(tell(2), 'prepared')
+    held.check()
+  })
+
+  it('a frame the link refuses, refused by the link as it refuses it, and the next sent as ever', () => {
+    for (const codec of [undefined, msgpack]) {
+      const held = model(codec ? { codec } : {})
+      const [left, right] = memoryPair()
+      const a = held.end(link(left, codec ? { codec } : {}), 'a')
+      held.end(link(right, codec ? { codec } : {}), 'b')
+      const unsendable = codec ? () => {} : 1n
+      expect(() => a.send(tell({ big: unsendable }))).toThrow(new TypeError('A frame could not be put into text'))
+      a.send(tell(1))
+    }
+  })
+
+  it('an end that is still there and was sent nothing: what the other sent was for one that took it and has gone', () => {
+    const held = model()
+    const [a, b, c] = [puppet(), puppet(), puppet()].map((one, at) => ({ one, link: held.end(one.link, 'abc'[at]!) }))
+    a!.link.send(tell('to c'))
+    c!.one.hand(tell('to c'))
+    c!.one.end({ why: 'closed' })
+    expect(b).toBeDefined()
+    held.check()
+  })
+
+  it('the same result of a view sent many times over, in no more work than there are', () => {
+    const { held, right, a } = two()
+    for (let sent = 0; sent < 40; sent++) a.send(shown(1, 'the same'))
+    for (let handed = 0; handed < 20; handed++) right.hand(shown(1, 'the same'))
+    held.check()
+  })
+
   it('bytes, with the codec the ends were given', () => {
     const { held, right, a } = two(model({ codec: msgpack }))
     a.send(tell(new Uint8Array([1, 2, 3])))
@@ -255,6 +296,65 @@ describe('what the model finds', () => {
     expect(found(({ left, right, b }) => { right.end({ why: 'closed' }); b.close('ended'); left.end({ why: 'goodbye', bye: 'ended' }) })).toMatch(/a goodbye nobody said/)
   })
 
+  it('a frame handed over with another cause than it was sent with, or with none', () => {
+    expect(found(({ right, a }) => { a.send(tell(1), { cause: 'a click' }); right.hand(tell(1), 'something else') })).toMatch(/not the next one.*caused by "something else"/)
+    expect(found(({ right, a }) => { a.send(tell(1), { cause: 'a click' }); right.hand(tell(1)) })).toMatch(/not the next one/)
+    expect(found(({ right, a }) => { a.send(a.prepare(tell(1), { cause: 'a click' })); right.hand(tell(1)) })).toMatch(/not the next one/)
+    expect(found(({ right, a }) => { a.send(shown(1, 'x'), { cause: 'first' }); a.send(shown(1, 'x'), { cause: 'second' }); right.hand(shown(1, 'x'), 'second'); right.hand(shown(1, 'x'), 'first') })).toMatch(/not the next one/)
+  })
+
+  it('an end handed frames by one end and then by another made since', () => {
+    const held = model()
+    const [left, first, second] = [puppet(), puppet(), puppet()]
+    held.end(left.link, 'a')
+    const b = held.end(first.link, 'b')
+    b.send(tell('from the first'))
+    left.hand(tell('from the first'))
+    first.end({ why: 'closed' })
+    const again = held.end(second.link, 'b again')
+    again.send(tell('from the second'))
+    left.hand(tell('from the second'))
+    expect(() => held.check()).toThrow(/a was handed a frame that is not the next one/)
+  })
+
+  it('a moment that is not the moment that was sent', () => {
+    const dated = model({ codec: msgpack })
+    expect(found(({ right, a }) => { a.send(tell(new Date(1000))); right.hand(tell(new Date(2000))) }, dated)).toMatch(/not the next one/)
+    expect(found(({ right, a }) => { a.send(tell(new Date(1000))); right.hand(tell(new Date(1000))) }, model({ codec: msgpack }))).toBe('nothing')
+  })
+
+  it('a frame handed over as crossing again would have put right', () => {
+    expect(found(({ right, a }) => { a.send(tell(null)); right.hand(tell(NaN)) })).toMatch(/not the next one/)
+    expect(found(({ right, a }) => { a.send(tell({ n: 1 })); right.hand(tell({ n: 1, more: undefined })) })).toMatch(/not the next one/)
+    expect(found(({ right, a }) => { a.send(tell({ n: 1 })); right.hand(tell(Object.create({ n: 1 }) as object)) })).toMatch(/not the next one/)
+  })
+
+  it('an end lost, or told goodbye, for an end that was never one it could be talking to', () => {
+    const run = (ending: Ending): string => {
+      const held = model()
+      const [a, b, c] = [puppet(), puppet(), puppet()].map((one, at) => ({ one, link: held.end(one.link, 'abc'[at]!) }))
+      b!.link.send(tell('from b'))
+      a!.one.hand(tell('from b'))
+      c!.link.close('ended')
+      c!.one.end({ why: 'closed' })
+      a!.one.end(ending)
+      try { held.check() } catch (error) { return (error as Error).message }
+      return 'nothing'
+    }
+    expect(run({ why: 'lost' })).toMatch(/a ended lost, with every end still there/)
+    expect(run({ why: 'goodbye', bye: 'ended' })).toMatch(/a goodbye nobody said/)
+  })
+
+  it('a frame sent on a link that ended as it was sent', () => {
+    const held = model()
+    const [left, right] = [puppet(), puppet()]
+    const a = held.end({ ...left.link, send: () => { left.end({ why: 'overrun', waiting: { frames: 1, size: 1 }, bound: { frames: 0, size: 0 } }) } }, 'a')
+    held.end(right.link, 'b')
+    a.send(tell('one too many'))
+    right.hand(tell('one too many'))
+    expect(() => held.check()).toThrow(/not the next one/)
+  })
+
   it('says what led to it', () => {
     expect(found(({ right, a }) => { a.send(tell(1)); a.send(tell(2)); right.hand(tell(2)) })).toMatch(/after:\n\s+a sent .*"event":1.*\n\s+a sent .*"event":2.*\n\s+b was handed/)
   })
@@ -301,6 +401,22 @@ describe('real ends under the model', () => {
       schedule.does('b', ['sends', () => b.send(tell('one'))])
       return () => {}
     }))).toBeGreaterThan(10)
+  })
+
+  it('holds a link to it where frames cross in parts and no more than one is kept at a time', async () => {
+    const options = { part: 64, bound: { kept: { frames: 1, size: 64 }, frame: 4096 } }
+    // Each part and each word that it was taken is one more thing in the order: too many to run them all.
+    const ran = await sample((schedule) => underModel((held) => {
+      const { a, b } = memoryEnds(schedule, options, held)
+      a.send(tell('x'.repeat(300)), { cause: 'a long one' })
+      a.send(shown(1, 'first'))
+      a.send(shown(1, 'second'))
+      a.send(tell('last'))
+      b.send(tell('y'.repeat(100)))
+      return () => {}
+    }), { seed: 11, runs: 400 })
+    if (ran.failure) throw ran.failure.error
+    expect(ran.orderings).toBe(400)
   })
 
   it('finds two links carried on something that loses what it is handed', () => {

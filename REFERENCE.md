@@ -792,6 +792,8 @@ interface ModelOptions {
   /**
    * Endings that are let pass. Without it, no end is `out of order`, `not a frame`, `version` or `too narrow`:
    * between two ends of this package set alike, on something that carries what it is handed, each is a defect.
+   * And no end is `lost` while every end it could be talking to is still there: `'lost'` here lets that pass,
+   * for a scenario where an end goes without its link being closed.
    */
   readonly may?: ReadonlyArray<Ending['why']>
   /** Whether what was sent and never handed over is let pass at rest: for a scenario that leaves ends unable to reach each other. */
