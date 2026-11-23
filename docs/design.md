@@ -142,14 +142,20 @@ anything an end sends is a change to that file.
   reads the one and keeps to it. `accept` hands a link the transport's `most` and `waiting` with it.
   - **Cut to fit, not set to match.** How long a part is, is not something set against what carries the link.
     A link numbers a frame once the other end has been met, so it knows what the transport takes and what the
-    other end said it takes: a frame crosses whole where it, what caused it, 128 bytes around them and the
+    other end said it takes: a frame crosses whole where it, what caused it, 102 bytes around them and the
     batch's two fit in the less of those, and otherwise in parts, each as long as fits. `part` is only the most
     a part may be, for a host that wants no write longer. So a server that takes a megabyte, and a link left
     as it comes, talk: the parts are a little under a megabyte.
   - **Found as a connection is handed over.** What takes no message of `LEAST` bytes does not carry a link:
     `dial`, `listen`, `carry` and `accept` close it and throw a `RangeError`, and a link that opened it for
-    itself counts it as a connection that did not hold. `LEAST` is 1170: the shortest part there is (16), the
-    longest cause (1024), 128 around them and the batch's two. It depends on nothing a link is set with.
+    itself counts it as a connection that did not hold. `LEAST` is 1144: the shortest part there is (16), the
+    longest cause (1024), 102 around them and the batch's two. It depends on nothing a link is set with.
+  - **What is around a frame is counted, not allowed for.** The 102 is the most JSON puts around a thing
+    numbered: a first part that is private and has a cause,
+    `{"seq":,"part":,"of":,"data":,"cause":,"private":true}`, which is 54 bytes, and three numbers of
+    sixteen digits, the longest a count is. A frame whole has less around it. The core measures it from the
+    codec built in, and an end is not made with a codec that puts more (a `TypeError`): what a link cuts to
+    fit then fits, whatever it is encoded in.
   - **Both ends.** Each end says in its hello the longest message it takes on that connection, and what is sent
     is cut to the shorter of what the two take. One that says less than `LEAST` is one the other cannot talk
     to: the one that dialled ends `{ why: 'too narrow', most, needs }`.

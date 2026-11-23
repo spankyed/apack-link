@@ -59,9 +59,10 @@ and so can keep all of it in order.
   taken. A frame longer than a part, or than a connection has room for, crosses as parts, each numbered, and is
   handed over whole in the place of its first; a resume picks up within it. A part is as long as fits what
   carries the link and what the other end takes, and `part` is only the most it may be: nothing has to be set
-  to match anything else. What takes no message of `LEAST` bytes (1170) carries no link at all: `dial`,
+  to match anything else. What takes no message of `LEAST` bytes (1144) carries no link at all: `dial`,
   `listen`, `carry` and `accept` throw as it is handed over.
 - **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.
+  One that puts more around a frame than JSON does, 102 bytes, is refused where the link is made.
 - **A connection takes a link's place only once it fits.** The end that listens, a backend's, says nothing on a
   connection it is handed, and keeps the one it has, until a hello that fits has arrived there. One that does not
   fit is closed, told why, and the link goes on: it never ends for what a connection says before such a hello.

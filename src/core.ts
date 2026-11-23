@@ -149,10 +149,21 @@ const FRAME = 64 * 1024 * 1024
 /** The least `bound.frame` may be: more than anything a peer says in place of what could not be sent. */
 const SMALLEST = 1024
 /**
- * More than everything a link puts around a frame or a part of one where it numbers it, beside what caused it:
- * the numbers, and the names.
+ * How many bytes a codec puts around a frame or a part of one where a link numbers it, beside the frame and what
+ * caused it, at the most: around a first part that is private and has a cause, which has every name there is, with
+ * each of its three numbers the longest a count is.
  */
-const AROUND = 128
+export function around(codec: Codec): number {
+  const count = codec.encode(Number.MAX_SAFE_INTEGER)
+  const none = codec.encode('')
+  return sizeOf(codec.record([['seq', count], ['part', count], ['of', count], ['data', none], ['cause', none], ['private', codec.encode(true)]])) - 2 * sizeOf(none)
+}
+/**
+ * What may be around a frame or a part of one: what JSON puts there at the most, 102 bytes, which is
+ * `{"seq":,"part":,"of":,"data":,"cause":,"private":true}` and three numbers of sixteen digits. A link counts on
+ * no more, so that what it cuts to fit does fit, and an end is not set with a codec that puts more.
+ */
+const AROUND = around(json)
 /** The least a part may be: more than any one character is as a part's data, so that a frame can always be cut to it. */
 const SHORTEST = 16
 /** How many bytes a part may have to spare and be taken as full: a character or two. */
@@ -230,9 +241,11 @@ export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest
 /**
  * How an end is set, from what it was given. Throws what `limits` does, and a `TypeError` for an end that dials
  * and is handed its connections, or listens and opens them: whoever opens a connection is the one that dials on it.
+ * A `TypeError` too for a codec that puts more around a frame than a link counts on.
  */
 export function setup(given: Given): Setup {
   const { largest, part } = limits(given)
+  if (given.codec && around(given.codec) > AROUND) throw new TypeError(`A codec puts ${AROUND} bytes at most around a frame, as JSON does`)
   if (given.connections === (given.role === 'dials' ? 'handed' : 'opened')) throw new TypeError(`An end that ${given.role} is not ${given.connections} its connections`)
   return {
     role: given.role,

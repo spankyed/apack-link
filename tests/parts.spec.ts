@@ -183,7 +183,7 @@ describe('a part as it crosses', () => {
     ] as const) {
       it(`is no longer than what carries the link takes, whatever the frame holds, in ${name}: ${what}`, async () => {
         // A frame may be 2048 bytes, a part nearly as long, and what carries the link takes no more than it must.
-        const most = 2048 + 128 + 2
+        const most = 2048 + 102 + 2
         const options = { bound: { frame: 2048 }, part: 1500, ...(codec ? { codec } : {}) }
         const { transport, right, writes } = narrow(most)
         const a = dial(transport, options)
@@ -317,8 +317,8 @@ describe('what a link needs of what carries it, with frames in parts', () => {
   /** As large as a frame may be here, of text that is twice as long as a part's data. */
   const largest = tell('"'.repeat((100_000 - 1024 - around) / 2))
 
-  it('is 1170 bytes at the least, whatever a link is set with: the shortest part, the longest cause, what goes around them, and the batch\'s two', () => {
-    expect(LEAST).toBe(16 + 1024 + 128 + 2)
+  it('is 1144 bytes at the least, whatever a link is set with: the shortest part, the longest cause, what goes around them, and the batch\'s two', () => {
+    expect(LEAST).toBe(16 + 1024 + 102 + 2)
   })
 
   it('is the least any link is carried on, however long a part is said to be: a frame as large as one may be crosses on it, cut to fit', async () => {
@@ -352,13 +352,13 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     }
     // What carries it takes 5000: a part's data is all of that but what goes around it, and no more than a part where one is said.
     const fitted = await sizes(5000, undefined)
-    expect(Math.max(...fitted)).toBeLessThanOrEqual(5000 - 130)
-    expect(Math.min(...fitted.slice(0, -1))).toBeGreaterThan(5000 - 130 - 8)
+    expect(Math.max(...fitted)).toBeLessThanOrEqual(5000 - 104)
+    expect(Math.min(...fitted.slice(0, -1))).toBeGreaterThan(5000 - 104 - 8)
     // What caused the frame crosses beside its first part, which is that much shorter, and beside no other.
     const [first, ...after] = await sizes(5000, undefined, cause)
-    expect(first).toBeLessThanOrEqual(5000 - 130 - 1024)
-    expect(first).toBeGreaterThan(5000 - 130 - 1024 - 8)
-    expect(Math.min(...after.slice(0, -1))).toBeGreaterThan(5000 - 130 - 8)
+    expect(first).toBeLessThanOrEqual(5000 - 104 - 1024)
+    expect(first).toBeGreaterThan(5000 - 104 - 1024 - 8)
+    expect(Math.min(...after.slice(0, -1))).toBeGreaterThan(5000 - 104 - 8)
     const capped = await sizes(5000, 2000)
     expect(Math.max(...capped)).toBeLessThanOrEqual(2000)
     expect(Math.min(...capped.slice(0, -1))).toBeGreaterThan(2000 - 8)

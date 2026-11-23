@@ -442,23 +442,20 @@ Done when: every scenario passes over an end that dials and one that listens, in
 state; an end that listens says nothing before a hello that fits, on one connection or handed many; it is ended
 by nothing said before one; and an end cannot be set to dial and be handed connections, or to listen and open them.
 
-## Step 14. Parts cut to fit, and whose a link is
+## Step 14. Parts cut to fit
 
-Built: a part as long as a connection has room for, `LEAST`, `narrowest` in the core, and `accept` handing
-`onLink` the transport a session began on.
+Built: a part as long as a connection has room for, `LEAST`, and `narrowest` and `around` in the core.
 
 How long a part was, how large a frame might be and how long a message the transport took had to agree, and a link
 left as it came was refused by a server that took a megabyte. Now a frame is cut, where it is numbered, to what
 the transport and the other end take; `part` is only the most a part may be; and the least a link is carried on
-is one number, 1170 bytes, that depends on nothing it is set with. What is kept is sent again as it was, so the
-one thing still refused is a connection narrower than what is kept was cut for.
+is one number, 1144 bytes, that depends on nothing it is set with: the shortest part, the longest cause, the
+102 bytes JSON puts around a thing numbered at the most, and the batch's two. What is kept is sent again as it
+was, so the one thing still refused is a connection narrower than what is kept, and not yet taken, was cut for.
 
-A window that is gone leaves a link the backend keeps running views for until it closes it. `accept` now says
-whose each link is, by the transport its session began on, so that a backend can.
-
-Done when: a link left as it comes is carried on anything that takes 1170 bytes, at either end, with a frame as
-large as one may be; nothing sent is longer than either end takes; and a backend closes the link of one window
-by the connection it handed over.
+Done when: a link left as it comes is carried on anything that takes 1144 bytes, at either end, with a frame as
+large as one may be; and nothing sent is longer than either end takes, whatever a frame holds and however far
+the numbering has got.
 
 ## What is not this plan's to build
 
