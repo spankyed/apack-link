@@ -1,10 +1,15 @@
-// What a link is carried on: something that takes text at one end and hands it over at the other, in order, until
-// it closes. A WebSocket is one, and so is a pair of these in memory, which is what a test runs a link on.
+// What a link is carried on: something that takes a message at one end and hands it over at the other, in order,
+// until it closes. A message is text or bytes. A WebSocket is one (`socket.ts`), a message port another
+// (`port.ts`), a stream of bytes with a length before each message a third (`stream.ts`), and a pair of these in
+// memory, which is what a test runs a link on.
+
+/** What crosses a transport whole: one batch of what an end said. */
+export type Message = string | Uint8Array
 
 export interface Transport {
-  send(text: string): void
-  /** Called with each text the other end sent, in the order it was sent. */
-  onText(heard: (text: string) => void): void
+  send(message: Message): void
+  /** Called with each message the other end sent, in the order it was sent. */
+  onData(heard: (message: Message) => void): void
   /** Called once, when nothing more will arrive: either end closed it, or what carried it went. */
   onClose(closed: () => void): void
   /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
@@ -18,7 +23,7 @@ export interface Transport {
  * of a schedule each, to run every order there is.
  */
 export function memoryPair(later: (run: () => void) => void = queueMicrotask, back: (run: () => void) => void = later): [Transport, Transport] {
-  const ends = [0, 1].map(() => ({ open: true, hears: [] as Array<(text: string) => void>, closes: [] as Array<() => void> }))
+  const ends = [0, 1].map(() => ({ open: true, hears: [] as Array<(message: Message) => void>, closes: [] as Array<() => void> }))
   const shut = (end: (typeof ends)[number]): void => {
     if (!end.open) return
     end.open = false
@@ -28,8 +33,8 @@ export function memoryPair(later: (run: () => void) => void = queueMicrotask, ba
     const here = ends[mine]!
     const there = ends[1 - mine]!
     return {
-      send: (text) => { if (here.open) cross(() => { if (there.open) for (const heard of there.hears) heard(text) }) },
-      onText: (heard) => { here.hears.push(heard) },
+      send: (message) => { if (here.open) cross(() => { if (there.open) for (const heard of there.hears) heard(message) }) },
+      onData: (heard) => { here.hears.push(heard) },
       onClose: (closed) => { here.closes.push(closed) },
       close: () => {
         if (!here.open) return
@@ -39,4 +44,19 @@ export function memoryPair(later: (run: () => void) => void = queueMicrotask, ba
     }
   }
   return [make(0, later), make(1, back)]
+}
+
+/** Calls each once, the first time; what is added after is called at once. For a transport's closing. */
+export function once(): { add(closed: () => void): void; fire(): void; readonly fired: boolean } {
+  let fired = false
+  const waiting: Array<() => void> = []
+  return {
+    add: (closed) => { if (fired) closed(); else waiting.push(closed) },
+    fire: () => {
+      if (fired) return
+      fired = true
+      for (const closed of waiting.splice(0)) closed()
+    },
+    get fired() { return fired },
+  }
 }

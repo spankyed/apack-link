@@ -6,12 +6,16 @@ import { memoryPair, type Transport } from '../transport.ts'
 import type { Ends } from './scenarios.ts'
 import type { Schedule } from './schedule.ts'
 
+export { carried } from './carried.ts'
 export { holds, same } from './check.ts'
 export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
 export { hold, peers, withoutTheHold, type Ends, type KitScenario } from './scenarios.ts'
 export { made, type Made } from './views.ts'
 
 export { everyOrder, explore, replay, sample, type Explored, type Lane, type Scenario, type Schedule } from './schedule.ts'
+
+/** What a pair of ends is made over: given a schedule, two links. */
+export type MakeEnds = (schedule: Schedule) => Ends
 
 /**
  * Two ends in memory on a schedule: each direction is a lane of its own, so what crosses one way keeps its order
