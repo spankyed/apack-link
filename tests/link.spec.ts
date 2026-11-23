@@ -358,6 +358,12 @@ describe('what arrives as a frame', () => {
     const frames: Frame[] = [
       ...carried.map((event): Frame => ({ kind: 'tell', to: 'x', event })),
       ...carried.map((outcome, at): Frame => ({ kind: 'answer', id: at + 1, outcome })),
+      { kind: 'ask', id: 1, to: 'x', name: 'ASK', args: carried },
+      { kind: 'left', id: 1 },
+      { kind: 'progress', id: 1, update: carried },
+      { kind: 'follow', id: 1, feature: 'x', view: 'list', args: carried },
+      { kind: 'shown', id: 1, update: carried },
+      { kind: 'unfollow', id: 1 },
       { kind: 'over', id: 1, failure: { kind: 'gone', message: 'It went' } },
     ]
     bare.send(wire(HELLO, ...frames.map((frame, at) => ({ seq: at + 1, frame: { ...frame, more: 'than a frame has' } })), { seq: frames.length + 1, frame: { kind: 'tell', to: 'x' } }))

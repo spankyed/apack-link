@@ -113,10 +113,11 @@ describe('a link with a clock to open again on', () => {
 describe('a link with no clock', () => {
   it('opens one connection a turn at most, however fast they close, and none once it has closed', async () => {
     let opened = 0
-    // Every connection closes as soon as it is asked to say when it has.
+    // Each of the first fifty connections closes as soon as it is asked to say when it has: enough to tell a link
+    // that opens them all in one turn, and an end to it for one that does.
     const a = link(() => {
       opened++
-      return { send: () => {}, onData: () => {}, onClose: (closed) => { closed() }, close: () => {} }
+      return { send: () => {}, onData: () => {}, onClose: (closed) => { if (opened < 50) closed() }, close: () => {} }
     })
     expect(opened).toBe(1)
     // Everything a turn can still do without the event loop turning is done, and nothing more has been opened.
