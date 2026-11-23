@@ -191,11 +191,19 @@ leaves no gap, and the specs of steps 1 and 2 pass unchanged.
 - **A message port**: `port(messagePortLike): Transport`, for a browser's `MessagePort`, Node's `worker_threads`
   and Electron's.
 - **Text or bytes.** `Transport` carries `string | Uint8Array`, for step 9.
+- **A stream of bytes**: `stream(duplexLike): Transport`, for a Unix domain socket or a named pipe. A stream has
+  no edges between messages, so each text crosses with its length before it.
 
-Specs run a real `ws` server and client in one process (a development dependency), and a `worker_threads` pair:
-steps 1 and 2's scenarios once more over each.
+Which of these apack's windows and tools are carried on is apack's to decide, and is not decided: its deferred plan
+is `docs/plans/deferred/what-a-window-reaches-its-backend-over.md` (spankyed/apack#623). A link is the same over
+each, which is what lets that be decided later.
 
-Done when: the same scenario file runs over memory, a socket and a message port, named in its output.
+Specs run a real `ws` server and client in one process (a development dependency), a `worker_threads` pair, and
+a `node:net` server on a socket path: steps 1 and 2's scenarios once more over each. A stream that hands over
+half a text, and two texts at once, is one of them.
+
+Done when: the same scenario file runs over memory, a socket, a message port and a stream of bytes, named in its
+output.
 
 ## Step 5. A connection that comes back
 
