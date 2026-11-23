@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { decode } from '@msgpack/msgpack'
 import { WebSocket, WebSocketServer } from 'ws'
 import { accept, dial, LEAST, listen, memoryPair, socket, timers, type Ending, type Frame, type Message, type Traffic, type Transport } from '../src/index.ts'
+import { only } from './support/only.ts'
 import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -123,7 +124,7 @@ describe('fifty megabytes over a WebSocket', () => {
     const url = `ws://127.0.0.1:${(server.address() as { port: number }).port}`
     const heard: Frame[] = []
     let accepted = 0
-    const take = accept((made) => { made.onFrame((frame) => { heard.push(frame) }) })
+    const take = only(accept((made) => { made.onFrame((frame) => { heard.push(frame) }) }))
     server.on('connection', (ws) => {
       accepted++
       let messages = 0
@@ -383,8 +384,8 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     const short = narrow(LEAST - 1)
     expect(() => dial(short.transport, options)).toThrow(RangeError)
     expect(short.closed()).toBe(1)
-    expect(() => accept(() => {}, options)(narrow(LEAST - 1).transport)).toThrow(RangeError)
-    expect(() => accept(() => {}, options)(narrow(LEAST).transport)).not.toThrow()
+    expect(() => only(accept(() => {}, options))(narrow(LEAST - 1).transport)).toThrow(RangeError)
+    expect(() => only(accept(() => {}, options))(narrow(LEAST).transport)).not.toThrow()
     for (const [most, ending] of [[LEAST, []], [LEAST - 1, [{ why: 'too narrow', most: LEAST - 1, needs: LEAST }]]] as const) {
       const [bare, right] = memoryPair()
       const ended: Ending[] = []
@@ -510,7 +511,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
   it('is found at the hello where a backend accepts connections: one narrower than what is kept is turned away, and taken once its hello says that was taken', async () => {
     let made!: ReturnType<typeof dial>
     const ended: Ending[] = []
-    const take = accept((link) => { made = link; link.onEnd((end) => { ended.push(end) }) }, options)
+    const take = only(accept((link) => { made = link; link.onEnd((end) => { ended.push(end) }) }, options))
     const first = memoryPair()
     const said: Array<{ session?: string }> = []
     first[0].onData((message) => { said.push(...(JSON.parse(message as string) as typeof said)) })
@@ -854,10 +855,10 @@ describe('the work of cutting a frame', () => {
 
 describe('what accepts connections', () => {
   it('is not made with options no link is made with: found there, and not where a connection says hello', () => {
-    expect(() => accept(() => {}, { part: 15 })).toThrow(RangeError)
-    expect(() => accept(() => {}, { bound: { frame: 1023 } })).toThrow(RangeError)
-    expect(() => accept(() => {}, { part: Number.NaN })).toThrow(RangeError)
+    expect(() => only(accept(() => {}, { part: 15 }))).toThrow(RangeError)
+    expect(() => only(accept(() => {}, { bound: { frame: 1023 } }))).toThrow(RangeError)
+    expect(() => only(accept(() => {}, { part: Number.NaN }))).toThrow(RangeError)
     expect(() => dial(memoryPair()[0], { part: Number.NaN })).toThrow(RangeError)
-    expect(() => accept(() => {}, { part: 16, bound: { frame: 1024 } })).not.toThrow()
+    expect(() => only(accept(() => {}, { part: 16, bound: { frame: 1024 } }))).not.toThrow()
   })
 })

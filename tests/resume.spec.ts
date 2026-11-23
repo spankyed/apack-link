@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { accept, join, dial, listen, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
+import { only } from './support/only.ts'
 import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Model, type Desk, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
@@ -30,7 +31,7 @@ describe('accepting connections', () => {
     // The backend answers when it is asked, on whichever link it is handed.
     const backend = desk({ ask: (asked) => { asked.ended({ ok: true, value: asked.args }) } })
     const made: Link[] = []
-    const take = accept((one) => { made.push(one); join(one, backend.port) })
+    const take = only(accept((one) => { made.push(one); join(one, backend.port) }))
     let current: Transport | undefined
     const window = dial(() => {
       const [left, right] = memoryPair()
@@ -58,7 +59,7 @@ describe('accepting connections', () => {
     const window = dial(memoryPair()[0])
     void window
     const [left, right] = memoryPair()
-    accept((one) => { made.push(one) })(right)
+    only(accept((one) => { made.push(one) }))(right)
     const texts: unknown[] = []
     left.onData((text) => { texts.push(JSON.parse(text as string)) })
     // Having taken nothing is no better: it is going on with something this end never was.
@@ -78,7 +79,7 @@ describe('accepting connections', () => {
     it(`makes no link for a connection whose first word ${what}, and closes it`, async () => {
       const made: Link[] = []
       const [left, right] = memoryPair()
-      accept((one) => { made.push(one) })(right)
+      only(accept((one) => { made.push(one) }))(right)
       const texts: unknown[] = []
       let closed = 0
       left.onData((text) => { texts.push(JSON.parse(text as string)) })
@@ -95,7 +96,7 @@ describe('accepting connections', () => {
     const backend = desk()
     const made: Link[] = []
     const ended: Ending[] = []
-    const take = accept((one) => { made.push(one); one.onEnd((ending) => { ended.push(ending) }); join(one, backend.port) })
+    const take = only(accept((one) => { made.push(one); one.onEnd((ending) => { ended.push(ending) }); join(one, backend.port) }))
     const [left, right] = memoryPair()
     // What the window says first is its session: anything it connects to is told it.
     let session = ''
@@ -121,7 +122,7 @@ describe('accepting connections', () => {
   })
 
   it('ends a window that comes back to a backend that does not know it, saying so', async () => {
-    let take = accept(() => {})
+    let take = only(accept(() => {}))
     let current: Transport | undefined
     const window = dial(() => {
       const [left, right] = memoryPair()
@@ -133,7 +134,7 @@ describe('accepting connections', () => {
     window.onEnd((ending) => { ended.push(ending) })
     await turn()
     // The backend restarts: what accepts connections now knows nothing of before.
-    take = accept(() => {})
+    take = only(accept(() => {}))
     current!.close()
     await until(() => ended.length > 0)
     expect(ended).toEqual([{ why: 'lost' }])
@@ -152,7 +153,7 @@ describe('a window and a backend that accepts, under every order', () => {
     const start = (): void => {
       const backend = desk({ ask: (asked) => { asked.ended({ ok: true, value: asked.args }) } })
       backends.push(backend)
-      take = accept((one) => { made.push(one); join(held.end(one, `backend ${made.length}`), backend.port) })
+      take = only(accept((one) => { made.push(one); join(held.end(one, `backend ${made.length}`), backend.port) }))
     }
     start()
     let current: Transport | undefined
