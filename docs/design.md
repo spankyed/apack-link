@@ -1,6 +1,6 @@
 # The design
 
-Status: started, 2026-11-22. The first step of the order of work below is built.
+Status: started, 2026-11-22.
 
 ## What a link is for
 
@@ -54,26 +54,8 @@ that stream, with what a general layer cannot know: which frames there are, and 
 
 ## Order of work
 
-1. **Frames, one end of a link, two ends in memory.** Built.
-2. **The kernel's link on it.** apack-state's prototype joins a window to its backend with a link of its own, in
-   its kernel. That moves here: asks matched to their answers by id, a view followed and let go, `left` when an
-   asker goes, and what a step sends a window held until that window's views have been shown what the step kept.
-   The hold waits for each view to have caught up since the step, by name, and not for every view to be idle:
-   measured on elmdb, waiting for idle under a steady stream of writes took up to seconds and sometimes did not
-   end.
-3. **A WebSocket transport**, in a window and in Node, with apack's token in the handshake as it is now.
-4. **What is sent within one turn crosses as one write.**
-5. **Reconnecting that resumes.** Each end says the last number it took; what came after is sent again. An ask is
-   delivered at most once, and one whose answer was lost is answered again from what was kept, for a while.
-6. **A bound on what waits to be sent.** A view's update overtaken before it left is let go, since only the last
-   matters. Progress gathers. What cannot be let go and does not fit closes the link, saying so.
-7. **Knowing the other end is there by what it does.** A link that has heard nothing while it is owed something
-   asks, and closes when that goes unanswered while nothing else arrives either. No fixed time to reply.
-8. **Other things to be carried on**: in one process, Electron's own channels, another machine.
-9. **Every order there is, in a test.** `memoryPair` already takes what says when a text arrives. apack-state's
-   schedule gives that, and runs a scenario under every order.
-10. **Each frame naming the step that caused it.**
-11. **Frames that are never logged or broadcast.**
+[`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, and two ends in
+memory.
 
 ## What is not decided
 
@@ -85,7 +67,5 @@ that stream, with what a general layer cannot know: which frames there are, and 
 
 ## Further off
 
-A view's result leaves elmdb as bytes, becomes JavaScript objects in the server, and is put into text again for the
-socket. If elmdb kept each view current from what a commit changed, and sent only what changed, a view's update
-would not pass through the server's JavaScript at all. That needs a view to be a query elmdb can keep, not a
-function, and is elmdb's to design (its `docs/roadmap/incremental-views.md`).
+A view's result that goes from elmdb to a window without passing through the server's JavaScript, as what
+changed: [`deferred/views-from-the-engine.md`](deferred/views-from-the-engine.md).

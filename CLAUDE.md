@@ -11,7 +11,8 @@ know before changing it.
 - `src/link.ts` is one end: frames numbered as they are sent, taken only in turn, and the link closed where one
   arrives out of place.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory.
-- `docs/design.md` is the design and the order of work.
+- `docs/design.md` is why a link exists and what holds; `docs/plan.md` is what is to be built, a step at a time,
+  and `docs/deferred/` what is left out of it and why.
 
 ## Rules
 

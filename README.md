@@ -62,19 +62,23 @@ A `Transport` is anything that takes text at one end and hands it over at the ot
 
 ## Where it is going
 
-In the order it would be built. [`docs/design.md`](docs/design.md) has each in more words.
+[`docs/plan.md`](docs/plan.md) is the plan, a step at a time, each with what it has to hold and how it is known to
+be done:
 
-1. **The kernel's link on it**: asks matched to their answers, views followed and let go, and what a step sends a
-   window held until that window's views have been shown what the step kept.
-2. **A WebSocket transport**, and the handshake that carries apack's token.
-3. **A frame at a time across a turn**: what is sent within one turn crosses as one write.
-4. **Reconnecting that resumes**: what was not received is sent again, and an ask is delivered at most once.
-5. **A bound on what waits to be sent**, with a view's update that was overtaken before it left let go.
-6. **Knowing the other end is there by what it does**, never by a clock.
-7. **The same link in one process, over Electron's own channels, and to another machine.**
-8. **Every order there is, in a test**: what carries a link is handed the moment each text arrives.
-9. **Each frame naming the step that caused it**, so that a timeline crosses processes and a session replays.
-10. **Frames that are never logged or broadcast**, for what a secret travels in.
+0. Groundwork: a schedule that runs a spec under every order, and a hello.
+1. Peers: asks matched to their answers, views followed and let go.
+2. The hold: what a step sends a window waits until that window's views have caught up.
+3. One write a turn.
+4. A socket and a message port to be carried on.
+5. A connection that comes back, with nothing taken twice.
+6. A bound on what waits, with a view's overtaken update let go.
+7. Knowing the other end is there by what it does, never by a time to reply.
+8. What caused a frame, a tap that never sees what one carries, and frames that are private.
+9. Bytes, and frames too large for one write.
+10. Releases apack can pin.
+
+Left out on purpose, with a plan of its own:
+[views that never pass through the server's JavaScript](docs/deferred/views-from-the-engine.md).
 
 ## Developing
 
