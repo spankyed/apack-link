@@ -58,6 +58,58 @@ describe('accepting connections', () => {
     expect(texts).toEqual([[{ link: 1, session: expect.any(String), taken: 0 }, { lost: true }]])
   })
 
+  for (const [what, said, answer] of [
+    ['is not anything a link says', '[7]', []],
+    ['is not a batch', '{ not json', []],
+    ['is a frame with no hello before it', JSON.stringify([{ seq: 1, frame: { kind: 'tell', to: 'x', event: 1 } }]), []],
+    ['is a hello of another link', JSON.stringify([{ link: 2, session: 'w', taken: 0 }]), [[{ link: 1, session: expect.any(String), taken: 0 }]]],
+    ['is a first hello that says it took something', JSON.stringify([{ link: 1, session: 'w', taken: 2 }]), [[{ link: 1, session: expect.any(String), taken: 0 }, { lost: true }]]],
+  ] as const) {
+    it(`makes no link for a connection whose first word ${what}, and closes it`, async () => {
+      const made: Link[] = []
+      const [left, right] = memoryPair()
+      accept((one) => { made.push(one) })(right)
+      const texts: unknown[] = []
+      let closed = 0
+      left.onData((text) => { texts.push(JSON.parse(text as string)) })
+      left.onClose(() => { closed++ })
+      left.send(said)
+      await turn()
+      expect([made, closed]).toEqual([[], 1])
+      // Told what it would otherwise wait to hear: which link this is, and that there is no session to go on with.
+      expect(texts).toEqual(answer)
+    })
+  }
+
+  it('keeps a window on its link when another connection says the window\'s session and a hello that does not fit', async () => {
+    const backend = desk()
+    const made: Link[] = []
+    const ended: Ending[] = []
+    const take = accept((one) => { made.push(one); one.onEnd((ending) => { ended.push(ending) }); join(one, backend.port) })
+    const [left, right] = memoryPair()
+    // What the window says first is its session: anything it connects to is told it.
+    let session = ''
+    take({ ...right, onData: (heard) => { right.onData((message) => { session ||= (JSON.parse(message as string) as Array<{ session: string }>)[0]!.session; heard(message) }) } })
+    const window = link(left)
+    const windowEnded: Ending[] = []
+    window.onEnd((ending) => { windowEnded.push(ending) })
+    const toBackend = join(window, desk().port)
+    await turn()
+    for (const hello of [{ taken: 5 }, { taken: 0, resumes: 'a guess' }, { taken: 5, resumes: 'a guess' }]) {
+      const [stranger, there] = memoryPair()
+      let closed = 0
+      stranger.onClose(() => { closed++ })
+      take(there)
+      stranger.send(JSON.stringify([{ link: 1, session, ...hello }, { seq: 1, frame: { kind: 'tell', to: 'x', event: 'from a stranger' } }]))
+      await turn()
+      expect(closed).toBe(1)
+    }
+    toBackend.tell('x', 'from the window')
+    await turn()
+    expect(backend.told.map((one) => one.event)).toEqual(['from the window'])
+    expect([made.length, ended, windowEnded]).toEqual([1, [], []])
+  })
+
   it('ends a window that comes back to a backend that does not know it, saying so', async () => {
     let take = accept(() => {})
     let current: Transport | undefined
@@ -182,48 +234,11 @@ describe('a hello', () => {
     expect(first.texts).toEqual([[{ link: 1, session: expect.any(String), taken: 0 }]])
     first.say({ link: 1, session: 'w', taken: 0 })
     await turn()
+    first.bare.close()
+    await turn()
     const second = connect()
     await turn()
     expect(second.texts).toEqual([[{ link: 1, session: session(first.texts), taken: 0, resumes: 'w' }]])
-  })
-
-  it('from an end going on with another session than this one is lost', async () => {
-    const { ended, connect } = handed()
-    const first = connect()
-    first.say({ link: 1, session: 'w', taken: 0, resumes: 'another backend' })
-    await turn()
-    expect(ended).toEqual([{ why: 'lost' }])
-    expect(first.texts.flat().at(-1)).toEqual({ lost: true })
-  })
-
-  it('from an end that has met nobody and says it took something is lost', async () => {
-    const { backend, ended, connect } = handed()
-    const first = connect()
-    first.say({ link: 1, session: 'w', taken: 0 })
-    await turn()
-    backend.send({ kind: 'tell', to: 'x', event: 1 })
-    await turn()
-    const second = connect()
-    second.say({ link: 1, session: 'w', taken: 1 })
-    await turn()
-    expect(ended).toEqual([{ why: 'lost' }])
-  })
-
-  it('that wants what it said before it had taken is lost: it is no longer kept', async () => {
-    const { backend, ended, connect } = handed()
-    const first = connect()
-    first.say({ link: 1, session: 'w', taken: 0 })
-    await turn()
-    for (const event of [1, 2]) backend.send({ kind: 'tell', to: 'x', event })
-    await turn()
-    first.say({ taken: 2 })
-    await turn()
-    expect(backend.kept()).toBe(0)
-    const second = connect()
-    await turn()
-    second.say({ link: 1, session: 'w', taken: 1, resumes: session(second.texts) })
-    await turn()
-    expect(ended).toEqual([{ why: 'lost' }])
   })
 
   it('from an end that met this one, to this one that never heard it, is gone on with: nothing is sent twice', async () => {
@@ -245,24 +260,191 @@ describe('a hello', () => {
   })
 })
 
-describe('a link handed connections', () => {
+describe('a link handed a connection while it is on one where the other end has been met', () => {
   const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
-
-  it('is lost when it is handed a connection from another session than the one it was talking to', async () => {
+  const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
+  /** A link handed connections, met on a first one, with what it hears and how it ends. */
+  const met = async () => {
     const backend = link()
     const ended: Ending[] = []
+    const heard: Frame[] = []
     backend.onEnd((ending) => { ended.push(ending) })
-    const [first, there] = memoryPair()
-    link(first)
-    backend.carry(there)
+    backend.onFrame((frame) => { heard.push(frame) })
+    const connect = () => {
+      const [bare, there] = memoryPair()
+      const texts: unknown[][] = []
+      let closed = 0
+      bare.onData((text) => { texts.push(JSON.parse(text as string) as unknown[]) })
+      bare.onClose(() => { closed++ })
+      backend.carry(there)
+      return { bare, texts, closed: () => closed, say: (...said: unknown[]) => { bare.send(JSON.stringify(said)) } }
+    }
+    const first = connect()
+    first.say({ link: 1, session: 'w', taken: 0 })
     await turn()
-    // Another window, a new session, on the same link.
-    const [second, there2] = memoryPair()
-    link(second)
-    backend.carry(there2)
+    const mine = (first.texts[0]![0] as { session: string }).session
+    return { backend, ended, heard, connect, first, mine }
+  }
+
+  it('says nothing on the new one, and goes on taking and sending on the one it has, until a hello arrives on the new one', async () => {
+    const { backend, ended, heard, connect, first } = await met()
+    const second = connect()
+    first.say({ seq: 1, frame: tell('on the first') })
+    backend.send(tell('to the first'))
     await turn()
-    expect(ended).toEqual([{ why: 'lost' }])
+    expect(second.texts).toEqual([])
+    expect(heard).toEqual([tell('on the first')])
+    expect(first.texts.flat()).toContainEqual({ seq: 1, frame: tell('to the first') })
+    expect([ended, first.closed(), second.closed()]).toEqual([[], 0, 0])
   })
+
+  it('goes over to the new one when a hello that fits arrives on it: what the other end has not taken is sent again there, once, and nothing is taken twice', async () => {
+    const { backend, ended, heard, connect, first, mine } = await met()
+    first.say({ seq: 1, frame: tell('taken on the first') })
+    backend.send(tell('not taken'))
+    await turn()
+    const second = connect()
+    second.say({ link: 1, session: 'w', taken: 0, resumes: mine }, { seq: 2, frame: tell('on the second') })
+    await turn()
+    expect(first.closed()).toBe(1)
+    expect(heard).toEqual([tell('taken on the first'), tell('on the second')])
+    // Its hello there says what it had taken by then, the first connection's frame included.
+    expect(second.texts.flat()).toEqual([
+      { link: 1, session: mine, taken: 1, resumes: 'w' },
+      { seq: 1, frame: tell('not taken') },
+      { taken: 2 },
+    ])
+    expect(ended).toEqual([])
+  })
+
+  for (const [what, hello, told] of [
+    ['from another session', { link: 1, session: 'another window', taken: 0 }, true],
+    ['going on with a session that is not this one', { link: 1, session: 'w', taken: 0, resumes: 'another backend' }, true],
+    ['that says it took what was never sent', { link: 1, session: 'w', taken: 7, resumes: 'MINE' }, true],
+    ['that has met nobody and says it took something', { link: 1, session: 'w', taken: 1 }, true],
+    ['of another link', { link: 2, session: 'w', taken: 0 }, false],
+    ['that takes no message as long as a frame may be', { link: 1, session: 'w', taken: 0, resumes: 'MINE', most: 1000 }, true],
+    ['that is not a hello', { seq: 1, frame: { kind: 'tell', to: 'x', event: 'unannounced' } }, false],
+    ['that is not anything a link says', 7, false],
+  ] as const) {
+    it(`turns the new one away for a hello ${what}, and goes on as it was on the one it has`, async () => {
+      const { backend, ended, heard, connect, first, mine } = await met()
+      const second = connect()
+      second.say(typeof hello === 'object' && 'resumes' in hello && hello.resumes === 'MINE' ? { ...hello, resumes: mine } : hello, { seq: 1, frame: tell('from whoever it is') })
+      await turn()
+      expect(second.closed()).toBe(1)
+      // Told the session is lost where it would otherwise wait on it, behind a hello; and nothing else.
+      expect(second.texts).toEqual(told ? [[expect.objectContaining({ link: 1, session: mine }), { lost: true }]] : [])
+      first.say({ seq: 1, frame: tell('on the first') })
+      backend.send(tell('to the first'))
+      await turn()
+      expect(heard).toEqual([tell('on the first')])
+      expect(first.texts.flat()).toContainEqual({ seq: 1, frame: tell('to the first') })
+      expect([ended, first.closed()]).toEqual([[], 0])
+    })
+  }
+
+  it('keeps only the last it was handed waiting', async () => {
+    const { connect, first, mine } = await met()
+    const second = connect()
+    const third = connect()
+    await turn()
+    expect([second.closed(), third.closed()]).toEqual([1, 0])
+    third.say({ link: 1, session: 'w', taken: 0, resumes: mine })
+    await turn()
+    expect(first.closed()).toBe(1)
+    expect(third.texts).toEqual([[{ link: 1, session: mine, taken: 0, resumes: 'w' }]])
+  })
+
+  it('closes the one that waits when it closes', async () => {
+    const { backend, connect } = await met()
+    const second = connect()
+    backend.close()
+    await turn()
+    expect(second.closed()).toBe(1)
+  })
+})
+
+describe('a link handed connections, on one where nobody has been met', () => {
+  const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
+  const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
+  /** A link handed a connection, and the bare other end of it. */
+  const handedOne = () => {
+    const backend = link()
+    const ended: Ending[] = []
+    const heard: Frame[] = []
+    backend.onEnd((ending) => { ended.push(ending) })
+    backend.onFrame((frame) => { heard.push(frame) })
+    const [bare, there] = memoryPair()
+    const texts: unknown[] = []
+    let closed = 0
+    bare.onData((text) => { texts.push(...JSON.parse(text as string) as unknown[]) })
+    bare.onClose(() => { closed++ })
+    backend.carry(there)
+    return { backend, ended, heard, bare, texts, closed: () => closed }
+  }
+
+  for (const [what, said, told] of [
+    ['a hello going on with a session that is not this one', JSON.stringify([{ link: 1, session: 'w', taken: 0, resumes: 'another backend' }]), true],
+    ['a hello that says it took something, from an end that has met nobody', JSON.stringify([{ link: 1, session: 'w', taken: 3 }]), true],
+    ['a hello of another link', JSON.stringify([{ link: 2, session: 'w', taken: 0 }]), false],
+    ['something that is not a hello', JSON.stringify([{ seq: 1, frame: { kind: 'tell', to: 'x', event: 'unannounced' } }]), false],
+    ['something that is not anything a link says', '[7]', false],
+    ['text that is not a batch', '{ not json', false],
+  ] as const) {
+    it(`turns the connection away for ${what}, and is there for the next`, async () => {
+      const { backend, ended, heard, bare, texts, closed } = handedOne()
+      bare.send(said)
+      await turn()
+      expect([closed(), ended, heard]).toEqual([1, [], []])
+      expect(texts.some((one) => typeof one === 'object' && one !== null && 'lost' in one)).toBe(told)
+      // Whoever it does talk to is taken as ever.
+      const [window, next] = memoryPair()
+      backend.carry(next)
+      window.send(JSON.stringify([{ link: 1, session: 'w', taken: 0 }, { seq: 1, frame: tell('from its window') }]))
+      await turn()
+      expect([ended, heard]).toEqual([[], [tell('from its window')]])
+    })
+  }
+})
+
+describe('an end that opened the connection', () => {
+  const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
+
+  for (const [what, said, ending] of [
+    ['from another session than the one it was talking to', { link: 1, session: 'another backend', taken: 0, resumes: 'MINE' }, { why: 'lost' }],
+    ['going on with a session that is not this one', { link: 1, session: 'backend', taken: 0, resumes: 'another window' }, { why: 'lost' }],
+    ['that says it took what was never sent', { link: 1, session: 'backend', taken: 7, resumes: 'MINE' }, { why: 'lost' }],
+    ['of another link', { link: 2, session: 'backend', taken: 0 }, { why: 'version', mine: 1, theirs: 2 }],
+  ] as const) {
+    it(`ends for a hello ${what}, on a connection after its first`, async () => {
+      const bares: Array<{ bare: Transport; texts: unknown[] }> = []
+      const waits: Array<() => void> = []
+      const window = link(() => {
+        const [left, bare] = memoryPair()
+        const texts: unknown[] = []
+        bare.onData((text) => { texts.push(...JSON.parse(text as string) as unknown[]) })
+        bares.push({ bare, texts })
+        return left
+      }, { reopen: { clock: { after: (_, run) => { waits.push(run); return () => {} } } } })
+      const ended: Ending[] = []
+      window.onEnd((end) => { ended.push(end) })
+      bares[0]!.bare.send(JSON.stringify([{ link: 1, session: 'backend', taken: 0 }]))
+      await turn()
+      const mine = (bares[0]!.texts[0] as { session: string }).session
+      bares[0]!.bare.close()
+      await turn()
+      waits.at(-1)!()
+      bares[1]!.bare.send(JSON.stringify(['resumes' in said && said.resumes === 'MINE' ? { ...said, resumes: mine } : said]))
+      await turn()
+      expect(ended).toEqual([ending])
+      expect(bares[1]!.texts.some((one) => typeof one === 'object' && one !== null && 'lost' in one)).toBe(ending.why === 'lost')
+    })
+  }
+})
+
+describe('a link handed connections', () => {
+  const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 
   it('takes nothing from a connection it has been handed another in place of', async () => {
     const backend = link()

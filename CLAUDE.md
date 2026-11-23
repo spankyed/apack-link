@@ -30,6 +30,9 @@ know before changing it.
 - **A link never waits on a clock.** What it knows of the other end it knows from what arrives. Where a pause is
   wanted (a quiet connection, opening one again) it is on a `Clock` handed in, and without one nothing is timed:
   a link that would need one to be safe is not made without it.
+- **A link that is handed its connections ends for nothing a connection says before a hello that fits.** It turns
+  the connection away, and keeps the one it is on until another fits. Only the end that opened a connection ends
+  for what it met there.
 - **What a listener or a system throws is never the link's.** Everything after it is still taken and handed over,
   and what was thrown goes to `thrown`.
 - **A size is in bytes**, of text as UTF-8 (`bytesOf`), wherever one is counted, compared or reported.

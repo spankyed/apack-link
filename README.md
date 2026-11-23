@@ -48,11 +48,20 @@ and so can keep all of it in order.
   waited for, and go at once.
 - **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number: a
   `TypeError` for one that cannot be put into text, a `RangeError` for one larger than a frame may be
-  (`bound.frame`, 64 MiB unless given) or than what the link is carried on takes. The link goes on, with nothing
-  missing before the next frame. Through `join`, the one ask or view it belonged to fails, and no other.
+  (`bound.frame`, 64 MiB unless given). The link goes on, with nothing missing before the next frame. Through
+  `join`, the one ask or view it belonged to fails, and no other. `prepare(frame)` puts a frame into text now,
+  to be sent later without being put into text again: what a peer holds for its views is refused where it was
+  said, and crosses as it was when it was said.
 - **One write a turn.** What an end sends within one turn of the event loop crosses as one text. Where what
-  carries it takes no message that long (`Transport.most`), it crosses as the fewest that fit, cut between
-  frames, in order: a link never hands a transport more than it takes.
+  carries it takes no message that long (`Transport.most`), or the other end says it takes none that long (each
+  says so in its hello), it crosses as the fewest that fit, cut between frames, in order: a link never hands
+  over more than is taken. What takes no message as long as a frame the link may send is not carried on at all:
+  `link`, `carry` and `accept` throw as it is handed over.
+- **A connection takes a link's place only once it fits.** A link on a connection where the other end has been
+  met keeps it when it is handed another, and says nothing on the new one, until a hello that fits has arrived
+  there. One that does not fit is closed, and the link goes on. A link that is handed its connections, a
+  backend's, never ends for what a connection says before such a hello: it turns the connection away. Only the
+  end that opened a connection ends `lost` for what it met there.
 - **Bounded.** How far behind the other end is, is what it has not said it took. Past a mark a link stops
   numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
   matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
@@ -76,7 +85,8 @@ and so can keep all of it in order.
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
 - **An end that cannot be talked to is refused.** The first thing each end says is which link it is, and one that
-  says another number is closed on, naming both.
+  says another number is closed on, naming both. So is one that takes no message as long as a frame this end may
+  send (`too narrow`).
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and a frame
   that cannot be put into text is refused with a `TypeError` of the link's own.
 - **What caused a frame crosses with it, and a tap never sees what one carries.** `send(frame, { cause })`, and
@@ -139,9 +149,11 @@ Whoever holds a link says when the other end is gone for good, with `close()`: u
 `accept` keeps each link until it ends, so a backend closes the link of a window it knows is gone; nothing ends
 one by a clock.
 
-A session's id is all a connection says to be handed that session's link. Who may connect is settled by whatever
-takes the connections, before one is handed to `accept`: a token on the socket, a socket path only the user can
-open.
+A link authenticates nobody. A connection that says a window's session and a hello that does not fit is turned
+away, and the window's link goes on; one that says a hello that does fit is the window, as far as a link can
+tell, and what a hello has to say to fit is told to anything that connects. Who may connect is settled by
+whatever takes the connections, before one is handed to `accept`: a token on the socket, a socket path only the
+user can open.
 
 A `Transport` is anything that takes a message, text or bytes, at one end and hands it over at the other, in
 order, until it closes. Four are here, and none imports what it is carried on:
