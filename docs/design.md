@@ -67,6 +67,31 @@ end: a call on it leaves as a frame, and a frame arriving is a call on `mine`.
 - **A system that throws where it is asked or followed** fails that one ask or view, `failed`, "It could not be
   taken". What it threw is the system's to report.
 
+## The hold
+
+A window hears of a step after its views show what the step kept. A peer holds what its system says to the other
+end until the views it runs for that end have caught up.
+
+- **What is held is everything the system says**: `tell`, `progress`, `answer`, and its own `ask`, `follow`,
+  `left` and `unfollow`, as one queue in the order said. Nothing a system says passes something it said before.
+- **What is not held is a view's own words**, `shown` and `over`. They are what is waited for.
+- **A round.** Each time something is put in the hold, every view the peer runs for the other end that offers
+  `caughtUp` is asked to call back, and what was held before that asking leaves once all have, and once every
+  round before it has. What is put in after waits for a round of its own.
+- **`soon`** is true when an `answer` is among what a round lets out: an asker is blocked on it. A `tell` or
+  `progress` alone waits at the views' own pace.
+- A view that stops, or is ended by whoever runs it, while it is waited on counts as caught up. A view with no
+  `caughtUp` is not waited on. An end that runs no views for the other holds nothing. A view followed after
+  something was held is not waited on for it.
+- **Refused where it was said.** A held frame is put into text as it is held, to know whether it can be: a `tell`
+  that cannot be throws to the system that told it, and an answer that cannot be is answered `failed` in its place,
+  in its place in the queue. That is a second encoding of what is held; nothing is held at an end that runs no
+  views, and an end that does is the backend.
+
+Why "since it was asked", and not "until every view is idle": measured on elmdb, waiting for every view to be idle
+under a steady stream of writes took up to seconds and sometimes did not end. Waiting is for these views to have
+run once since the call.
+
 ## What a link says about itself
 
 Beside frames, an end says a few things of its own. Each is a text of its own and takes no number: only a frame is
@@ -149,7 +174,7 @@ something arriving done in a lane of its own, so it falls in every place among w
 ## Order of work
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
-memory, step 0 (the schedule, hello and goodbye) and step 1 (peers).
+memory, step 0 (the schedule, hello and goodbye), step 1 (peers) and step 2 (the hold).
 
 ## What is not decided
 

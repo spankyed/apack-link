@@ -8,7 +8,8 @@ import type { Schedule } from './schedule.ts'
 
 export { holds, same } from './check.ts'
 export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
-export { peers, type Ends, type KitScenario } from './scenarios.ts'
+export { hold, peers, withoutTheHold, type Ends, type KitScenario } from './scenarios.ts'
+export { made, type Made } from './views.ts'
 
 export { everyOrder, explore, replay, sample, type Explored, type Lane, type Scenario, type Schedule } from './schedule.ts'
 
