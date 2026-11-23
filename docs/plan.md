@@ -276,7 +276,8 @@ A link outlives what carries it.
 - While there is no connection, what is sent waits, within step 6's bound.
 - **Whoever holds a link says when the other end is gone for good.** A window that crashed will not come back, and
   nothing a link can see tells that from one that is slow to return. A link is not given a time to wait: the host
-  knows, since Electron tells it when a window is destroyed, and says so with `link.close()`. What was kept for
+  says whose each connection is as `accept` takes it, and says an owner is gone with `gone(owner)`, which ends
+  its session; an owner that begins a session ends the one it had (the design, "A session has an owner"). What was kept for
   that end is let go then. Until it is said, what is kept is bounded by step 6 and by nothing else. MQTT and TCP
   each answer this with a timer, which is what is not done here.
 - An end that said goodbye as `restarting` is one to open a connection to again, and its hello may start a new

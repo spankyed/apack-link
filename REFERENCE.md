@@ -6,19 +6,43 @@ Generated from the source by `npm run reference:update`; `npm run reference:chec
 
 ### `accept`
 
-Takes connections as they arrive at a backend, and finds each its link: a new session is a new link, handed to
-`onLink`, and a known one is handed back to the link it was. A connection that says it is going on with a session,
-from one this end does not know, is told the session is lost, and closed.
+Takes connections as they arrive at a backend, each with its owner, and finds each its link. An owner is
+whatever the host knows a dialler by, compared as a `Map` compares keys: it is settled by whatever admitted the
+connection, and never crosses the link.
 
-A session's id is all a connection needs to say to be handed that session's link: who may connect at all is for
-whatever takes the connections to have settled before one is handed here.
+- **A session is gone on with only by its owner.** A connection that says another owner's session is told what
+  one that says a session nobody has is told, that it is lost, and ends nothing.
+- **An owner has one session.** A new session from an owner ends the one it had, which is told `ended`, before
+  the new one is handed to `onLink`: a window that reloaded.
+- **The host says an owner is gone**, with `gone`, and nothing else ends a session for a dialler that stopped
+  coming back: nothing a link sees tells that from one that is slow to.
 
-A link is kept, with what it holds for its window, until it ends. Nothing here ends one for a window that has
-stopped coming back, since nothing a link sees tells that from one that is slow to: whoever takes the links
-closes each when it knows its window is gone for good.
+So no more sessions are kept than there are owners taken and not said to be gone. A link authenticates nobody:
+who may connect, and as whom, is settled before a connection is handed here.
 
 ```ts
-accept(onLink: (link: Link) => void, options?: Options): (transport: Transport) => void
+accept<Owner>(onLink: (link: Link, owner: Owner) => void, options?: Options): Accepting<Owner>
+```
+
+### `Accepting`
+
+What `accept` returns: what takes each connection with whose it is, and what says an owner will not be back.
+
+```ts
+interface Accepting<Owner> {
+  /**
+   * Takes a connection, and whose it is. Its first word finds it its link: its owner's session where it says that
+   * one, and a new session, handed to `onLink`, where it says one that is new. Throws a `RangeError`, having
+   * closed it, for a transport that takes no message of `LEAST` bytes.
+   */
+  take(transport: Transport, owner: Owner): void
+  /**
+   * Says an owner will not be back. Its session ends, told `ended` where it can be, and every connection taken as
+   * its that is still open is closed, whether or not it has said anything. Nothing is kept of the owner after: one
+   * taken again is an owner met for the first time.
+   */
+  gone(owner: Owner): void
+}
 ```
 
 ### `asFrame`
