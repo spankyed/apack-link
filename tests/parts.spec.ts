@@ -4,7 +4,7 @@ import { once as eventOnce } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import { decode } from '@msgpack/msgpack'
 import { WebSocket, WebSocketServer } from 'ws'
-import { accept, link, memoryPair, socket, timers, type Ending, type Frame, type Message, type Traffic, type Transport } from '../src/index.ts'
+import { accept, dial, listen, memoryPair, socket, timers, type Ending, type Frame, type Message, type Traffic, type Transport } from '../src/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -19,8 +19,8 @@ describe('a frame longer than a part', () => {
       const writes: Message[] = []
       const counted: Transport = { ...left, send: (message) => { writes.push(message); left.send(message) } }
       const options = { part: 100, ...(codec ? { codec } : {}) }
-      const a = link(counted, options)
-      const b = link(right, options)
+      const a = dial(counted, options)
+      const b = listen(right, options)
       const heard: Frame[] = []
       const seen: Traffic[] = []
       const ended: Ending[] = []
@@ -61,7 +61,7 @@ describe('a frame longer than a part', () => {
       [part(1, 0, 2, '{"kind":'), part(2, 1, 2, 'not the rest')],
     ]) {
       const [bare, right] = memoryPair()
-      const end = link(right)
+      const end = listen(right)
       const heard: Frame[] = []
       const ended: Ending[] = []
       end.onFrame((frame) => { heard.push(frame) })
@@ -74,7 +74,7 @@ describe('a frame longer than a part', () => {
   })
 
   it('survives a drop part-way, picking up where the other end got to', async () => {
-    const backend = link(undefined, { part: 50 })
+    const backend = listen(undefined, { part: 50 })
     const heard: Frame[] = []
     const backendEnded: Ending[] = []
     backend.onFrame((frame) => { heard.push(frame) })
@@ -82,7 +82,7 @@ describe('a frame longer than a part', () => {
     let delivered = 0
     let current: Transport | undefined
     let connections = 0
-    const window = link(() => {
+    const window = dial(() => {
       // An opener paces itself: it does not dial a backend that has ended, which would close each connection as it
       // opened and be opened again, without end. This one stays shut instead.
       if (backendEnded.length) return { send: () => {}, onData: () => {}, onClose: () => {}, close: () => {} }
@@ -133,7 +133,7 @@ describe('fifty megabytes over a WebSocket', () => {
     })
     const clients: WebSocket[] = []
     const writes: number[] = []
-    const window = link(() => {
+    const window = dial(() => {
       const ws = new WebSocket(url)
       clients.push(ws)
       const transport = socket(ws as never)
@@ -186,10 +186,10 @@ describe('a part as it crosses', () => {
         const most = 2048 + 128 + 2
         const options = { bound: { frame: 2048 }, part: 1500, ...(codec ? { codec } : {}) }
         const { transport, right, writes } = narrow(most)
-        const a = link(transport, options)
+        const a = dial(transport, options)
         const heard: Frame[] = []
         const ended: Ending[] = []
-        const b = link(right, options)
+        const b = listen(right, options)
         b.onFrame((frame) => { heard.push(frame) })
         b.onEnd((ending) => { ended.push(ending) })
         a.send(tell(event), { cause: 'c'.repeat(40) })
@@ -204,9 +204,9 @@ describe('a part as it crosses', () => {
     for (const part of [16, 17, 50, 333]) {
       const [left, right] = memoryPair()
       const said: Array<Record<string, unknown>> = []
-      const a = link({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
+      const a = dial({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
       const heard: Frame[] = []
-      link(right, { part }).onFrame((frame) => { heard.push(frame) })
+      listen(right, { part }).onFrame((frame) => { heard.push(frame) })
       // The second is nothing but what is said in two, and in two again as data: cut once more is not enough for it.
       const frames = [tell('"\\\u0001✓𝄞 plain '.repeat(60)), tell('"'.repeat(200))]
       for (const frame of frames) a.send(frame)
@@ -215,7 +215,7 @@ describe('a part as it crosses', () => {
       const data = said.filter((one) => 'part' in one).map((one) => JSON.stringify(one.data))
       expect([part, Math.max(...data.map(bytes)) <= part]).toEqual([part, true])
     }
-    expect(() => link(memoryPair()[0], { part: 15 })).toThrow(RangeError)
+    expect(() => dial(memoryPair()[0], { part: 15 })).toThrow(RangeError)
   })
 })
 
@@ -227,7 +227,7 @@ describe('the parts of a frame, as they arrive', () => {
     const [bare, right] = memoryPair()
     const heard: Frame[] = []
     const ended: Ending[] = []
-    const b = link(right, { bound: { frame: 2048 } })
+    const b = listen(right, { bound: { frame: 2048 } })
     b.onFrame((frame) => { heard.push(frame) })
     b.onEnd((ending) => { ended.push(ending) })
     bare.send(JSON.stringify([hello]))
@@ -280,9 +280,9 @@ describe('how a frame is cut', () => {
       for (const part of [100, 257]) {
         const [left, right] = memoryPair()
         const said: Array<Record<string, unknown>> = []
-        const a = link({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
+        const a = dial({ ...left, send: (message) => { said.push(...JSON.parse(message as string) as Array<Record<string, unknown>>); left.send(message) } }, { part })
         const heard: Frame[] = []
-        link(right, { part }).onFrame((frame) => { heard.push(frame) })
+        listen(right, { part }).onFrame((frame) => { heard.push(frame) })
         a.send(tell(event))
         await until(() => heard.length === 1)
         expect(heard).toEqual([tell(event)])
@@ -310,10 +310,10 @@ describe('what a link needs of what carries it, with frames in parts', () => {
 
   it('is room for a part and what goes with one, not for a whole frame: a frame as large as one may be crosses on it', async () => {
     const { transport, right, writes } = narrow(NEEDS)
-    const a = link(transport, options)
+    const a = dial(transport, options)
     const heard: Array<{ frame: Frame; cause: string | undefined }> = []
     const ended: Ending[] = []
-    const b = link(right, options)
+    const b = listen(right, options)
     b.onFrame((frame, cause) => { heard.push({ frame, cause }) })
     b.onEnd((ending) => { ended.push(ending) })
     const cause = 'c'.repeat(1022)
@@ -331,14 +331,14 @@ describe('what a link needs of what carries it, with frames in parts', () => {
 
   it('is found wanting as it is handed over, and in the other end\'s hello, one byte short of that', async () => {
     const short = narrow(NEEDS - 1)
-    expect(() => link(short.transport, options)).toThrow(RangeError)
+    expect(() => dial(short.transport, options)).toThrow(RangeError)
     expect(short.closed()).toBe(1)
     expect(() => accept(() => {}, options)(narrow(NEEDS - 1).transport)).toThrow(RangeError)
     expect(() => accept(() => {}, options)(narrow(NEEDS).transport)).not.toThrow()
     for (const [most, ending] of [[NEEDS, []], [NEEDS - 1, [{ why: 'too narrow', most: NEEDS - 1, needs: NEEDS }]]] as const) {
       const [bare, right] = memoryPair()
       const ended: Ending[] = []
-      link(right, options).onEnd((end) => { ended.push(end) })
+      dial(right, options).onEnd((end) => { ended.push(end) })
       bare.send(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most }]))
       await turn()
       expect([most, ended]).toEqual([most, ending])
@@ -347,17 +347,17 @@ describe('what a link needs of what carries it, with frames in parts', () => {
 
   it('is never more than a whole frame would need, where a frame may be no longer than a part', () => {
     const small = { bound: { frame: 1024 }, part: 2000 }
-    expect(() => link(narrow(1024 + 128 + 2).transport, small)).not.toThrow()
-    expect(() => link(narrow(1024 + 128 + 1).transport, small)).toThrow(RangeError)
+    expect(() => dial(narrow(1024 + 128 + 2).transport, small)).not.toThrow()
+    expect(() => dial(narrow(1024 + 128 + 1).transport, small)).toThrow(RangeError)
   })
 })
 
 describe('what caused a frame', () => {
   it('is 1024 bytes at most as it crosses, and a frame with a longer one is refused where it is sent', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
+    const a = dial(left)
     const heard: Array<string | undefined> = []
-    link(right).onFrame((_, cause) => { heard.push(cause) })
+    listen(right).onFrame((_, cause) => { heard.push(cause) })
     // With the two around it as text.
     a.send(tell(1), { cause: 'c'.repeat(1022) })
     expect(() => a.send(tell(2), { cause: 'c'.repeat(1023) })).toThrow(RangeError)
@@ -372,9 +372,9 @@ describe('sending', () => {
   it('hands nothing to what carries the link before the turn is out, however much is sent', async () => {
     const [left, right] = memoryPair()
     let writes = 0
-    const a = link({ ...left, send: (message) => { writes++; left.send(message) } }, { part: 100 })
+    const a = dial({ ...left, send: (message) => { writes++; left.send(message) } }, { part: 100 })
     const heard: Frame[] = []
-    link(right, { part: 100 }).onFrame((frame) => { heard.push(frame) })
+    listen(right, { part: 100 }).onFrame((frame) => { heard.push(frame) })
     const frames = [tell('x'.repeat(5000)), tell('after')]
     for (const frame of frames) a.send(frame)
     expect(writes).toBe(0)
@@ -385,7 +385,7 @@ describe('sending', () => {
 
   it('does not end the link under whoever is sending, when what carries it throws', async () => {
     const thrown: unknown[] = []
-    const a = link({ send: () => { throw new Error('cannot send') }, onData: () => {}, onClose: () => {}, close: () => {} }, { part: 100, thrown: (error) => { thrown.push(error) } })
+    const a = dial({ send: () => { throw new Error('cannot send') }, onData: () => {}, onClose: () => {}, close: () => {} }, { part: 100, thrown: (error) => { thrown.push(error) } })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
     a.send(tell('x'.repeat(5000)))
@@ -407,8 +407,8 @@ describe('a WebSocket that takes no message longer than some length', () => {
   it('is not opened to by a link that may need to send more, and carries one that does not, cut to it', () => {
     const ws = { readyState: 0, bufferedAmount: 0, binaryType: '', send: () => {}, close: () => {}, addEventListener: () => {} }
     // A part of 1 MiB unless told: a server that takes a megabyte takes less than a part and what goes with one.
-    expect(() => link(socket(ws, { most: 1024 * 1024 }))).toThrow(RangeError)
-    expect(() => link(socket(ws, { most: 1024 * 1024 }), { part: 512 * 1024 })).not.toThrow()
+    expect(() => dial(socket(ws, { most: 1024 * 1024 }))).toThrow(RangeError)
+    expect(() => dial(socket(ws, { most: 1024 * 1024 }), { part: 512 * 1024 })).not.toThrow()
   })
 })
 
@@ -436,12 +436,12 @@ describe('the work of cutting a frame', () => {
           const [left, right] = memoryPair()
           let parts = 0
           const data: number[] = []
-          const a = link({ ...left, send: (message) => {
+          const a = dial({ ...left, send: (message) => {
             for (const one of base.decode(message) as Array<Record<string, unknown>>) if ('part' in one) { parts++; data.push(inBytes(base.encode(one.data))) }
             left.send(message)
           } }, { part, codec })
           const heard: Frame[] = []
-          link(right, { part, codec: base }).onFrame((frame) => { heard.push(frame) })
+          listen(right, { part, codec: base }).onFrame((frame) => { heard.push(frame) })
           a.send(tell(event))
           await until(() => heard.length === 1)
           expect(heard).toEqual([tell(event)])
@@ -457,9 +457,9 @@ describe('the work of cutting a frame', () => {
   it('leaves no part but the last much shorter than a part may be, in msgpack as in JSON', async () => {
     const [left, right] = memoryPair()
     const data: number[] = []
-    const a = link({ ...left, send: (message) => { for (const one of decode(message as Uint8Array) as Array<Record<string, unknown>>) if ('part' in one) data.push((one.data as Uint8Array).byteLength); left.send(message) } }, { part: 300, codec: msgpack })
+    const a = dial({ ...left, send: (message) => { for (const one of decode(message as Uint8Array) as Array<Record<string, unknown>>) if ('part' in one) data.push((one.data as Uint8Array).byteLength); left.send(message) } }, { part: 300, codec: msgpack })
     const heard: Frame[] = []
-    link(right, { part: 300, codec: msgpack }).onFrame((frame) => { heard.push(frame) })
+    listen(right, { part: 300, codec: msgpack }).onFrame((frame) => { heard.push(frame) })
     a.send(tell('"✓'.repeat(2000)))
     await until(() => heard.length === 1)
     expect(Math.min(...data.slice(0, -1))).toBeGreaterThanOrEqual(300 - 8 - 3)
@@ -471,7 +471,7 @@ describe('what accepts connections', () => {
     expect(() => accept(() => {}, { part: 15 })).toThrow(RangeError)
     expect(() => accept(() => {}, { bound: { frame: 1023 } })).toThrow(RangeError)
     expect(() => accept(() => {}, { part: Number.NaN })).toThrow(RangeError)
-    expect(() => link(memoryPair()[0], { part: Number.NaN })).toThrow(RangeError)
+    expect(() => dial(memoryPair()[0], { part: Number.NaN })).toThrow(RangeError)
     expect(() => accept(() => {}, { part: 16, bound: { frame: 1024 } })).not.toThrow()
   })
 })

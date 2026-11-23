@@ -1,7 +1,7 @@
 // Two ends of a link in memory whose connection can be dropped, or whose second end can restart, at any moment a
 // scenario chooses: what a link that comes back is held to.
-import { link, type Clock, type Link, type Options } from '../link.ts'
-import { memoryPair, type Transport } from '../transport.ts'
+import { dial, listen, type Clock, type Link, type Listener, type Options } from '../link.ts'
+import { memoryPair, type Message, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
 import type { Lane, Schedule } from './schedule.ts'
@@ -17,6 +17,34 @@ export function laneClock(schedule: Schedule, lane: Lane): Clock {
       schedule.later(lane, () => { if (!off) run() })
       return () => { off = true }
     },
+  }
+}
+
+/**
+ * One end of a connection nobody is listening on yet: what arrives is kept, and handed over in order to whoever
+ * listens first, as what was sent to a socket is to whoever accepts it.
+ */
+function kept(transport: Transport): Transport {
+  const arrived: Message[] = []
+  let hears: Array<(message: Message) => void> | undefined
+  const closes: Array<() => void> = []
+  /** Whether it has closed, and whether this end closed it: then nothing more that arrived is handed over. */
+  let closed = false
+  let shut = false
+  const gone = (): void => { for (const then of closes.splice(0)) then() }
+  transport.onData((message) => { if (hears) for (const heard of hears) heard(message); else arrived.push(message) })
+  // That it closed is heard after what arrived before it did, by whoever listens then.
+  transport.onClose(() => { closed = true; if (hears) gone() })
+  return {
+    ...transport,
+    onData: (heard) => {
+      if (hears) { hears.push(heard); return }
+      hears = [heard]
+      for (const message of arrived.splice(0)) if (!shut) heard(message)
+      if (closed) gone()
+    },
+    onClose: (then) => { if (closed && hears) then(); else closes.push(then) },
+    close: () => { shut = true; transport.close() },
   }
 }
 
@@ -46,9 +74,9 @@ export function droppingMemoryEnds(schedule: Schedule, options: Options & { read
   const { unreachable = 0, ...given } = options
   let ends = 0
   /** A link for the second end, or for nobody a scenario knows, under the model if there is one. */
-  const second = (): Link => {
+  const second = (): Listener => {
     ends++
-    const made = link(undefined, given)
+    const made = listen(undefined, given)
     return held ? held.end(made, ends === 1 ? 'b' : `b (${ends})`) : made
   }
   const there = { label: 'a to b' }
@@ -63,14 +91,14 @@ export function droppingMemoryEnds(schedule: Schedule, options: Options & { read
   let waiting: Transport | undefined
   let connections = 0
   const clock = laneClock(schedule, there)
-  const opens = link(() => {
+  const opens = dial(() => {
     connections++
     const [left, right] = memoryPair((run) => schedule.later(there, run), (run) => schedule.later(back, run))
     current = left
     if (connections <= unreachable) right.close()
     // To an end that ended by itself a connection is a new one, to a link of its own, as `accept` makes one.
     else if (gone && byItself) second().carry(right)
-    else if (gone) waiting = right
+    else if (gone) waiting = kept(right)
     else b.carry(right)
     return left
   }, { ...given, reopen: { clock } })

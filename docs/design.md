@@ -191,12 +191,12 @@ A link outlives what carries it (`src/link.ts`).
 - **A new connection.** Each end's hello says its session, the last number it took, and the session it is going
   on with (`resumes`) once it has met one. Each sends again what the other has not taken, in order, then goes on.
   A frame is taken only in turn, so nothing is taken twice.
-- **Nothing is numbered before the other end is met.** On every connection of a link that can come back
-  (`link(open)`, `link()`), frames wait until the other end's hello has arrived. So an end that has met nobody
+- **Nothing is numbered before the other end is met.** On every connection of an end that listens, and of one
+  that dials and opens its own (`dial(open)`), frames wait until the other end's hello has arrived. So an end that has met nobody
   has sent nothing that anybody could have taken, and whoever it meets first, it starts with afresh: a window
   that opens before its backend listens, or whose first connection went before anything arrived, loses nothing
-  and repeats nothing, whether the backend it reaches is the one it dialled or one started since. A link given
-  one transport does not come back, and sends at once.
+  and repeats nothing, whether the backend it reaches is the one it dialled or one started since. An end that
+  dials on one transport alone does not come back, and sends at once, beside its hello.
 - **Lost.** A link that opened the connection ends `{ why: 'lost' }`, saying `{ lost: true }` to the other end, when the hello is from another
   session than the one it was talking to; says it is going on with a session that is not this one; says it has met
   nobody and yet took something; says it took more than was sent; or wants what it earlier said it had taken, which
@@ -218,11 +218,11 @@ A link outlives what carries it (`src/link.ts`).
   still arriving on the old connection, and the other end would send those again. Only the last connection
   handed over waits. Without this, a connection that only said a session's id would close the connection the
   session was on.
-- **Who opens.** `link(open)` opens a connection now, and another after each one closes. `link()` waits to be
+- **Who opens.** `dial(open)` opens a connection now, and another after each one closes. `listen()` waits to be
   handed each connection with `carry`. `accept` takes connections as they arrive at a backend: a new session is a
   new link, a known one goes back to its link, and one that says it `resumes` something, from a session it does
   not know, is told `lost`: it is from before this backend began.
-- **Opening again is paced, on a clock handed in.** `link(open)` is not made without one (`Options.reopen`): a
+- **Opening again is paced, on a clock handed in.** `dial(open)` is not made without one (`Options.reopen`): a
   link that opened again with nothing to pace it would spin for as long as its connections failed, and there is
   no way to pace without a clock that does not. `timers` is one on `setTimeout`, exported for a host to hand in;
   the link reaches for none itself.
@@ -365,6 +365,26 @@ arrive. A link sends text today and takes either: bytes are read as UTF-8.
   link does not, closes the stream too.
 
 Which of these apack's windows and tools are carried on is apack's to decide; a link is the same over each.
+
+## Two ends that are not alike
+
+One end of a connection opened it, and the other was there to be reached. A link says which it is: `dial` makes
+the end that opened it, and `listen` the other. Where neither did, two ports of one channel, one is chosen.
+
+- **The end that dials says hello first, and ends for what it meets.** Another link, a session that cannot be gone
+  on with, something that is not a link: it opened the connection, so what is there is what it reached.
+- **The end that listens says nothing on a connection until a hello that fits has arrived on it**, and ends for
+  nothing said before one. Whoever reaches it may be anybody. It turns away what does not fit, telling it why
+  where it would otherwise wait, and stays on the connection it has. It is never on a connection where nobody
+  has been met, so nothing of a session's is said to a stranger and no stranger's word ends a session. What it
+  tells one it turns away names no session: the two sessions' names are all a connection needs to say to go on
+  with one, so neither is said to anybody who has not said both.
+
+Before this an end was one of three kinds by what it was made with, each with its own rule for when it spoke
+and when it ended, and both ends said hello at once. A link handed a connection while on another had to be made
+to wait for a hello there, as a case of its own, or a connection that only said a session's id took the session
+from the one it was on. Now that is the only thing an end that listens does. An end that dials is not handed
+connections, and one that listens does not open them: neither can be set so.
 
 ## What an end does, and what does it
 

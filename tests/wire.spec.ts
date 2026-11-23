@@ -4,7 +4,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { expect, it } from 'vitest'
-import { accept, link, memoryPair, type Clock, type Link, type Transport } from '../src/index.ts'
+import { accept, dial, memoryPair, type Clock, type Link, type Transport } from '../src/index.ts'
 
 /** Everything that crossed, in order, as `A → B  text`: the window's end is A and the backend's B. */
 const crossed: string[] = []
@@ -42,7 +42,7 @@ it('is what docs/wire.md records, text for text', async () => {
   let backend: Link | undefined
   const take = accept((made) => { backend = made }, { bound: { frame: 2048 } })
   let connection: Transport | undefined
-  const window = link(() => {
+  const window = dial(() => {
     const [left, right] = memoryPair()
     take(recorded(right, 'B', 'A'))
     // The window's end is carried on something that takes no message longer than 4 KiB, and says so in its hello.

@@ -1,7 +1,7 @@
 // What a link does is whole before anything it calls is called: a listener that closes or sends as it is handed a
 // frame, and a transport that throws as the link ends, find it as that step left it.
 import { describe, expect, it } from 'vitest'
-import { link, memoryPair, type Ending, type Frame, type Message, type Transport } from '../src/index.ts'
+import { dial, listen, memoryPair, type Ending, type Frame, type Message, type Transport } from '../src/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
@@ -30,7 +30,7 @@ const numbered = (seq: number, event: unknown) => ({ seq, frame: tell(event) })
 describe('a listener that acts as it is handed a frame', () => {
   it('is handed nothing after the frame it closed the link on, though more came in the same message', async () => {
     const other = bare()
-    const a = link(other.transport)
+    const a = dial(other.transport)
     const heard: Frame[] = []
     const later: Frame[] = []
     a.onFrame((frame) => { heard.push(frame); if (frame.kind === 'tell' && frame.event === 2) a.close('ended') })
@@ -46,8 +46,8 @@ describe('a listener that acts as it is handed a frame', () => {
 
   it('has what it sends numbered after what already waited, where the message it was handed in made room', async () => {
     const [left, right] = memoryPair()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1024 } } })
-    const b = link(right)
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1024 } } })
+    const b = listen(right)
     const heard: Frame[] = []
     b.onFrame((frame) => { heard.push(frame) })
     // The first is kept, and the second waits for it to be taken.
@@ -62,7 +62,7 @@ describe('a listener that acts as it is handed a frame', () => {
 
   it('sends in the middle of a message, and is still handed the rest of it in order', async () => {
     const other = bare()
-    const a = link(other.transport)
+    const a = dial(other.transport)
     const heard: Frame[] = []
     a.onFrame((frame) => { heard.push(frame); a.send(tell(`after ${String(told([frame])[0])}`)) })
     other.hand(hello, numbered(1, 'one'), numbered(2, 'two'), numbered(3, 'three'))
@@ -79,7 +79,7 @@ describe('a transport that throws as the link ends', () => {
     const other = bare((message) => { if (String(message).includes('"lost"')) throw new Error('cannot send') })
     const thrown: unknown[] = []
     const ended: Ending[] = []
-    const a = link(other.transport, { thrown: (error) => { thrown.push(error) } })
+    const a = dial(other.transport, { thrown: (error) => { thrown.push(error) } })
     a.onEnd((ending) => { ended.push(ending) })
     await turn()
     // A hello going on with a session that is not this end's: the session is lost.
@@ -94,7 +94,7 @@ describe('a transport that throws as the link ends', () => {
     const other = bare((message) => { if (String(message).includes('"bye"')) throw new Error('cannot send') })
     const thrown: unknown[] = []
     const ended: Ending[] = []
-    const a = link(other.transport, { thrown: (error) => { thrown.push(error) } })
+    const a = dial(other.transport, { thrown: (error) => { thrown.push(error) } })
     a.onEnd((ending) => { ended.push(ending) })
     await turn()
     a.close('ended')
@@ -109,7 +109,7 @@ describe('what a link is handed', () => {
     const other = bare()
     const thrown: unknown[] = []
     const ended: Ending[] = []
-    const a = link({ ...other.transport, close: () => { throw new Error('cannot close') } }, { thrown: (error) => { thrown.push(error) } })
+    const a = dial({ ...other.transport, close: () => { throw new Error('cannot close') } }, { thrown: (error) => { thrown.push(error) } })
     a.onEnd((ending) => { ended.push(ending) })
     a.close()
     await turn()
@@ -118,7 +118,7 @@ describe('what a link is handed', () => {
   })
 
   it('closes a transport handed to a link that has ended, whatever it is, and throws nothing', () => {
-    const a = link(undefined, { bound: { frame: 4096 }, part: 2048 })
+    const a = listen(undefined, { bound: { frame: 4096 }, part: 2048 })
     a.close()
     let closed = 0
     expect(() => a.carry({ ...bare().transport, most: 64, close: () => { closed++ } })).not.toThrow()
@@ -129,7 +129,7 @@ describe('what a link is handed', () => {
     const other = bare()
     const waits: Array<() => void> = []
     const clock = { after: (_: number, run: () => void) => { waits.push(run); return () => { waits.splice(waits.indexOf(run), 1) } } }
-    const a = link(other.transport, { there: { window: 100, clock } })
+    const a = dial(other.transport, { there: { window: 100, clock } })
     other.hand(hello)
     const first = a.awaiting()
     a.awaiting()
@@ -148,28 +148,27 @@ describe('a transport that throws as it is closed for another', () => {
     return { ...made, transport: { ...made.transport, close: () => { throw new Error('cannot close') } } }
   }
 
-  it('does not keep a link from saying hello on the connection it is handed in its place', async () => {
+  it('does not keep a link from taking up the connection it is handed in place of one that waited', async () => {
     const thrown: unknown[] = []
-    const a = link(undefined, { thrown: (error) => { thrown.push(error) } })
+    const a = listen(undefined, { thrown: (error) => { thrown.push(error) } })
     const heard: Frame[] = []
     a.onFrame((frame) => { heard.push(frame) })
+    // Nobody has said hello on the first, so it only waits: the next takes its place.
     a.carry(throwing().transport)
     const next = bare()
     expect(() => a.carry(next.transport)).not.toThrow()
-    await turn()
-    expect(next.sent.join('')).toContain('"session"')
-    // And the link is on it: what arrives there is taken, and what is sent leaves on it.
     next.hand(hello, numbered(1, 'on the next'))
     a.send(tell('out'))
     await turn()
     expect(told(heard)).toEqual(['on the next'])
+    expect(next.sent.join('')).toContain('"session"')
     expect(next.sent.join('')).toContain('"out"')
     expect(thrown).toEqual([new Error('cannot close')])
   })
 
   it('does not lose the frames that came with the hello a waiting connection was taken up for', async () => {
     const thrown: unknown[] = []
-    const a = link(undefined, { thrown: (error) => { thrown.push(error) } })
+    const a = listen(undefined, { thrown: (error) => { thrown.push(error) } })
     const heard: Frame[] = []
     a.onFrame((frame) => { heard.push(frame) })
     const first = throwing()
@@ -198,7 +197,7 @@ describe('what a link leaves on its clocks', () => {
 
   it('watches nothing once the connection it watched has gone', async () => {
     const { waits, clock } = manual()
-    const a = link(undefined, { there: { window: 100, clock } })
+    const a = listen(undefined, { there: { window: 100, clock } })
     const other = bare()
     a.carry(other.transport)
     other.hand(hello)
@@ -214,7 +213,7 @@ describe('what a link leaves on its clocks', () => {
     const thrown: unknown[] = []
     let opened = 0
     const first = bare()
-    const a: ReturnType<typeof link> = link(() => {
+    const a: ReturnType<typeof dial> = dial(() => {
       if (++opened === 1) return first.transport
       a.close()
       throw new Error('could not open')

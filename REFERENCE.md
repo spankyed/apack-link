@@ -75,6 +75,20 @@ interface Codec {
 }
 ```
 
+### `dial`
+
+Makes the end of a link that dials: the one that opened the connection, or, where neither did, the one of the
+two chosen to. It says hello first, and ends for what it meets: another link, a session that cannot be gone on
+with, something that is not a link. Given a transport, the link is carried on it alone and ends when it
+closes: what it sends goes at once, beside its hello. Given what opens a transport, and the clock to pace it on
+(`reopen`), it opens one now and another after each one closes, and numbers nothing until the other end has
+said hello.
+
+```ts
+dial(open: () => Transport, options: Options & { readonly reopen: Reopen; }): Link
+dial(over: Transport, options?: Options): Link
+```
+
 ### `DuplexLike`
 
 What a Node `Duplex` has, and all a link uses of one.
@@ -189,18 +203,6 @@ Text, as JSON. What arrives as bytes is read as UTF-8.
 json: Codec
 ```
 
-### `link`
-
-Makes one end of a link. Given a transport, the link is carried on it alone and ends when it closes: what it
-sends goes at once. Given what opens a transport, and the clock to pace it on (`reopen`), it opens one now and
-another after each one closes. Given nothing, it waits to be handed each connection with `carry`. A link of the
-last two kinds can come back, and numbers nothing until the other end has said hello.
-
-```ts
-link(open: () => Transport, options: Options & { readonly reopen: Reopen; }): Link
-link(over?: Transport, options?: Options): Link
-```
-
 ### `Link`
 
 ```ts
@@ -232,20 +234,13 @@ interface Link {
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not
    * come back, and on a connection of an end that has never met anybody, which has nothing sent before to be out
-   * of step with. Then a goodbye, if one is given, on whatever connection there is, so the other end's ending
-   * says which it was. What waited with no connection, or on one where an end met before has not been met again,
-   * has nowhere to go, and is let go with what was kept. This is also how whoever holds a link says the other end
+   * of step with. Then a goodbye, if one is given, on the connection it is on, so the other end's ending says
+   * which it was. What waited with no connection, or on one where an end met before has not been met again,
+   * has nowhere to go, and is let go with what was kept. An end that listens says nothing, a goodbye included,
+   * on a connection where nobody has said hello, unless it has met nobody at all. This is also how whoever holds a link says the other end
    * is gone for good.
    */
   close(bye?: Bye): void
-  /**
-   * Hands the link a connection to be carried on, in place of the one it has. While the link is on one where the
-   * other end has been met, it keeps that one, and says nothing on the new one, until a hello that fits has
-   * arrived on the new one: the end that opened a connection speaks first on it. One whose hello does not fit is
-   * closed, and the link goes on. Throws a `RangeError`, having closed it, for a transport that takes no message
-   * as long as a frame this link may send.
-   */
-  carry(transport: Transport): void
   /** How many numbers this end keeps because the other has not said it took them: a frame, or a part of one. */
   kept(): number
   /** How many frames wait to be numbered, because the other end is behind or there is no connection. */
@@ -264,6 +259,35 @@ Which link this is. Both ends ship together, so there is one, and an end that sa
 
 ```ts
 LINK: 1
+```
+
+### `listen`
+
+Makes the end of a link that listens: the other end of a connection somebody else opened. It says nothing on
+a connection until a hello that fits has arrived on it, and numbers nothing until then. Given a transport, the
+link is carried on it alone and ends when it closes. Given nothing, it is handed each connection with `carry`,
+as a backend's links are by `accept`, and ends for nothing any of them says before a hello that fits.
+
+```ts
+listen(over: Transport, options?: Options): Link
+listen(over?: undefined, options?: Options): Listener
+```
+
+### `Listener`
+
+An end of a link that listens, and is handed each connection it is carried on.
+
+```ts
+interface Listener extends Link {
+  /**
+   * Hands the link a connection, which whoever is at the other end of it opened. The link says nothing on it, and
+   * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
+   * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
+   * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
+   * `RangeError`, having closed it, for a transport that takes no message as long as this link may need.
+   */
+  carry(transport: Transport): void
+}
 ```
 
 ### `memoryPair`
@@ -310,7 +334,7 @@ interface Options {
    * other end has gone, which is all two ends on one machine need.
    */
   there?: { readonly window: number; readonly clock: Clock }
-  /** How a link given what opens a connection paces opening another. Such a link is not made without it. */
+  /** How an end that dials and opens its connections paces opening another. Such a link is not made without it. */
   reopen?: Reopen
   /**
    * Handed what a listener threw (`onFrame`, `onEnd`), what opening a connection threw, or what a transport threw
@@ -753,8 +777,8 @@ type MakeEnds = (schedule: Schedule) => Ends
 
 ### `memoryEnds`
 
-Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run
-over. Given a model, each end is put under it.
+Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
+this package's own scenarios are run over. Given a model, each end is put under it.
 
 ```ts
 memoryEnds(schedule: Schedule, options?: Options, held?: Model): Ends
@@ -773,7 +797,7 @@ model(options?: ModelOptions): Model
 ```ts
 interface Model {
   /** Puts a link under the model, before anything is sent on it or listens to it. What comes back is the link to use. */
-  end(link: Link, name: string): Link
+  end<L extends Link>(link: L, name: string): L
   /**
    * What must hold once everything has come to rest. Throws for the first thing an end did that the model could
    * not have, with what led to it; and for what an end that is still there was sent, by the one end still there

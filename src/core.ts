@@ -22,8 +22,8 @@
 // again what the other has not taken, in order, and goes on; since a frame is taken only in turn, nothing is taken
 // twice, and a resume can pick up within a frame in parts. A link that can come back numbers nothing until it has
 // met the other end, so an end that has met nobody has sent nothing anybody could have taken, and starts afresh
-// with whoever it meets. A link that opens its connections opens another when one closes, when its clock says; a
-// link handed its connections is handed each. Neither is given a time to wait for the other end in: whoever holds
+// with whoever it meets. An end that dials and opens its connections opens another when one closes, when its clock
+// says; one that listens is handed each. Neither is given a time to wait for the other end in: whoever holds
 // a link says when the other end is gone, by closing it.
 //
 // What is kept is bounded. How far behind the other end is, is what it has not said it took: past a mark, a link
@@ -35,10 +35,11 @@
 // longest it takes. A batch that would be longer than either crosses as more than one, cut between frames, in
 // order. A link is not carried on what takes no message as long as a frame it may send.
 //
-// A connection handed to a link that is on one where the other end has been met waits: the link says nothing on
-// it, and keeps the one it has, until whoever is on the new one has said a hello that fits. One that does not is
-// turned away. And a link that is handed its connections turns a connection away for anything said on it before a
-// hello that fits, and goes on: only the end that opened a connection ends for what it met there.
+// The two ends are not alike. The one that dials opened the connection: it says hello first on it, and ends for
+// what it meets there. The one that listens says nothing on a connection, and keeps the one it has, until whoever
+// is on the new one has said a hello that fits. One that does not is turned away, told why where it would
+// otherwise wait, and the end goes on: it is on no connection where nobody has been met, and ends for nothing
+// said before a hello that fits.
 //
 // What carries a link saying it closed is the first word that the other end has gone. For a connection that can go
 // quiet without closing, a link given a window watches while it is owed something, a `taken` or an answer: quiet
@@ -128,6 +129,17 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 export const isHello = (said: unknown): said is Hello => isObject(said) && said.link === LINK && typeof said.session === 'string' && isCount(said.taken)
   && (said.resumes === undefined || typeof said.resumes === 'string') && (said.most === undefined || (isCount(said.most) && said.most > 0))
 
+/**
+ * The first thing a message says, where it is a list of things said, as every message of a link's is. What is not
+ * one says nothing: what it holds under a name is not something said.
+ */
+export const firstOf = (codec: Codec, message: Message): unknown => {
+  try {
+    const said = codec.decode(message)
+    return Array.isArray(said) ? (said as unknown[])[0] : undefined
+  } catch { return undefined }
+}
+
 /** A link a little behind sends at once; one far behind lets a view's results be overtaken; one past it ends. */
 const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
 const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
@@ -154,11 +166,15 @@ const REOPEN_MOST = 10_000
 const PART = 1024 * 1024
 
 /**
- * How an end is set, for as long as it lasts. `kind` is how it comes by its connections: `once` is carried on one
- * alone and ends with it, `opens` opens each itself, and `handed` is handed each.
+ * How an end is set, for as long as it lasts. `role` is which of the two it is: the one that `dials` says hello
+ * first on a connection and ends for what it meets there, and the one that `listens` says nothing on a connection
+ * until a hello that fits has arrived on it, and ends for nothing said before one. `connections` is how it comes
+ * by them: `one` is carried on one alone and ends with it, `opened` opens each itself, which only an end that
+ * dials does, and `handed` is handed each, which only an end that listens is.
  */
 export interface Setup {
-  readonly kind: 'once' | 'opens' | 'handed'
+  readonly role: 'dials' | 'listens'
+  readonly connections: 'one' | 'opened' | 'handed'
   /** This end's session: a text no other end has. */
   readonly session: string
   readonly codec: Codec
@@ -179,9 +195,10 @@ export interface Setup {
   readonly most: number
 }
 
-/** What `setup` is given: all but `kind` and `session` are something unless given. */
+/** What `setup` is given: all but `role`, `connections` and `session` are something unless given. */
 export interface Given {
-  readonly kind: Setup['kind']
+  readonly role: Setup['role']
+  readonly connections: Setup['connections']
   readonly session: string
   readonly codec?: Codec
   readonly part?: number
@@ -204,11 +221,16 @@ export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest
   return { largest, part, needed: needs(largest, part) }
 }
 
-/** How an end is set, from what it was given. Throws what `limits` does. */
+/**
+ * How an end is set, from what it was given. Throws what `limits` does, and a `TypeError` for an end that dials
+ * and is handed its connections, or listens and opens them: whoever opens a connection is the one that dials on it.
+ */
 export function setup(given: Given): Setup {
   const { largest, part, needed } = limits(given)
+  if (given.connections === (given.role === 'dials' ? 'handed' : 'opened')) throw new TypeError(`An end that ${given.role} is not ${given.connections} its connections`)
   return {
-    kind: given.kind,
+    role: given.role,
+    connections: given.connections,
     session: given.session,
     codec: given.codec ?? json,
     part,
@@ -403,9 +425,9 @@ type Unfit =
  */
 export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const { codec, part, mark, bound, largest, needed, session: mine } = set
-  const once = set.kind === 'once'
-  const handed = set.kind === 'handed'
-  const opens = set.kind === 'opens'
+  const dials = set.role === 'dials'
+  const once = set.connections === 'one'
+  const opens = set.connections === 'opened'
   /** What the step under way was handed, and what it has asked for so far. */
   let s!: State
   let out!: Effect[]
@@ -668,27 +690,17 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   /** Whether whoever said something that does not fit is told the session is lost: one that would otherwise wait on it. */
   const toldLost = (unfit: Unfit): boolean => unfit.no === 'lost' || unfit.no === 'too narrow'
   /**
-   * Something that does not fit arrived on the connection this end is on. Before a hello that fits, on an end
-   * that is handed its connections, the connection is turned away and the end goes on: whoever is there is not
-   * who it talks to. Otherwise the link ends, saying why.
+   * The first thing the other end said on a connection this end dialled does not fit: the link ends, saying why.
+   * An end that listens is never here: it is on no connection before a hello that fits.
    */
   const refuse = (on: Connection, unfit: Unfit): void => {
     if (toldLost(unfit)) put(on, word({ lost: true }))
-    if (handed && !on.met) {
-      flush(on)
-      delete s.now
-      out.push({ do: 'close', on: on.id, thrown: 'let go' })
-      return
-    }
     if (unfit.no === 'lost') { flush(on); end({ why: 'lost' }); return }
     if (unfit.no === 'too narrow') { flush(on); end({ why: 'too narrow', most: unfit.most, needs: needed }); return }
     if (unfit.no === 'version') { end({ why: 'version', mine: LINK, theirs: unfit.theirs }); return }
-    unknown(on)
+    unknown()
   }
-  const unknown = (on: Connection): void => {
-    if (handed && !on.met) { refuse(on, { no: 'not a frame' }); return }
-    end({ why: 'not a frame', size: sizeOf(arriving) })
-  }
+  const unknown = (): void => { end({ why: 'not a frame', size: sizeOf(arriving) }) }
 
   /** Takes one thing said on the connection this end is on. Whether a frame was handed over for it. */
   const take = (on: Connection, arrived: unknown): boolean => {
@@ -709,7 +721,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       }
       return false
     }
-    if (!isObject(arrived)) { unknown(on); return false }
+    if (!isObject(arrived)) { unknown(); return false }
     if (arrived.lost === true) { end({ why: 'lost' }); return false }
     if (isCount(arrived.there)) { say(on, word({ here: arrived.there })); return false }
     if (isCount(arrived.here)) return false
@@ -720,16 +732,16 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       return false
     }
     if (!('seq' in arrived) && 'taken' in arrived) {
-      if (!isCount(arrived.taken) || !letGo(arrived.taken)) unknown(on)
+      if (!isCount(arrived.taken) || !letGo(arrived.taken)) unknown()
       return false
     }
     const { seq, cause } = arrived
-    if (typeof seq !== 'number') { unknown(on); return false }
-    if ((cause !== undefined && typeof cause !== 'string') || (arrived.private !== undefined && arrived.private !== true)) { unknown(on); return false }
+    if (typeof seq !== 'number') { unknown(); return false }
+    if ((cause !== undefined && typeof cause !== 'string') || (arrived.private !== undefined && arrived.private !== true)) { unknown(); return false }
     if ('frame' in arrived) {
       const frame = asFrame(arrived.frame)
       // Not a frame, or a whole frame where a frame in parts was arriving: its parts were not all sent.
-      if (!frame || s.parting) { unknown(on); return false }
+      if (!frame || s.parting) { unknown(); return false }
       if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
       s.heard = seq
       // This end says it took it with its next batch, and has one leave for that alone if none is to.
@@ -738,16 +750,16 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       return true
     }
     const { part: at, of, data } = arrived
-    if (!isCount(at) || !isCount(of) || of < 2 || at >= of || !(typeof data === 'string' || data instanceof Uint8Array)) { unknown(on); return false }
+    if (!isCount(at) || !isCount(of) || of < 2 || at >= of || !(typeof data === 'string' || data instanceof Uint8Array)) { unknown(); return false }
     if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
-    if (at === 0 ? s.parting !== undefined : s.parting?.of !== of || s.parting.pieces.length !== at) { unknown(on); return false }
+    if (at === 0 ? s.parting !== undefined : s.parting?.of !== of || s.parting.pieces.length !== at) { unknown(); return false }
     if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: 0, size: 0, ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = s.parting!
     // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is
     // bounded, however many parts it is said to be in. A part holds something, so they are no more than that many.
     whole.bytes += sizeOf(data)
-    if (sizeOf(data) === 0 || whole.bytes > largest) { unknown(on); return false }
+    if (sizeOf(data) === 0 || whole.bytes > largest) { unknown(); return false }
     whole.pieces.push(data)
     if (s.tapped) whole.size += sizeOf(codec.encode(arrived))
     s.heard = seq
@@ -757,7 +769,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     delete s.parting
     let frame: Frame | undefined
     try { frame = asFrame(codec.decode(joined(whole.pieces))) } catch { /* not a frame */ }
-    if (!frame) { unknown(on); return false }
+    if (!frame) { unknown(); return false }
     handOver(frame, whole.first, whole.size, whole.cause, whole.private)
     return true
   }
@@ -775,8 +787,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (s.now !== on || s.ending) return
     arriving = message
     let said: unknown
-    try { said = codec.decode(message) } catch { unknown(on); return }
-    if (!Array.isArray(said) || !said.length) { unknown(on); return }
+    try { said = codec.decode(message) } catch { unknown(); return }
+    if (!Array.isArray(said) || !said.length) { unknown(); return }
     s.taking.push({ on: on.id, said: said as unknown[], at: 0, message })
     more()
   }
@@ -801,8 +813,11 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     pump()
     watch(true)
   }
-  /** Puts the end on a connection, in place of the one it has, and says hello on it. */
-  const begin = (id: number, most: number | undefined): Connection => {
+  /**
+   * Puts the end on a connection, in place of the one it has, and says hello on it: at the end of this turn, or,
+   * where what is said on it leaves before then, with that.
+   */
+  const begin = (id: number, most: number | undefined, turns = true): Connection => {
     off(s.reopening)
     delete s.reopening
     off(s.holding)
@@ -810,10 +825,11 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     off(s.watching?.timer)
     delete s.watching
     const was = s.now
-    const on: Connection = { id, ...(most === undefined ? {} : { most }), met: false, live: once, held: false, told: s.heard, takes: Infinity, batch: [], sizes: [], due: false }
+    const on: Connection = { id, ...(most === undefined ? {} : { most }), met: false, live: dials && once, held: false, told: s.heard, takes: Infinity, batch: [], sizes: [], due: false }
     s.now = on
     if (was) out.push({ do: 'close', on: was.id, thrown: 'reported' })
-    say(on, hello(most))
+    if (turns) say(on, hello(most))
+    else put(on, hello(most))
     return on
   }
 
@@ -841,6 +857,14 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (s.ending) return
     // What was said before closing leaves before it closes, what waited for room with it, and a goodbye last. It
     // is the last this end sends, so the mark that room is counted against no longer holds anything back.
+    // An end that listens, is on no connection and has met nobody says what it has left to say on the one that
+    // waits, though nobody has said hello there: it is the last it says, and there is no session for it to say
+    // anything of. One that has met somebody says nothing to whoever may be there.
+    const waited = s.now || s.theirs !== undefined ? undefined : s.pending
+    if (waited) {
+      delete s.pending
+      begin(waited.id, waited.most, false)
+    }
     const on = s.now
     if (on) {
       // An end that has met nobody has numbered nothing: what it numbers now arrives once or not at all, since
@@ -853,10 +877,10 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   }
   const carry = (id: number, most: number | undefined): void => {
     if (s.ending) { out.push({ do: 'close', on: id, thrown: 'reported' }); return }
-    if (!s.now?.met) { begin(id, most); return }
-    // The other end has been met on the connection this end is on, so that one is kept until whoever is on this
-    // one has said a hello that fits: nothing is said on it before, and nothing that arrives on the other is missed
-    // for it. Only the last handed over waits.
+    // The end that dials says hello on it at once, in place of the one it was on.
+    if (dials) { begin(id, most); return }
+    // The end that listens says nothing on it, and stays on the one it has, until whoever is on it has said a
+    // hello that fits: nothing that arrives on the other is missed for it. Only the last handed over waits.
     if (s.pending) out.push({ do: 'close', on: s.pending.id, thrown: 'reported' })
     s.pending = { id, ...(most === undefined ? {} : { most }) }
   }
@@ -866,12 +890,15 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const waited = s.pending
     if (s.ending || waited?.id !== id) return
     delete s.pending
-    let first: unknown
-    try { first = (codec.decode(message) as unknown[])[0] } catch { /* not a hello */ }
-    const fits = greeting(first)
+    const fits = greeting(firstOf(codec, message))
     if ('no' in fits) {
-      // Turned away, and told so where it would otherwise wait: the end stays on the connection it has.
-      out.push({ do: 'away', on: id, ...(toldLost(fits) ? { message: codec.list([hello(waited.most), word({ lost: true })]) } : {}) })
+      // Turned away, and told why where it would otherwise wait: which link this is, so that another link ends
+      // saying both numbers, and that the session is lost. It is told nothing of the session this end is in: a
+      // hello that names no session, and has taken nothing. What is not a link's is told nothing at all. The end
+      // stays on the connection it has, and one that had this one alone ends with it.
+      const told = fits.no === 'not a frame' ? [] : [word({ link: LINK, session: '', taken: 0 }), ...(toldLost(fits) ? [word({ lost: true })] : [])]
+      out.push({ do: 'away', on: id, ...(told.length ? { message: codec.list(told) } : {}) })
+      if (once) end({ why: 'closed' })
       return
     }
     hear(begin(id, waited.most), message)
@@ -901,7 +928,11 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       case 'more': more(); break
       case 'closed':
         if (s.now?.id === event.on) dropped(s.now)
-        else if (s.pending?.id === event.on) delete s.pending
+        else if (s.pending?.id === event.on) {
+          delete s.pending
+          // It was the only one this end would have: nobody said a hello that fits on it.
+          if (once && !s.ending) end({ why: 'closed' })
+        }
         break
       case 'broke': if (s.now?.id === event.on) dropped(s.now); break
       case 'turn': if (s.now?.id === event.on) flush(s.now); break

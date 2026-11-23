@@ -19,7 +19,7 @@ import type { Bye, Ending, Link, Prepared } from '../link.ts'
 
 export interface Model {
   /** Puts a link under the model, before anything is sent on it or listens to it. What comes back is the link to use. */
-  end(link: Link, name: string): Link
+  end<L extends Link>(link: L, name: string): L
   /**
    * What must hold once everything has come to rest. Throws for the first thing an end did that the model could
    * not have, with what led to it; and for what an end that is still there was sent, by the one end still there
@@ -183,7 +183,7 @@ export function model(options: ModelOptions = {}): Model {
   }
 
   return {
-    end: (link, name) => {
+    end: <L extends Link>(link: L, name: string): L => {
       const end: End = { name, out: [], heard: 0, byes: [], from: new Map() }
       // An end made later may be the one an earlier end's frames reach: all of them, from the first.
       for (const other of ends) {

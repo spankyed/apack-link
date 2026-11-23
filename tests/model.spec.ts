@@ -1,7 +1,7 @@
 // The model every scenario's ends are held to, shown able to fail: ends that are not a link's, each wrong in one
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
-import { link, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
+import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
 import { droppingMemoryEnds, everyOrder, memoryEnds, model, sample, underModel, type Model, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
@@ -21,7 +21,6 @@ const puppet = (refuses: (frame: Frame) => boolean = () => false) => {
       onTraffic: () => {},
       onEnd: (ended) => { ends.push(ended) },
       close: (bye) => { closed.push(bye) },
-      carry: () => {},
       kept: () => 0,
       waiting: () => 0,
       awaiting: () => () => {},
@@ -153,8 +152,8 @@ describe('what the model lets pass', () => {
     for (const codec of [undefined, msgpack]) {
       const held = model(codec ? { codec } : {})
       const [left, right] = memoryPair()
-      const a = held.end(link(left, codec ? { codec } : {}), 'a')
-      held.end(link(right, codec ? { codec } : {}), 'b')
+      const a = held.end(dial(left, codec ? { codec } : {}), 'a')
+      held.end(listen(right, codec ? { codec } : {}), 'b')
       const unsendable = codec ? () => {} : 1n
       expect(() => a.send(tell({ big: unsendable }))).toThrow(new TypeError('A frame could not be put into text'))
       a.send(tell(1))
@@ -350,7 +349,7 @@ describe('what the model finds', () => {
   it('a frame sent on a link that ended as it was sent', () => {
     const held = model()
     const [left, right] = [puppet(), puppet()]
-    const a = held.end({ ...left.link, send: () => { left.end({ why: 'overrun', waiting: { frames: 1, size: 1 }, bound: { frames: 0, size: 0 } }) } }, 'a')
+    const a = held.end<Link>({ ...left.link, send: () => { left.end({ why: 'overrun', waiting: { frames: 1, size: 1 }, bound: { frames: 0, size: 0 } }) } }, 'a')
     held.end(right.link, 'b')
     a.send(tell('one too many'))
     right.hand(tell('one too many'))
@@ -424,8 +423,8 @@ describe('real ends under the model', () => {
   it('finds two links carried on something that loses what it is handed', () => {
     const lossy = (): Transport => ({ send: () => {}, onData: () => {}, onClose: () => {}, close: () => {} })
     const held = model()
-    const a = held.end(link(lossy()), 'a')
-    held.end(link(lossy()), 'b')
+    const a = held.end(dial(lossy()), 'a')
+    held.end(dial(lossy()), 'b')
     a.send(tell(1))
     expect(() => held.check()).toThrow(/at rest, b has not been handed what a sent it/)
   })

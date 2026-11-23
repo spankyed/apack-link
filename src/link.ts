@@ -8,7 +8,7 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, isHello, isObject, limits, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
+import { core, firstOf, isHello, isObject, limits, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
 import { json, type Codec } from './codec.ts'
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
@@ -43,20 +43,13 @@ export interface Link {
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not
    * come back, and on a connection of an end that has never met anybody, which has nothing sent before to be out
-   * of step with. Then a goodbye, if one is given, on whatever connection there is, so the other end's ending
-   * says which it was. What waited with no connection, or on one where an end met before has not been met again,
-   * has nowhere to go, and is let go with what was kept. This is also how whoever holds a link says the other end
+   * of step with. Then a goodbye, if one is given, on the connection it is on, so the other end's ending says
+   * which it was. What waited with no connection, or on one where an end met before has not been met again,
+   * has nowhere to go, and is let go with what was kept. An end that listens says nothing, a goodbye included,
+   * on a connection where nobody has said hello, unless it has met nobody at all. This is also how whoever holds a link says the other end
    * is gone for good.
    */
   close(bye?: Bye): void
-  /**
-   * Hands the link a connection to be carried on, in place of the one it has. While the link is on one where the
-   * other end has been met, it keeps that one, and says nothing on the new one, until a hello that fits has
-   * arrived on the new one: the end that opened a connection speaks first on it. One whose hello does not fit is
-   * closed, and the link goes on. Throws a `RangeError`, having closed it, for a transport that takes no message
-   * as long as a frame this link may send.
-   */
-  carry(transport: Transport): void
   /** How many numbers this end keeps because the other has not said it took them: a frame, or a part of one. */
   kept(): number
   /** How many frames wait to be numbered, because the other end is behind or there is no connection. */
@@ -66,6 +59,18 @@ export interface Link {
    * Call what it returns when it has come, or is no longer wanted.
    */
   awaiting(): () => void
+}
+
+/** An end of a link that listens, and is handed each connection it is carried on. */
+export interface Listener extends Link {
+  /**
+   * Hands the link a connection, which whoever is at the other end of it opened. The link says nothing on it, and
+   * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
+   * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
+   * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
+   * `RangeError`, having closed it, for a transport that takes no message as long as this link may need.
+   */
+  carry(transport: Transport): void
 }
 
 /** A frame encoded by a link, to be sent by it later: what `prepare` returns. It says the frame's kind and nothing else. */
@@ -87,7 +92,7 @@ export interface Options {
    * other end has gone, which is all two ends on one machine need.
    */
   there?: { readonly window: number; readonly clock: Clock }
-  /** How a link given what opens a connection paces opening another. Such a link is not made without it. */
+  /** How an end that dials and opens its connections paces opening another. Such a link is not made without it. */
   reopen?: Reopen
   /**
    * Handed what a listener threw (`onFrame`, `onEnd`), what opening a connection threw, or what a transport threw
@@ -137,20 +142,46 @@ const wideEnough = (transport: Transport, needed: number): void => {
 }
 
 /**
- * Makes one end of a link. Given a transport, the link is carried on it alone and ends when it closes: what it
- * sends goes at once. Given what opens a transport, and the clock to pace it on (`reopen`), it opens one now and
- * another after each one closes. Given nothing, it waits to be handed each connection with `carry`. A link of the
- * last two kinds can come back, and numbers nothing until the other end has said hello.
+ * Makes the end of a link that dials: the one that opened the connection, or, where neither did, the one of the
+ * two chosen to. It says hello first, and ends for what it meets: another link, a session that cannot be gone on
+ * with, something that is not a link. Given a transport, the link is carried on it alone and ends when it
+ * closes: what it sends goes at once, beside its hello. Given what opens a transport, and the clock to pace it on
+ * (`reopen`), it opens one now and another after each one closes, and numbers nothing until the other end has
+ * said hello.
  */
-export function link(open: () => Transport, options: Options & { readonly reopen: Reopen }): Link
-export function link(over?: Transport, options?: Options): Link
-export function link(over?: Transport | (() => Transport), options: Options = {}): Link {
-  const pace = options.reopen
+export function dial(open: () => Transport, options: Options & { readonly reopen: Reopen }): Link
+export function dial(over: Transport, options?: Options): Link
+export function dial(over: Transport | (() => Transport), options: Options = {}): Link {
   // Opening again with nothing to pace it is a link that spins while its connections fail: not one to be made.
-  if (typeof over === 'function' && !pace) throw new TypeError('A link that opens its own connections is given a clock to open them on')
+  if (typeof over === 'function' && !options.reopen) throw new TypeError('A link that opens its own connections is given a clock to open them on')
+  // It opens its connections, or is on one alone: there is nothing to hand it one with.
+  const { carry: _, ...made } = end('dials', over, options)
+  return made
+}
+
+/**
+ * Makes the end of a link that listens: the other end of a connection somebody else opened. It says nothing on
+ * a connection until a hello that fits has arrived on it, and numbers nothing until then. Given a transport, the
+ * link is carried on it alone and ends when it closes. Given nothing, it is handed each connection with `carry`,
+ * as a backend's links are by `accept`, and ends for nothing any of them says before a hello that fits.
+ */
+export function listen(over: Transport, options?: Options): Link
+export function listen(over?: undefined, options?: Options): Listener
+export function listen(over?: Transport, options: Options = {}): Link | Listener {
+  const made = end('listens', over, options)
+  if (!over) return made
+  // It is on one connection alone: there is nothing to hand it another with.
+  const { carry: _, ...alone } = made
+  return alone
+}
+
+/** One end of a link, on what it is handed. */
+function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | undefined, options: Options): Listener {
+  const pace = options.reopen
   const later = options.later ?? queueMicrotask
   const set = setup({
-    kind: typeof over === 'object' ? 'once' : typeof over === 'function' ? 'opens' : 'handed',
+    role,
+    connections: typeof over === 'object' ? 'one' : typeof over === 'function' ? 'opened' : 'handed',
     session: crypto.randomUUID(),
     ...(options.codec ? { codec: options.codec } : {}),
     ...(options.part === undefined ? {} : { part: options.part }),
@@ -268,7 +299,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     })
   }
 
-  const made: Link = {
+  const made: Listener = {
     prepare: (frame, how = {}) => {
       const token: Prepared = { prepared: frame.kind }
       prepared.set(token, ready(set, frame, how))
@@ -325,7 +356,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
  */
 export function accept(onLink: (link: Link) => void, options: Options = {}): (transport: Transport) => void {
   const codec = options.codec ?? json
-  const links = new Map<string, Link>()
+  const links = new Map<string, Listener>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
   const { needed } = limits(options)
   return (transport) => {
@@ -358,8 +389,7 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
     transport.onData((message) => {
       if (!first) { for (const heard of hears) heard(message); return }
       first = false
-      let said: unknown
-      try { said = (codec.decode(message) as unknown[])[0] } catch { /* not a link's */ }
+      const said = firstOf(codec, message)
       if (!isHello(said)) {
         // Another link's number is answered with this one's, so that the end that opened it ends saying both.
         // Anything else is not a link's, and nothing is said to it.
@@ -371,13 +401,17 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
       // Going on with a session from before this end began, or one that says it took what nobody here sent: a
       // new session says so, and the other end finds it lost.
       else if (said.resumes !== undefined || said.taken !== 0) { turnAway('lost'); return }
+      // One that takes no message as long as a link here may need is not a session to begin: no link is made for it.
+      else if (said.most !== undefined && said.most < needed) { turnAway('lost'); return }
       else {
         const session = said.session
-        const made = link(undefined, options)
+        const made = listen(undefined, options)
         links.set(session, made)
         made.onEnd(() => { links.delete(session) })
-        onLink(made)
-        made.carry(relay)
+        // Handing it its connections is this function's, and nobody else's.
+        const { carry, ...link } = made
+        onLink(link)
+        carry(relay)
       }
       for (const heard of hears) heard(message)
     })

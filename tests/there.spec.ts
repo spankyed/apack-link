@@ -1,7 +1,7 @@
 // Knowing the other end is there: a link given a window and a clock watches a quiet connection while it is owed
 // something, and never otherwise. The clock is one the spec moves.
 import { describe, expect, it } from 'vitest'
-import { join, link, memoryPair, type Clock, type Ending, type Frame, type Message, type Outcome, type Transport } from '../src/index.ts'
+import { join, dial, listen, memoryPair, type Clock, type Ending, type Frame, type Message, type Outcome, type Transport } from '../src/index.ts'
 import { desk } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -40,7 +40,7 @@ const handClock = () => {
 /** A window's link that opens a connection each time one closes, to a bare other end the spec speaks for. */
 const watched = (clock: Clock) => {
   const sides: Array<{ texts: unknown[][]; bare: Transport }> = []
-  const window = link(() => {
+  const window = dial(() => {
     const [left, bare] = memoryPair()
     const side = { texts: [] as unknown[][], bare }
     bare.onData((message: Message) => { side.texts.push(JSON.parse(message as string) as unknown[]) })
@@ -148,8 +148,8 @@ describe('an ask outstanding for many windows', () => {
   it('is left alone while progress arrives, and nothing is given a time to answer in', async () => {
     const { clock, advance } = handClock()
     const [left, right] = memoryPair()
-    const window = link(left, { there: { window: WINDOW, clock } })
-    const backend = link(right)
+    const window = dial(left, { there: { window: WINDOW, clock } })
+    const backend = listen(right)
     const ended: Ending[] = []
     window.onEnd((ending) => { ended.push(ending) })
     // The backend works for ten windows, saying how far it got every half window, then answers.
@@ -213,7 +213,7 @@ describe('an ask that is owed and then is not, with nothing arriving', () => {
 describe('an end that is asked whether it is there', () => {
   it('says it is, with the same number', async () => {
     const [bare, right] = memoryPair()
-    link(right)
+    listen(right)
     const texts: unknown[][] = []
     bare.onData((message) => { texts.push(JSON.parse(message as string) as unknown[]) })
     bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }, { there: 7 }]))

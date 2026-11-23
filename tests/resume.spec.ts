@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accept, join, link, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
+import { accept, join, dial, listen, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
 import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Model, type Desk, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
@@ -32,7 +32,7 @@ describe('accepting connections', () => {
     const made: Link[] = []
     const take = accept((one) => { made.push(one); join(one, backend.port) })
     let current: Transport | undefined
-    const window = link(() => {
+    const window = dial(() => {
       const [left, right] = memoryPair()
       current = left
       take(right)
@@ -55,7 +55,7 @@ describe('accepting connections', () => {
 
   it('tells a connection that would go on with a session it does not know that the session is lost', async () => {
     const made: Link[] = []
-    const window = link(memoryPair()[0])
+    const window = dial(memoryPair()[0])
     void window
     const [left, right] = memoryPair()
     accept((one) => { made.push(one) })(right)
@@ -100,7 +100,7 @@ describe('accepting connections', () => {
     // What the window says first is its session: anything it connects to is told it.
     let session = ''
     take({ ...right, onData: (heard) => { right.onData((message) => { session ||= (JSON.parse(message as string) as Array<{ session: string }>)[0]!.session; heard(message) }) } })
-    const window = link(left)
+    const window = dial(left)
     const windowEnded: Ending[] = []
     window.onEnd((ending) => { windowEnded.push(ending) })
     const toBackend = join(window, desk().port)
@@ -123,7 +123,7 @@ describe('accepting connections', () => {
   it('ends a window that comes back to a backend that does not know it, saying so', async () => {
     let take = accept(() => {})
     let current: Transport | undefined
-    const window = link(() => {
+    const window = dial(() => {
       const [left, right] = memoryPair()
       current = left
       take(right)
@@ -157,7 +157,7 @@ describe('a window and a backend that accepts, under every order', () => {
     start()
     let current: Transport | undefined
     let dials = 0
-    const window = held.end(link(() => {
+    const window = held.end(dial(() => {
       const [left, right] = memoryPair((run) => schedule.later(there, run), (run) => schedule.later(back, run))
       current = left
       if (++dials <= unreachable) right.close()
@@ -222,7 +222,7 @@ describe('a hello', () => {
   const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
   /** A link handed connections, facing a bare end that says what the spec has it say. */
   const handed = () => {
-    const backend = link()
+    const backend = listen()
     const ended: Ending[] = []
     const heard: Frame[] = []
     backend.onEnd((ending) => { ended.push(ending) })
@@ -238,34 +238,44 @@ describe('a hello', () => {
   }
   const session = (texts: unknown[][]): string => (texts[0]![0] as { session: string }).session
 
-  it('says which session it is going on with once it has met one, and not before', async () => {
+  it('says nothing on a connection until a hello has arrived on it, and then which session it is going on with', async () => {
     const { connect } = handed()
     const first = connect()
     await turn()
-    expect(first.texts).toEqual([[{ link: 1, session: expect.any(String), taken: 0 }]])
+    expect(first.texts).toEqual([])
     first.say({ link: 1, session: 'w', taken: 0 })
     await turn()
+    // It had met nobody when it answered.
+    expect(first.texts).toEqual([[{ link: 1, session: expect.any(String), taken: 0 }]])
     first.bare.close()
     await turn()
     const second = connect()
     await turn()
+    expect(second.texts).toEqual([])
+    second.say({ link: 1, session: 'w', taken: 0, resumes: session(first.texts) })
+    await turn()
     expect(second.texts).toEqual([[{ link: 1, session: session(first.texts), taken: 0, resumes: 'w' }]])
   })
 
-  it('from an end that met this one, to this one that never heard it, is gone on with: nothing is sent twice', async () => {
+  it('from an end that never heard this one answer is gone on with: what it has not taken is sent again, in order', async () => {
     const { backend, ended, heard, connect } = handed()
-    // The first connection went before anything of the other end's arrived.
     const first = connect()
+    first.say({ link: 1, session: 'w', taken: 0 })
+    backend.send({ kind: 'tell', to: 'x', event: 'not heard' })
     await turn()
-    backend.send({ kind: 'tell', to: 'x', event: 'waits to meet' })
+    // The first connection went before anything of this end's arrived: the other end has met nobody, and says so.
+    first.bare.close()
+    await turn()
     const second = connect()
-    second.say({ link: 1, session: 'w', taken: 0, resumes: session(first.texts) }, { seq: 1, frame: { kind: 'tell', to: 'y', event: 'from w' } })
+    second.say({ link: 1, session: 'w', taken: 0 })
+    await turn()
+    second.say({ seq: 1, frame: { kind: 'tell', to: 'y', event: 'from w' } })
     await turn()
     expect(ended).toEqual([])
     expect(heard).toEqual([{ kind: 'tell', to: 'y', event: 'from w' }])
     expect(second.texts.flat()).toEqual([
-      { link: 1, session: session(first.texts), taken: 0 },
-      { seq: 1, frame: { kind: 'tell', to: 'x', event: 'waits to meet' } },
+      { link: 1, session: session(first.texts), taken: 0, resumes: 'w' },
+      { seq: 1, frame: { kind: 'tell', to: 'x', event: 'not heard' } },
       { taken: 1 },
     ])
   })
@@ -276,7 +286,7 @@ describe('a link handed a connection while it is on one where the other end has 
   const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
   /** A link handed connections, met on a first one, with what it hears and how it ends. */
   const met = async () => {
-    const backend = link()
+    const backend = listen()
     const ended: Ending[] = []
     const heard: Frame[] = []
     backend.onEnd((ending) => { ended.push(ending) })
@@ -333,7 +343,7 @@ describe('a link handed a connection while it is on one where the other end has 
     ['going on with a session that is not this one', { link: 1, session: 'w', taken: 0, resumes: 'another backend' }, true],
     ['that says it took what was never sent', { link: 1, session: 'w', taken: 7, resumes: 'MINE' }, true],
     ['that has met nobody and says it took something', { link: 1, session: 'w', taken: 1 }, true],
-    ['of another link', { link: 2, session: 'w', taken: 0 }, false],
+    ['of another link', { link: 2, session: 'w', taken: 0 }, 'which link'],
     ['that takes no message as long as a frame may be', { link: 1, session: 'w', taken: 0, resumes: 'MINE', most: 1000 }, true],
     ['that is not a hello', { seq: 1, frame: { kind: 'tell', to: 'x', event: 'unannounced' } }, false],
     ['that is not anything a link says', 7, false],
@@ -344,8 +354,12 @@ describe('a link handed a connection while it is on one where the other end has 
       second.say(typeof hello === 'object' && 'resumes' in hello && hello.resumes === 'MINE' ? { ...hello, resumes: mine } : hello, { seq: 1, frame: tell('from whoever it is') })
       await turn()
       expect(second.closed()).toBe(1)
-      // Told the session is lost where it would otherwise wait on it, behind a hello; and nothing else.
-      expect(second.texts).toEqual(told ? [[expect.objectContaining({ link: 1, session: mine }), { lost: true }]] : [])
+      // Told the session is lost where it would otherwise wait on it, behind a hello that names no session;
+      // another link, which link this is, so that it ends saying both; and what is not a link's, nothing.
+      const named = { link: 1, session: '', taken: 0 }
+      expect(second.texts).toEqual(told === true ? [[named, { lost: true }]] : told ? [[named]] : [])
+      // Nothing of the session it is in: not its own, and not the one it talks to.
+      expect(JSON.stringify(second.texts)).not.toMatch(new RegExp(`${mine}|"w"`))
       first.say({ seq: 1, frame: tell('on the first') })
       backend.send(tell('to the first'))
       await turn()
@@ -415,7 +429,7 @@ describe('a link handed connections, on one where nobody has been met', () => {
   const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
   /** A link handed a connection, and the bare other end of it. */
   const handedOne = () => {
-    const backend = link()
+    const backend = listen()
     const ended: Ending[] = []
     const heard: Frame[] = []
     backend.onEnd((ending) => { ended.push(ending) })
@@ -465,7 +479,7 @@ describe('an end that opened the connection', () => {
     it(`ends for a hello ${what}, on a connection after its first`, async () => {
       const bares: Array<{ bare: Transport; texts: unknown[] }> = []
       const waits: Array<() => void> = []
-      const window = link(() => {
+      const window = dial(() => {
         const [left, bare] = memoryPair()
         const texts: unknown[] = []
         bare.onData((text) => { texts.push(...JSON.parse(text as string) as unknown[]) })
@@ -492,7 +506,7 @@ describe('a link handed connections', () => {
   const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 
   it('takes nothing from a connection it has been handed another in place of', async () => {
-    const backend = link()
+    const backend = listen()
     const heard: Frame[] = []
     backend.onFrame((frame) => { heard.push(frame) })
     // A connection that goes on handing over what arrives after it was closed.

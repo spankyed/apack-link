@@ -1,7 +1,7 @@
 // What a listener throws is never the link's: every frame of a batch is still taken, every listener still called,
 // and what was thrown is handed on. A system at an end of a link is a listener, and is held to the same.
 import { describe, expect, it } from 'vitest'
-import { join, link, memoryPair, type Ending, type Frame, type Outcome } from '../src/index.ts'
+import { join, dial, listen, memoryPair, type Ending, type Frame, type Outcome } from '../src/index.ts'
 import { asking, desk, everyOrder, scheduledPair, watching } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -11,9 +11,9 @@ const told = (frames: readonly Frame[]): unknown[] => frames.map((frame) => fram
 describe('a listener that throws', () => {
   it('loses no frame of the batch, stops no other listener, and does not end the link', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
+    const a = dial(left)
     const thrown: unknown[] = []
-    const b = link(right, { thrown: (error) => { thrown.push(error) } })
+    const b = listen(right, { thrown: (error) => { thrown.push(error) } })
     const first: Frame[] = []
     const second: Frame[] = []
     const ended: Ending[] = []
@@ -40,8 +40,8 @@ describe('a listener that throws', () => {
     process.on('uncaughtException', (error) => { uncaught.push(error) })
     try {
       const [left, right] = memoryPair()
-      const a = link(left)
-      const b = link(right)
+      const a = dial(left)
+      const b = listen(right)
       const heard: Frame[] = []
       b.onFrame((frame) => { heard.push(frame); throw new Error(`on ${String(heard.length)}`) })
       a.send(tell(1))
@@ -57,7 +57,7 @@ describe('a listener that throws', () => {
 
   it('where it is told a link ended, does not keep the others from being told', () => {
     const thrown: unknown[] = []
-    const a = link(memoryPair()[0], { thrown: (error) => { thrown.push(error) } })
+    const a = dial(memoryPair()[0], { thrown: (error) => { thrown.push(error) } })
     const ended: Ending[] = []
     a.onEnd(() => { throw new Error('at the end') })
     a.onEnd((ending) => { ended.push(ending) })
@@ -72,7 +72,7 @@ describe('a listener that throws', () => {
     const uncaught: unknown[] = []
     process.on('uncaughtException', (error) => { uncaught.push(error) })
     try {
-      const a = link(memoryPair()[0], { thrown: () => { throw new Error('handing it on') } })
+      const a = dial(memoryPair()[0], { thrown: () => { throw new Error('handing it on') } })
       a.onEnd(() => { throw new Error('at the end') })
       a.close()
       await turn()
@@ -90,8 +90,8 @@ describe('a system that throws', () => {
     const [left, right] = scheduledPair(schedule)
     const thrown = { a: [] as unknown[], b: [] as unknown[] }
     const ended = { a: [] as Ending[], b: [] as Ending[] }
-    const a = link(left, { thrown: (error) => { thrown.a.push(error) } })
-    const b = link(right, { thrown: (error) => { thrown.b.push(error) } })
+    const a = dial(left, { thrown: (error) => { thrown.a.push(error) } })
+    const b = listen(right, { thrown: (error) => { thrown.b.push(error) } })
     a.onEnd((ending) => { ended.a.push(ending) })
     b.onEnd((ending) => { ended.b.push(ending) })
     return { a, b, thrown, ended }

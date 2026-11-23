@@ -1,11 +1,11 @@
 // What caused a frame crosses with it; a tap is told of each frame and never of what it carries; a private frame is
 // told of as having crossed, and its size, and nothing else.
 import { describe, expect, it } from 'vitest'
-import { join, link, memoryPair, type Ending, type Frame, type Traffic } from '../src/index.ts'
+import { join, dial, listen, memoryPair, type Ending, type Frame, type Traffic } from '../src/index.ts'
 import { desk } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
-const tapped = (end: ReturnType<typeof link>): Traffic[] => {
+const tapped = (end: ReturnType<typeof dial>): Traffic[] => {
   const seen: Traffic[] = []
   end.onTraffic((traffic) => { seen.push(traffic) })
   return seen
@@ -14,8 +14,8 @@ const tapped = (end: ReturnType<typeof link>): Traffic[] => {
 describe('a tap', () => {
   it('sees every frame out and in, in order, with what it is and never what it carries', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
-    const b = link(right)
+    const a = dial(left)
+    const b = listen(right)
     const outA = tapped(a)
     const inB = tapped(b)
     const sent: Frame[] = [
@@ -43,8 +43,8 @@ describe('a tap', () => {
 
   it('is told of a frame once, as it is numbered, however long it waited', async () => {
     const [left, right] = memoryPair()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
-    link(right)
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
+    listen(right)
     const out = tapped(a)
     a.send({ kind: 'shown', id: 1, update: 1 })
     a.send({ kind: 'shown', id: 1, update: 2 })
@@ -59,8 +59,8 @@ describe('a tap', () => {
 describe('a tap that throws', () => {
   it('is the tap\'s to answer for: frames go on crossing, and the link does not end', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
-    const b = link(right)
+    const a = dial(left)
+    const b = listen(right)
     a.onTraffic(() => { throw new Error('the tap broke') })
     b.onTraffic(() => { throw new Error('the tap broke') })
     const heard: Frame[] = []
@@ -78,8 +78,8 @@ describe('a tap that throws', () => {
 describe('a cause', () => {
   it('of a result that overtook another is the later one\'s', async () => {
     const [left, right] = memoryPair()
-    const a = link(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
-    const b = link(right)
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 } } })
+    const b = listen(right)
     const causes: Array<string | undefined> = []
     b.onFrame((_, cause) => { causes.push(cause) })
     a.send({ kind: 'shown', id: 1, update: 1 }, { cause: 'step 1' })
@@ -91,8 +91,8 @@ describe('a cause', () => {
 
   it('crosses with the frame it caused, and a frame sent without one arrives without one', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
-    const b = link(right)
+    const a = dial(left)
+    const b = listen(right)
     const heard: Array<[Frame, string | undefined]> = []
     b.onFrame((frame, cause) => { heard.push([frame, cause]) })
     a.send({ kind: 'tell', to: 'x', event: 1 }, { cause: 'threads: CREATED' })
@@ -105,8 +105,8 @@ describe('a cause', () => {
 describe('a private frame', () => {
   it('is told of as having crossed, its number and size, and nothing else, at both ends', async () => {
     const [left, right] = memoryPair()
-    const a = link(left)
-    const b = link(right)
+    const a = dial(left)
+    const b = listen(right)
     const out = tapped(a)
     const in_ = tapped(b)
     const heard: Frame[] = []
@@ -135,8 +135,8 @@ describe('what a frame carries', () => {
 
     // Every kind of frame, with the marker in all it carries, and private frames with it in their names too.
     const [left, right] = memoryPair()
-    const a = link(left)
-    const b = link(right)
+    const a = dial(left)
+    const b = listen(right)
     for (const end of [a, b]) { end.onTraffic(keep); end.onEnd(keep) }
     const carried = { [MARK]: MARK, list: [MARK] }
     const frames: Frame[] = [
@@ -171,11 +171,11 @@ describe('what a frame carries', () => {
     const endings: Ending[] = []
     for (const text of [MARK, JSON.stringify([{ [MARK]: MARK }]), JSON.stringify([{ link: 1, session: MARK, taken: 0 }, { seq: 9, frame: { kind: 'tell', to: MARK, event: carried } }])]) {
       const [bare, end] = memoryPair()
-      link(end).onEnd((ending) => { endings.push(ending) })
+      dial(end).onEnd((ending) => { endings.push(ending) })
       bare.send(text)
     }
     const [over, under] = memoryPair(() => {})
-    const full = link(over, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 2, size: 1 << 20 } } })
+    const full = dial(over, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 2, size: 1 << 20 } } })
     full.onEnd((ending) => { endings.push(ending) })
     void under
     for (let at = 0; at < 4; at++) full.send({ kind: 'tell', to: MARK, event: carried })

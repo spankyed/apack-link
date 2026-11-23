@@ -1,7 +1,7 @@
 // Opening a connection again: on the clock the link is handed and never without one, waiting longer for each
 // connection in a row that did not hold, and at once after one that did.
 import { describe, expect, it } from 'vitest'
-import { link, timers, type Clock, type Message, type Transport } from '../src/index.ts'
+import { dial, timers, type Clock, type Message, type Transport } from '../src/index.ts'
 
 /** A clock the spec moves: what falls due as it is moved on runs, in the order it falls due. */
 const moved = () => {
@@ -62,29 +62,29 @@ const closesAndWaits = (made: ReadonlyArray<{ close(): void }>, pass: (ms: numbe
 describe('a link that opens its own connections', () => {
   it('is not made without a clock to open them on, and opens nothing', () => {
     const { open, made } = dialled()
-    expect(() => link(open as never)).toThrow(TypeError)
-    expect(() => link(open as never, {})).toThrow(TypeError)
+    expect(() => dial(open as never)).toThrow(TypeError)
+    expect(() => dial(open as never, {})).toThrow(TypeError)
     expect(made).toHaveLength(0)
   })
 
   it('waits longer for each connection in a row that met nobody, up to the most', () => {
     const { clock, pass } = moved()
     const { open, made } = dialled()
-    link(open, { reopen: { clock, first: 100, most: 1000 } })
+    dial(open, { reopen: { clock, first: 100, most: 1000 } })
     for (const wait of [100, 200, 400, 800, 1000, 1000, 1000]) closesAndWaits(made, pass, wait)
   })
 
   it('waits a tenth of a second first and ten seconds at most, unless told', () => {
     const { clock, pass } = moved()
     const { open, made } = dialled()
-    link(open, { reopen: { clock } })
+    dial(open, { reopen: { clock } })
     for (const wait of [100, 200, 400, 800, 1600, 3200, 6400, 10_000, 10_000]) closesAndWaits(made, pass, wait)
   })
 
   it('opens the next at once after a connection that held, and starts the count over', () => {
     const { clock, pass } = moved()
     const { open, made } = dialled()
-    link(open, { reopen: { clock } })
+    dial(open, { reopen: { clock } })
     closesAndWaits(made, pass, 100)
     closesAndWaits(made, pass, 200)
     // Met, and up for as long as the wait before it: it has held.
@@ -97,7 +97,7 @@ describe('a link that opens its own connections', () => {
   it('counts a connection that met the other end and went before it had held as one more that did not', () => {
     const { clock, pass } = moved()
     const { open, made } = dialled()
-    link(open, { reopen: { clock } })
+    dial(open, { reopen: { clock } })
     // An end that says hello and goes, every time, is dialled no faster than one that is not there.
     for (const wait of [100, 200, 400]) {
       made.at(-1)!.hello()
@@ -109,7 +109,7 @@ describe('a link that opens its own connections', () => {
     closesAndWaits(made, pass, 800)
     // The first connection of all holds once it has been up for the first wait.
     const fresh = dialled()
-    link(fresh.open, { reopen: { clock } })
+    dial(fresh.open, { reopen: { clock } })
     fresh.made[0]!.hello()
     pass(99)
     closesAndWaits(fresh.made, pass, 100)
@@ -118,7 +118,7 @@ describe('a link that opens its own connections', () => {
   it('does not take a connection to have held because it stayed up without the other end being met', () => {
     const { clock, pass } = moved()
     const { open, made } = dialled()
-    link(open, { reopen: { clock } })
+    dial(open, { reopen: { clock } })
     pass(60_000)
     closesAndWaits(made, pass, 100)
   })
@@ -126,7 +126,7 @@ describe('a link that opens its own connections', () => {
   it('opens nothing more once it has closed, and waits on nothing', () => {
     const { clock, pass, waiting } = moved()
     const { open, made } = dialled()
-    const a = link(open, { reopen: { clock } })
+    const a = dial(open, { reopen: { clock } })
     made[0]!.close()
     expect(waiting()).toBe(1)
     a.close()
@@ -135,22 +135,11 @@ describe('a link that opens its own connections', () => {
     expect(made).toHaveLength(1)
     // Nor while a connection it was finding out about is up.
     const held = dialled()
-    const b = link(held.open, { reopen: { clock } })
+    const b = dial(held.open, { reopen: { clock } })
     held.made[0]!.hello()
     expect(waiting()).toBe(1)
     b.close()
     expect(waiting()).toBe(0)
-  })
-
-  it('is handed a connection in place of the one it was waiting to open', () => {
-    const { clock, pass, waiting } = moved()
-    const { open, made } = dialled()
-    const a = link(open, { reopen: { clock } })
-    made[0]!.close()
-    a.carry(dialled().open())
-    expect(waiting()).toBe(0)
-    pass(60_000)
-    expect(made).toHaveLength(1)
   })
 
   it('counts what could not be opened as a connection that did not hold, and hands on what was thrown', () => {
@@ -158,7 +147,7 @@ describe('a link that opens its own connections', () => {
     const { open, made } = dialled()
     const thrown: unknown[] = []
     let refusing = false
-    link(() => { if (refusing) throw new Error('refused'); return open() }, { reopen: { clock }, thrown: (error) => { thrown.push(error) } })
+    dial(() => { if (refusing) throw new Error('refused'); return open() }, { reopen: { clock }, thrown: (error) => { thrown.push(error) } })
     refusing = true
     made[0]!.close()
     // Refused after 100 and again after 200 more: the next is tried 400 after that.
