@@ -65,7 +65,7 @@ A `Transport` is anything that takes text at one end and hands it over at the ot
 [`docs/plan.md`](docs/plan.md) is the plan, a step at a time, each with what it has to hold and how it is known to
 be done:
 
-0. Groundwork: a schedule that runs a spec under every order, and a hello.
+0. Groundwork: a schedule that runs a spec under every order, a hello and a goodbye.
 1. Peers: asks matched to their answers, views followed and let go.
 2. The hold: what a step sends a window waits until that window's views have caught up.
 3. One write a turn.
@@ -75,7 +75,7 @@ be done:
 7. Knowing the other end is there by what it does, never by a time to reply.
 8. What caused a frame, a tap that never sees what one carries, and frames that are private.
 9. Bytes, and frames too large for one write.
-10. Releases apack can pin.
+10. Releases apack can pin, and the wire written down once.
 
 Left out on purpose, with a plan of its own:
 [views that never pass through the server's JavaScript](docs/deferred/views-from-the-engine.md).

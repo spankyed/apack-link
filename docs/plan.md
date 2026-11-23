@@ -111,9 +111,15 @@ Small things every later step stands on.
 - **Hello.** The first thing each end sends is `{ link: 1 }`. An end that hears another number closes, with an
   ending that names both. The number is 1 and stays 1 until something exists that cannot move with it: both ends
   ship together.
+- **What a link says about itself takes no number.** Hello is the first of these, and steps 5 and 7 add what was
+  taken and whether the other end is there. Only a frame is numbered, kept to be sent again, and counted against
+  a bound. A link that numbered its own words would keep more for a resume the longer it sat idle.
+- **Goodbye.** An end that is going on purpose, a backend restarting, says `{ bye: 'restarting' }` or
+  `{ bye: 'ended' }` before it closes. The other end's ending then says which: one that is restarting is to be
+  reached again, and one that ended is not. Without it both look like a connection that was lost.
 
-Done when: the specs there are pass under `explore` where they have more than one lane, and an end that says
-`{ link: 2 }` is refused by name.
+Done when: the specs there are pass under `explore` where they have more than one lane, an end that says
+`{ link: 2 }` is refused by name, and each kind of goodbye ends the other end saying which it was.
 
 ## Step 1. Peers
 
@@ -218,6 +224,9 @@ A link outlives what carries it.
 - An end that does not know the session, or no longer holds what is asked for, says so, and the link ends
   `{ why: 'lost' }`: step 1's ending then ends every ask and stops every view, as when a link closes.
 - While there is no connection, what is sent waits, within step 6's bound.
+- An end that said goodbye as `restarting` is one to open a connection to again, and its hello may start a new
+  session: then the link ends `lost` as above, and whoever holds it joins anew. One that said `ended` is not
+  reached again.
 - **An ask is delivered at most once**, because a frame is. An answer that was lost on the way is one of the
   frames sent again. Nothing has to remember answers apart from that.
 
@@ -290,11 +299,19 @@ tagged `pkg-<commit>`, which apack names in its `overrides` and moves with `npm 
 `apackdev-link-0.1.0.tgz`. `spankyed/apack-git`'s workflow is the one to follow, and
 `spankyed/apack`'s `scripts/lib/external-packages.mjs` the table it is named in.
 
-Also here: `npm run reference:check` and `:update`, a `REFERENCE.md` made from what `src/index.ts` exports, as
-`apack-git` has, so that a change to what the package offers shows in a diff.
+Also here:
 
-Done when: a commit on `master` has a release with the tarball, and a fresh project that installs it by that
-address runs the README's example.
+- `npm run reference:check` and `:update`, a `REFERENCE.md` made from what `src/index.ts` exports, as `apack-git`
+  has, so that a change to what the package offers shows in a diff.
+- **Everything needed to speak a link is exported, and the wire is written down once.** A test client, a tool and
+  an agent driving the app each reach a backend, and none should work the wire out again: apack's testing
+  package wrote tRPC's frames by hand from its built files. `docs/wire.md` says every text an end may send, and a
+  spec holds the package to it: a recorded exchange, hello to goodbye with one of each frame, compared text for
+  text. A change to the wire then shows as a change to that file.
+
+Done when: a commit on `master` has a release with the tarball, a fresh project that installs it by that address
+runs the README's example, and a change to any text an end sends fails the wire's spec until `docs/wire.md` and
+the recording say the same.
 
 ## What is not this plan's to build
 
