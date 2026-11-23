@@ -45,17 +45,86 @@ that stream, with what a general layer cannot know: which frames there are, and 
 | `shown` | the one that runs the view | at `unfollow` |
 | `unfollow` | the follower | the view |
 
+## What a link says about itself
+
+Beside frames, an end says a few things of its own. Each is a text of its own and takes no number: only a frame is
+numbered. A link that numbered its own words would have more to keep for a resume the longer it sat idle.
+
+| Text | Says |
+|---|---|
+| `{ "link": 1 }` | Hello: which link this end is. The first thing each end sends, and nothing is taken before it |
+| `{ "bye": "restarting" }` | This end is going on purpose and is to be reached again |
+| `{ "bye": "ended" }` | This end is going on purpose and is not coming back |
+
+A frame crosses as `{ "seq": n, "frame": { … } }`.
+
 ## What holds, and how
 
 - **Order.** A frame is numbered as it is sent and taken only in turn. What carries a link is expected to keep
   order, as a socket does; the number is how a link knows it did, and what a resumed link will say it has.
 - **One bad frame is one refusal.** A frame is put into text before it takes its number.
-- **Ending is said once**, to both ends, with why.
+- **Ending is said once**, to both ends, with why (`Ending`, `src/link.ts`). An end that heard a goodbye ends
+  `{ why: 'goodbye', bye }`; without one, a backend that restarted and one that ended both look like a connection
+  that was lost.
+- **An end that says another number is refused**, with `{ why: 'version', mine, theirs }`. Nothing is negotiated:
+  both ends ship together, and the number stays 1 until something exists that cannot move with it.
+- **A reason never holds what was sent.** What is not a frame ends the link with the length of its text, and
+  nothing of the text.
+- **Closing is in order too.** What an end sent before it closed is handed over before the other end hears that
+  it closed. A socket does this, and the ends in memory do: it is what lets a goodbye arrive.
+
+## How it is known to hold
+
+Where order matters, a spec is run under every order. `src/testing/schedule.ts` stands in for the event loop:
+everything put off goes into a lane, a lane keeps its order, and `explore` runs a scenario once for every way of
+choosing between lanes. Each direction of a link in memory is a lane, and a spec adds lanes for what it does
+itself. It is exported as `@apackdev/link/testing`, since from step 1 on the scenarios are a kit: written against
+what the package exports and nothing else, to be run over any pair of ends, so that another implementation of an
+end is held to the same file.
+
+## What was read, and what was taken from it
+
+Read 2026-11-22, before peers were built. Written down so that it is not argued again.
+
+**Meteor's DDP** (`packages/ddp/DDP.md`, version 1).
+
+- Taken: **`nosub`**. A subscription the server ends, or one there is not, is said to the client, with an error.
+  It is step 1's `over`.
+- Taken: **a version said first.** DDP's `connect` names a version. Declined is what goes with it there: a list of
+  versions the client supports and a `failed` that suggests another. Both ends of a link ship together, so an end
+  that says another number is refused and nothing is tried next.
+- Declined: **`updated`.** DDP has the hold's problem and answers it with a message: `updated` names the methods
+  whose writes have reached the client as data, and no order is required between it and a method's `result`, so
+  a client keeps each result until both have come. A link holds the answer where it is sent until the views have
+  been shown the change, so the order it arrives in already says it, and nothing at the window has to pair two
+  messages up.
+- Declined: **`added`, `changed`, `removed`.** DDP sends a collection as its documents' changes. A view's result
+  crosses whole; what changed is [left for later](deferred/views-from-the-engine.md). `ready` goes with them: a
+  view's first `shown` is its whole result.
+- Declined: **`ping` at any time.** Either side may ping whenever it likes and DDP sets no time to answer in.
+  Step 7 asks only while an end is owed something and has heard nothing.
+- Noted: `connect` may carry a `session` to come back to, and the specification does not say what a server does
+  with one. Step 5 says what a link does.
+
+**The Language Server Protocol's base protocol** (3.17).
+
+- Taken: **the three shapes.** A request and its response are `ask` and `answer`, a notification is `tell`.
+- Taken: **progress before the answer, and cancelling.** They are `progress` and `left`.
+- Declined: **a cancelled request is still answered.** LSP has the server respond to what was cancelled, with an
+  error saying so. `left` says no answer is wanted, and nothing that arrives for the id after it is heard: the
+  asker has gone, and there is nobody to hand an answer to.
+- Declined: **progress against a token of its own.** LSP's progress names a token the request carried, apart from
+  the request's id, since progress may also be the server's own. Here the only thing progress is made on is an
+  ask, so it carries the ask's id.
+- Declined: **responses in roughly the order of the requests.** LSP lets a server answer out of order where that
+  changes nothing. Each answer here is a frame, in the one order everything is in.
+- Declined: **a header before each message.** `Content-Length` is there because a stream of bytes has no edges. A
+  transport hands over whole texts; step 4's stream of bytes puts a length before each and no header.
 
 ## Order of work
 
-[`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, and two ends in
-memory.
+[`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
+memory, and step 0: the schedule, hello and goodbye.
 
 ## What is not decided
 

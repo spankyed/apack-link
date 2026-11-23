@@ -1,0 +1,137 @@
+// A schedule a spec gives a link in place of the event loop, so that the order things happen in is chosen and not
+// left to timing. Everything put off goes into a lane: what crosses a link one way is one. A spec adds lanes of its
+// own: what a user does, and outside work that finishes when the schedule gets to it.
+//
+// What is in one lane keeps its order. Between lanes the schedule chooses, and `explore` runs a scenario once for
+// every way of choosing. A failure comes back with the choices that led to it, and `replay` runs exactly those again.
+
+/**
+ * Things that happen one after another: what crosses a link in one direction. What is in one lane keeps its order,
+ * as messages on one socket do. What is in two lanes can come in either order, and that is the whole of what a
+ * schedule may choose.
+ */
+export interface Lane { readonly label: string }
+
+type Task = { readonly what: string; run(): void }
+
+export interface Schedule {
+  /** Runs something after whatever is ahead of it in its lane. */
+  later(lane: Lane, run: () => void): void
+  /** A lane of the spec's own: things done one after another, such as what a user clicks. */
+  does(label: string, ...steps: ReadonlyArray<readonly [what: string, run: () => void]>): void
+  /** Outside work, in a lane of its own: it is done, with this value, when the schedule gets to it. */
+  work<T>(label: string, value: T): Promise<T>
+  /** The same, for work that fails. */
+  breaks(label: string, error: Error): Promise<never>
+}
+
+/** What a scenario is: it builds what it checks from the schedule, and returns what must hold once all is at rest. */
+export type Scenario = (schedule: Schedule) => () => void
+
+/** How one run went: each choice made, how many there were to choose from, and what was run, in order. */
+interface Run { choices: number[]; counts: number[]; taken: string[]; error?: unknown }
+
+/**
+ * Lets every promise that can settle do so: a message is delivered on a turn of the event loop, which comes after all
+ * of them. A message and not `setImmediate`, which costs fifty times as much and is paid once per thing run, and is
+ * not there in a window.
+ */
+const turn = new MessageChannel()
+/** In Node an open port keeps the process alive, so it is held only while a run is waiting on it. A window has neither. */
+const hold = turn.port1 as unknown as { onmessage: (() => void) | null; ref?(): void; unref?(): void }
+let onTurn: (() => void) | undefined
+hold.onmessage = () => { const resolve = onTurn; onTurn = undefined; resolve?.() }
+hold.unref?.()
+const settled = (): Promise<void> => new Promise((resolve) => { onTurn = resolve; turn.port2.postMessage(0) })
+
+/** More than this in one run is two things telling each other forever. */
+const RUNAWAY = 10_000
+
+async function once(scenario: Scenario, choose: (depth: number, among: number) => number): Promise<Run> {
+  const lanes = new Map<Lane, Task[]>()
+  const into = (lane: Lane, task: Task): void => { (lanes.get(lane) ?? lanes.set(lane, []).get(lane)!).push(task) }
+  const schedule: Schedule = {
+    later: (lane, run) => into(lane, { what: lane.label, run }),
+    does: (label, ...steps) => { const lane: Lane = { label }; for (const [what, run] of steps) into(lane, { what: `${label}: ${what}`, run }) },
+    work: (label, value) => new Promise((resolve) => { into({ label }, { what: label, run: () => resolve(value) }) }),
+    breaks: (label, error) => new Promise((_, reject) => { into({ label }, { what: label, run: () => reject(error) }) }),
+  }
+  const made: Run = { choices: [], counts: [], taken: [] }
+  hold.ref?.()
+  try {
+    const check = scenario(schedule)
+    for (;;) {
+      await settled()
+      const ready = [...lanes.values()].filter((waiting) => waiting.length)
+      if (!ready.length) break
+      if (made.taken.length >= RUNAWAY) throw new Error(`Still going after ${RUNAWAY} things: something never comes to rest`)
+      // Only a real choice is written down, so that the choices are as short as the ordering they name.
+      let chosen = 0
+      if (ready.length > 1) { chosen = choose(made.choices.length, ready.length); made.choices.push(chosen); made.counts.push(ready.length) }
+      const task = ready[chosen]!.shift()!
+      made.taken.push(task.what)
+      task.run()
+    }
+    check()
+  } catch (error) { made.error = error } finally { hold.unref?.() }
+  return made
+}
+
+export interface Explored {
+  /** How many orderings were run. */
+  readonly orderings: number
+  /** Whether that was every one. False when a failure stopped it, or the limit did. */
+  readonly complete: boolean
+  readonly failure?: { readonly choices: readonly number[]; readonly taken: readonly string[]; readonly error: unknown }
+}
+
+/**
+ * Runs a scenario under every ordering its lanes allow, stopping at the first that fails. The scenario builds what it
+ * checks from the schedule it is handed, and returns what must hold once everything has come to rest.
+ */
+export async function explore(scenario: Scenario, options: { limit?: number } = {}): Promise<Explored> {
+  const limit = options.limit ?? 50_000
+  let prefix: number[] = []
+  for (let orderings = 1; ; orderings++) {
+    const made = await once(scenario, (depth) => prefix[depth] ?? 0)
+    if ('error' in made) return { orderings, complete: false, failure: { choices: made.choices, taken: made.taken, error: made.error } }
+    // The next ordering: the last choice that had another way to go, taken that way, and everything after it afresh.
+    let last = made.choices.length - 1
+    while (last >= 0 && made.choices[last]! + 1 >= made.counts[last]!) last--
+    if (last < 0) return { orderings, complete: true }
+    if (orderings >= limit) return { orderings, complete: false }
+    prefix = [...made.choices.slice(0, last), made.choices[last]! + 1]
+  }
+}
+
+/** Runs a scenario under orderings chosen at random from a seed, for one with too many to run them all. */
+export async function sample(scenario: Scenario, options: { seed: number; runs: number }): Promise<Explored> {
+  let state = options.seed >>> 0
+  const random = (): number => { state = (state + 0x6d2b79f5) >>> 0; let t = state; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  for (let orderings = 1; orderings <= options.runs; orderings++) {
+    const made = await once(scenario, (_, among) => Math.floor(random() * among))
+    if ('error' in made) return { orderings, complete: false, failure: { choices: made.choices, taken: made.taken, error: made.error } }
+  }
+  return { orderings: options.runs, complete: false }
+}
+
+/** Runs a scenario under one ordering: the choices a failure came back with. Returns what it threw, if it did. */
+export async function replay(scenario: Scenario, choices: readonly number[]): Promise<{ taken: readonly string[]; error?: unknown }> {
+  const made = await once(scenario, (depth) => choices[depth] ?? 0)
+  return 'error' in made ? { taken: made.taken, error: made.error } : { taken: made.taken }
+}
+
+/**
+ * Runs a scenario under every ordering and throws for the first that fails, naming the order that led to it and the
+ * choices to `replay` it with. Returns how many orderings there were. Past `limit` it throws too: a scenario too
+ * wide to run whole is one to `sample`, said where it is written.
+ */
+export async function everyOrder(scenario: Scenario, options: { limit?: number } = {}): Promise<number> {
+  const explored = await explore(scenario, options)
+  if (explored.failure) {
+    const { choices, taken, error } = explored.failure
+    throw new Error(`Failed in ordering ${explored.orderings} (replay with [${choices.join(', ')}]):\n  ${taken.join('\n  ')}\n${error instanceof Error ? error.message : String(error)}`, { cause: error })
+  }
+  if (!explored.complete) throw new Error(`More than ${explored.orderings} orderings: too many to run them all`)
+  return explored.orderings
+}

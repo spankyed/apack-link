@@ -1,7 +1,7 @@
 # The plan: everything a link is to be
 
-Status: planned, 2026-11-22. The frames, one end of a link and two ends in memory are built. No step below is
-started.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and step 0. No
+step after it is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
 build, in what order, what each step has to hold, and how each is known to be done. `README.md` says what a link is
@@ -87,7 +87,7 @@ These are the repository's (`CLAUDE.md`), and each has broken a design like this
   handed in.
 - **Nothing that can fail runs between a frame taking its number and its text reaching the transport.**
 - **What a frame carries is never put in an error, a log or a trace.** A reason names a kind, an id and a size.
-  (`Ending`'s `'not a frame'` carries the text today. Step 0 below takes it out.)
+  (`Ending`'s `'not a frame'` carries the length of the text.)
 - **A spec says what holds, not how.** Where order matters, the spec runs every order (step 0's schedule), and a
   scenario that cannot fail is shown able to: the same scenario with the guarantee taken out has to fail.
 - **Mutate a copy.** Before a step is called done, change the code in a copy of the tree, one guarantee at a time,
@@ -98,6 +98,13 @@ These are the repository's (`CLAUDE.md`), and each has broken a design like this
   what the step made true. No attribution lines in commits or pull requests.
 
 ## Step 0. Groundwork
+
+Built. The schedule is `src/testing/schedule.ts`, with `scheduledPair` beside it for two ends in memory whose
+directions are lanes. `memoryPair` takes what says when a text arrives for each direction, and hands an end's
+closing over after what that end sent before it. An end that says another number ends the link
+`{ why: 'version', mine, theirs }`; a goodbye is `link.close('restarting')` or `link.close('ended')`, and the
+other end ends `{ why: 'goodbye', bye }`. What was read of DDP and the Language Server Protocol is in
+`docs/design.md`; MQTT is read before step 5.
 
 Small things every later step stands on.
 

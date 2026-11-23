@@ -7,30 +7,36 @@ export interface Transport {
   onText(heard: (text: string) => void): void
   /** Called once, when nothing more will arrive: either end closed it, or what carried it went. */
   onClose(closed: () => void): void
+  /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
   close(): void
 }
 
 /**
- * Two ends in memory, joined. What one sends the other hears later, never as it is sent: `later` says when, and is
- * a microtask unless it is given. A test gives one to choose the moment, or to run every order there is.
+ * Two ends in memory, joined. What one sends the other hears later, never as it is sent, and an end closing is heard
+ * by the other after everything sent before it, as on a socket. `later` says when what the first end sends arrives,
+ * and `back` the same for the second: a microtask unless given. A test gives them to choose the moment, or a lane
+ * of a schedule each, to run every order there is.
  */
-export function memoryPair(later: (run: () => void) => void = queueMicrotask): [Transport, Transport] {
-  let open = true
-  const ends = [0, 1].map(() => ({ hears: [] as Array<(text: string) => void>, closes: [] as Array<() => void> }))
-  const close = (): void => {
-    if (!open) return
-    open = false
-    for (const end of ends) for (const closed of end.closes) closed()
+export function memoryPair(later: (run: () => void) => void = queueMicrotask, back: (run: () => void) => void = later): [Transport, Transport] {
+  const ends = [0, 1].map(() => ({ open: true, hears: [] as Array<(text: string) => void>, closes: [] as Array<() => void> }))
+  const shut = (end: (typeof ends)[number]): void => {
+    if (!end.open) return
+    end.open = false
+    for (const closed of end.closes) closed()
   }
-  const make = (mine: 0 | 1): Transport => {
+  const make = (mine: 0 | 1, cross: (run: () => void) => void): Transport => {
     const here = ends[mine]!
     const there = ends[1 - mine]!
     return {
-      send: (text) => { if (open) later(() => { if (open) for (const heard of there.hears) heard(text) }) },
+      send: (text) => { if (here.open) cross(() => { if (there.open) for (const heard of there.hears) heard(text) }) },
       onText: (heard) => { here.hears.push(heard) },
       onClose: (closed) => { here.closes.push(closed) },
-      close,
+      close: () => {
+        if (!here.open) return
+        shut(here)
+        cross(() => shut(there))
+      },
     }
   }
-  return [make(0), make(1)]
+  return [make(0, later), make(1, back)]
 }
