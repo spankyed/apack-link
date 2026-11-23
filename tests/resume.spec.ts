@@ -52,7 +52,8 @@ describe('accepting connections', () => {
     accept((one) => { made.push(one) })(right)
     const texts: unknown[] = []
     left.onData((text) => { texts.push(JSON.parse(text as string)) })
-    left.send(JSON.stringify([{ link: 1, session: 'from before', taken: 3, resumes: 'a backend from before' }]))
+    // Having taken nothing is no better: it is going on with something this end never was.
+    left.send(JSON.stringify([{ link: 1, session: 'from before', taken: 0, resumes: 'a backend from before' }]))
     await turn()
     expect(made).toEqual([])
     expect(texts).toEqual([[{ link: 1, session: expect.any(String), taken: 0 }, { lost: true }]])
@@ -343,6 +344,40 @@ describe('a link handed a connection while it is on one where the other end has 
       expect([ended, first.closed()]).toEqual([[], 0])
     })
   }
+
+  it('says what it took once on the one it goes over to, in its hello, when nothing more has arrived', async () => {
+    const { connect, first, mine } = await met()
+    first.say({ seq: 1, frame: tell('taken on the first') })
+    await turn()
+    const second = connect()
+    second.say({ link: 1, session: 'w', taken: 0, resumes: mine })
+    await turn()
+    expect(second.texts).toEqual([[{ link: 1, session: mine, taken: 1, resumes: 'w' }]])
+  })
+
+  it('turns away a hello that fits in every way but one, when it has sent and been told what was taken', async () => {
+    for (const [what, hello] of [
+      ['says it has met nobody and took something that was sent', { taken: 3 }],
+      ['wants what it said before it had taken', { taken: 1, resumes: 'MINE' }],
+      ['says it took more than was sent', { taken: 5, resumes: 'MINE' }],
+    ] as const) {
+      const { backend, ended, connect, first, mine } = await met()
+      for (const event of [1, 2, 3, 4]) backend.send(tell(event))
+      await turn()
+      first.say({ taken: 2 })
+      await turn()
+      expect([what, backend.kept()]).toEqual([what, 2])
+      const second = connect()
+      second.say({ link: 1, session: 'w', ...hello, ...('resumes' in hello ? { resumes: mine } : {}) })
+      await turn()
+      expect([what, second.closed(), second.texts.flat().at(-1), ended, first.closed(), backend.kept()]).toEqual([what, 1, { lost: true }, [], 0, 2])
+      // One that says what is so is gone over to.
+      const third = connect()
+      third.say({ link: 1, session: 'w', taken: 3, resumes: mine })
+      await turn()
+      expect([what, third.closed(), first.closed(), backend.kept()]).toEqual([what, 0, 1, 1])
+    }
+  })
 
   it('keeps only the last it was handed waiting', async () => {
     const { connect, first, mine } = await met()
