@@ -2,6 +2,7 @@
 // scenario chooses: what a link that comes back is held to.
 import { link, type Clock, type Link, type Options } from '../link.ts'
 import { memoryPair, type Transport } from '../transport.ts'
+import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
 import type { Lane, Schedule } from './schedule.ts'
 
@@ -38,13 +39,21 @@ export interface Dropping extends Ends {
  * What crosses one way is one lane however many connections there are, as on one socket at a time, and the first
  * end opens another connection in the lane of what it sends: after what it sent on the one before. The first `unreachable` connections reach nobody: each closes
  * with nothing having crossed, as one does to a backend that is not listening yet. What else
- * `options` holds, a codec or a part, is given to every link made here.
+ * `options` holds, a codec or a part, is given to every link made here. Given a model, every link made here is put
+ * under it.
  */
-export function droppingMemoryEnds(schedule: Schedule, options: Options & { readonly unreachable?: number } = {}): Dropping {
+export function droppingMemoryEnds(schedule: Schedule, options: Options & { readonly unreachable?: number } = {}, held?: Model): Dropping {
   const { unreachable = 0, ...given } = options
+  let ends = 0
+  /** A link for the second end, or for nobody a scenario knows, under the model if there is one. */
+  const second = (): Link => {
+    ends++
+    const made = link(undefined, given)
+    return held ? held.end(made, ends === 1 ? 'b' : `b (${ends})`) : made
+  }
   const there = { label: 'a to b' }
   const back = { label: 'b to a' }
-  let b = link(undefined, given)
+  let b = second()
   let gone = false
   /** Whether the second end ended by itself, lost or told to: nothing is coming back, and a backend goes on listening. */
   let byItself = false
@@ -54,17 +63,18 @@ export function droppingMemoryEnds(schedule: Schedule, options: Options & { read
   let waiting: Transport | undefined
   let connections = 0
   const clock = laneClock(schedule, there)
-  const a = link(() => {
+  const opens = link(() => {
     connections++
     const [left, right] = memoryPair((run) => schedule.later(there, run), (run) => schedule.later(back, run))
     current = left
     if (connections <= unreachable) right.close()
     // To an end that ended by itself a connection is a new one, to a link of its own, as `accept` makes one.
-    else if (gone && byItself) link(undefined, given).carry(right)
+    else if (gone && byItself) second().carry(right)
     else if (gone) waiting = right
     else b.carry(right)
     return left
   }, { ...given, reopen: { clock } })
+  const a = held ? held.end(opens, 'a') : opens
   const first = b
   return {
     a,
@@ -74,7 +84,7 @@ export function droppingMemoryEnds(schedule: Schedule, options: Options & { read
     drop: () => { current?.close() },
     restart: () => {
       b.close()
-      b = link(undefined, given)
+      b = second()
       gone = false
       byItself = false
       const next = b

@@ -618,10 +618,11 @@ The first end is given what opens a connection, as a window is; the second is ha
 What crosses one way is one lane however many connections there are, as on one socket at a time, and the first
 end opens another connection in the lane of what it sends: after what it sent on the one before. The first `unreachable` connections reach nobody: each closes
 with nothing having crossed, as one does to a backend that is not listening yet. What else
-`options` holds, a codec or a part, is given to every link made here.
+`options` holds, a codec or a part, is given to every link made here. Given a model, every link made here is put
+under it.
 
 ```ts
-droppingMemoryEnds(schedule: Schedule, options?: Options & { readonly unreachable?: number; }): Dropping
+droppingMemoryEnds(schedule: Schedule, options?: Options & { readonly unreachable?: number; }, held?: Model): Dropping
 ```
 
 ### `DroppingScenario`
@@ -752,10 +753,52 @@ type MakeEnds = (schedule: Schedule) => Ends
 
 ### `memoryEnds`
 
-Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run over.
+Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run
+over. Given a model, each end is put under it.
 
 ```ts
-memoryEnds(schedule: Schedule, options?: Options): Ends
+memoryEnds(schedule: Schedule, options?: Options, held?: Model): Ends
+```
+
+### `model`
+
+Makes a model to hold ends to: every link of one scenario is put under the same one.
+
+```ts
+model(options?: ModelOptions): Model
+```
+
+### `Model`
+
+```ts
+interface Model {
+  /** Puts a link under the model, before anything is sent on it or listens to it. What comes back is the link to use. */
+  end(link: Link, name: string): Link
+  /**
+   * What must hold once everything has come to rest. Throws for the first thing an end did that the model could
+   * not have, with what led to it; and for what an end that is still there was sent, by the one end still there
+   * that it could be talking to, and has not been handed.
+   */
+  check(): void
+}
+```
+
+### `ModelOptions`
+
+```ts
+interface ModelOptions {
+  /** What the ends' frames are encoded in, which is how one is known again once it has crossed. JSON unless given. */
+  readonly codec?: Codec
+  /**
+   * Endings that are let pass. Without it, no end is `out of order`, `not a frame`, `version` or `too narrow`:
+   * between two ends of this package set alike, on something that carries what it is handed, each is a defect.
+   * And no end is `lost` while every end it could be talking to is still there: `'lost'` here lets that pass,
+   * for a scenario where an end goes without its link being closed.
+   */
+  readonly may?: ReadonlyArray<Ending['why']>
+  /** Whether what was sent and never handed over is let pass at rest: for a scenario that leaves ends unable to reach each other. */
+  readonly unfinished?: boolean
+}
 ```
 
 ### `peers`
@@ -834,6 +877,15 @@ and the schedule chooses between the two, and whatever else a spec adds.
 
 ```ts
 scheduledPair(schedule: Schedule, names?: readonly [string, string]): [Transport, Transport]
+```
+
+### `underModel`
+
+Runs what a scenario builds with a model to put its ends under, and returns its check with the model's after it:
+`everyOrder((schedule) => underModel((held) => scenario.play(schedule, memoryEnds(schedule, {}, held))))`.
+
+```ts
+underModel(play: (held: Model) => () => void, options?: ModelOptions): () => void
 ```
 
 ### `Viewed`

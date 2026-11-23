@@ -3,6 +3,7 @@
 // to be run over any pair of ends.
 import { link, type Options } from '../link.ts'
 import { memoryPair, type Transport } from '../transport.ts'
+import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
 import type { Schedule } from './schedule.ts'
 
@@ -11,6 +12,7 @@ export { holds, same } from './check.ts'
 export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
 export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.ts'
 export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.ts'
+export { model, underModel, type Model, type ModelOptions } from './model.ts'
 export { made, type Made } from './views.ts'
 
 export { everyOrder, explore, replay, sample, type Explored, type Lane, type Scenario, type Schedule } from './schedule.ts'
@@ -28,8 +30,12 @@ export function scheduledPair(schedule: Schedule, names: readonly [string, strin
   return memoryPair((run) => schedule.later(there, run), (run) => schedule.later(back, run))
 }
 
-/** Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run over. */
-export function memoryEnds(schedule: Schedule, options: Options = {}): Ends {
+/**
+ * Two ends of a link in memory, on a schedule, made with `options`: what this package's own scenarios are run
+ * over. Given a model, each end is put under it.
+ */
+export function memoryEnds(schedule: Schedule, options: Options = {}, held?: Model): Ends {
   const [left, right] = scheduledPair(schedule)
-  return { a: link(left, options), b: link(right, options) }
+  const [a, b] = [link(left, options), link(right, options)]
+  return held ? { a: held.end(a, 'a'), b: held.end(b, 'b') } : { a, b }
 }

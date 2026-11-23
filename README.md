@@ -217,6 +217,19 @@ Over something real, `carried(schedule, [left, right])` puts what arrives at eac
 and a run waits for what is on its way: this package runs every scenario over a WebSocket, a message port and a
 stream of bytes as well as over memory.
 
+Beside what each scenario checks, a run can be held to the model: a queue each way between two ends, and whether
+each end is still there. `model()` is that, and each link put under it (`held.end(link, 'a')`, or the third thing
+`memoryEnds` and `droppingMemoryEnds` take) is noted as it is sent to, hands over and ends. Its `check` throws for
+the first thing an end did that the model could not have, with what led to it: a frame out of turn, twice, changed,
+with another cause or from nowhere, anything handed over after an ending, an ending for what crossed, a session lost with both ends
+still there, and at rest, what was sent and never handed over. `underModel` puts its check after a scenario's own:
+
+```ts
+import { everyOrder, memoryEnds, peers, underModel } from '@apackdev/link/testing'
+
+for (const scenario of peers) await everyOrder((schedule) => underModel((held) => scenario.play(schedule, memoryEnds(schedule, {}, held))))
+```
+
 `withoutTheHold` is the hold's scenarios with views that offer no `caughtUp`: each fails in some order, which is
 how the scenarios are known to be able to.
 

@@ -397,6 +397,21 @@ Done when: a commit on `master` has a release with the tarball, a fresh project 
 runs the README's example, and a change to any text an end sends fails the wire's spec until `docs/wire.md` and
 the recording say the same.
 
+## Step 11. A model, and every run held to it
+
+Built: `src/testing/model.ts` (`model`, `underModel`), which `memoryEnds` and `droppingMemoryEnds` take, and
+`tests/model.spec.ts`. The scenarios over memory, over each thing a link is carried on, and the ones that drop and
+restart are all run under it.
+
+A scenario checks what its systems saw, and says nothing of what it did not think to look at. The model is the
+whole of what a link is for, in a few lines: a queue each way, a view's result that may take the place of the last
+of its view still crossing, and ends that are handed nothing once they are gone. A link is put under it where a
+scenario is handed it, and every send, hand-over and ending is held to what the model could do next.
+
+Done when: every scenario passes under the model in every order it is run in, and a spec shows the model finding
+each of a frame out of turn, twice, changed, from nowhere or after an ending; an ending for what crossed; a
+session lost with every end there; and what was sent and not handed over at rest.
+
 ## What is not this plan's to build
 
 These land with apack-state, by whoever is doing that work, and are here so the seam is known.
@@ -411,4 +426,5 @@ These land with apack-state, by whoever is doing that work, and are here so the 
 ## Order, and what can be done at once
 
 Steps 0 to 3 in order: each is the ground the next stands on. After step 3, steps 4, 8 and 10 touch different
-files and can be done side by side. Step 5 needs 3; 6 and 7 need 5; 9 needs 4 and 5.
+files and can be done side by side. Step 5 needs 3; 6 and 7 need 5; 9 needs 4 and 5. Step 11 needs 5, and is the ground for anything that changes how a
+link does what it does.

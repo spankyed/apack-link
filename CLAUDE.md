@@ -17,7 +17,8 @@ know before changing it.
 - `src/peer.ts` is `join`: what gives a link's ids their meaning, between a link and the `Port` a system offers.
 - `src/testing/` is what specs are written with, exported as `@apackdev/link/testing`: a schedule that runs a
   scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios every end is
-  held to (`scenarios.ts`), written against what the package exports and nothing else.
+  held to (`scenarios.ts`), written against what the package exports and nothing else. `model.ts` is what a link
+  is with nothing about how, a queue each way, and what holds a run of real ends to it.
 - `docs/wire.md` is everything an end sends, ending in a recorded exchange that `tests/wire.spec.ts` holds the
   package to text for text. `REFERENCE.md` is every export, made by `npm run reference:update`.
 - `scripts/` is what CI and a release run: the reference, the package smoke, and the check that no workflow
