@@ -489,7 +489,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(ended).toEqual([])
   })
 
-  it('carries a frame as large as one may be on LEAST bytes with msgpack and the longest cause', async () => {
+  it('is the least a link is carried on in msgpack too, with a frame as large as one may be and the longest cause there may be', async () => {
     const { transport, right, writes } = narrow(LEAST)
     const opts = { ...options, codec: msgpack }
     const a = dial(transport, opts)
@@ -507,7 +507,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(Math.max(...writes)).toBeLessThanOrEqual(LEAST)
   })
 
-  it('turns away a resuming transport through accept that is narrower than what is kept, and takes one once the hello acknowledges it', async () => {
+  it('is found at the hello where a backend accepts connections: one narrower than what is kept is turned away, and taken once its hello says that was taken', async () => {
     let made!: ReturnType<typeof dial>
     const ended: Ending[] = []
     const take = accept((link) => { made = link; link.onEnd((end) => { ended.push(end) }) }, options)
@@ -523,7 +523,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     first[0].close()
     await turn()
     const mine = said[0]!.session
-    // Resuming on a narrower transport without having taken it: turned away cleanly with lost, no throw.
+    // Going on with the session on something narrower, without having taken it: turned away, told the session is lost.
     const tight = narrow(3000)
     const told: unknown[] = []
     let tightClosed = false
@@ -535,7 +535,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(told).toEqual([{ link: 1, session: '', taken: 0 }, { lost: true }])
     expect(tightClosed).toBe(true)
     expect(ended).toEqual([])
-    // Resuming on a narrower transport whose hello already took what was kept: accepted and cut to fit.
+    // On something as narrow, with a hello that says it took what was kept: it goes on, and what is sent is cut to fit.
     const resumed = narrow(3000)
     const heard: unknown[] = []
     resumed.right.onData((message) => { heard.push(...(JSON.parse(message as string) as unknown[])) })
@@ -550,8 +550,8 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(ended).toEqual([])
   })
 
-  it('lets a narrower peer resume once its hello already says it took what was kept', async () => {
-    // Listener side: wide frame kept, peer reconnects saying it took it and now takes 3000.
+  it('is no less than what the hello has not taken: an end whose hello says it took what was kept, and that it takes less, goes on', async () => {
+    // An end that listens keeps a frame cut for any length; the other end comes back saying it took it, and takes 3000.
     const b = listen(undefined, options)
     const bWatch = watched(b)
     const first = memoryPair()
@@ -577,7 +577,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(Math.max(...secondWrites)).toBeLessThanOrEqual(3000)
     expect(bWatch.ended).toEqual([])
 
-    // Dialer side: wide frame kept, reconnects and peer's hello says it took it and now takes 3000.
+    // An end that dials keeps the same; on the connection it opens next, the hello says it was taken, and takes 3000.
     const pairs = [memoryPair(), memoryPair()]
     let opened = 0
     const dialWrites: number[] = []
@@ -607,7 +607,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(aWatch.ended).toEqual([])
   })
 
-  it('does not flush an oversized frame ahead of lost when a narrow hello arrives in the same turn', () => {
+  it('is not sent what was numbered for more, where the other end says how little it takes in the turn that was numbered: it is told the session is lost, after a hello', () => {
     const writes: Message[] = []
     let deliver!: (message: Message) => void
     const transport: Transport = {
@@ -616,7 +616,7 @@ describe('what a link needs of what carries it, with frames in parts', () => {
       onClose: () => {},
       close: () => {},
     }
-    // Hold turns so the peer's narrow hello arrives before the dialer's first batch flushes.
+    // Turns are held, so that the other end's hello arrives before this end's first batch has left.
     const pending: Array<() => void> = []
     const a = dial(transport, { ...options, later: (run) => { pending.push(run) } })
     const { ended } = watched(a)
