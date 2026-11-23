@@ -141,3 +141,89 @@ describe('what a link is handed', () => {
     expect(waits.length).toBe(1)
   })
 })
+
+describe('a transport that throws as it is closed for another', () => {
+  const throwing = () => {
+    const made = bare()
+    return { ...made, transport: { ...made.transport, close: () => { throw new Error('cannot close') } } }
+  }
+
+  it('does not keep a link from saying hello on the connection it is handed in its place', async () => {
+    const thrown: unknown[] = []
+    const a = link(undefined, { thrown: (error) => { thrown.push(error) } })
+    const heard: Frame[] = []
+    a.onFrame((frame) => { heard.push(frame) })
+    a.carry(throwing().transport)
+    const next = bare()
+    expect(() => a.carry(next.transport)).not.toThrow()
+    await turn()
+    expect(next.sent.join('')).toContain('"session"')
+    // And the link is on it: what arrives there is taken, and what is sent leaves on it.
+    next.hand(hello, numbered(1, 'on the next'))
+    a.send(tell('out'))
+    await turn()
+    expect(told(heard)).toEqual(['on the next'])
+    expect(next.sent.join('')).toContain('"out"')
+    expect(thrown).toEqual([new Error('cannot close')])
+  })
+
+  it('does not lose the frames that came with the hello a waiting connection was taken up for', async () => {
+    const thrown: unknown[] = []
+    const a = link(undefined, { thrown: (error) => { thrown.push(error) } })
+    const heard: Frame[] = []
+    a.onFrame((frame) => { heard.push(frame) })
+    const first = throwing()
+    a.carry(first.transport)
+    first.hand(hello)
+    await turn()
+    const session = (JSON.parse(first.sent[0]!) as Array<{ session: string }>)[0]!.session
+    // The link has met the other end on the first, so the next waits for a hello that fits.
+    const next = bare()
+    a.carry(next.transport)
+    next.hand({ ...hello, resumes: session }, numbered(1, 'with the hello'), numbered(2, 'and after'))
+    a.send(tell('out'))
+    await turn()
+    expect(told(heard)).toEqual(['with the hello', 'and after'])
+    expect(next.sent.join('')).toContain('"out"')
+    expect(next.sent.join('')).toContain('{"taken":2}')
+    expect(thrown).toEqual([new Error('cannot close')])
+  })
+})
+
+describe('what a link leaves on its clocks', () => {
+  const manual = () => {
+    const waits: Array<() => void> = []
+    return { waits, clock: { after: (_: number, run: () => void) => { waits.push(run); return () => { const at = waits.indexOf(run); if (at >= 0) waits.splice(at, 1) } } } }
+  }
+
+  it('watches nothing once the connection it watched has gone', async () => {
+    const { waits, clock } = manual()
+    const a = link(undefined, { there: { window: 100, clock } })
+    const other = bare()
+    a.carry(other.transport)
+    other.hand(hello)
+    a.awaiting()
+    await turn()
+    expect(waits.length).toBe(1)
+    other.transport.close()
+    expect(waits.length).toBe(0)
+  })
+
+  it('opens nothing more once it has ended, though what opened its last connection threw', async () => {
+    const { waits, clock } = manual()
+    const thrown: unknown[] = []
+    let opened = 0
+    const first = bare()
+    const a: ReturnType<typeof link> = link(() => {
+      if (++opened === 1) return first.transport
+      a.close()
+      throw new Error('could not open')
+    }, { reopen: { clock }, thrown: (error) => { thrown.push(error) } })
+    first.transport.close()
+    expect(waits.length).toBe(1)
+    waits.shift()!()
+    await turn()
+    expect(thrown).toEqual([new Error('could not open')])
+    expect([opened, waits.length]).toEqual([2, 0])
+  })
+})

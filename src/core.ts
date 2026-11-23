@@ -371,8 +371,8 @@ export type Event =
 export type Effect =
   /** Send these on a connection, in order. If it throws, the end is told the connection `broke`. */
   | { readonly do: 'write'; readonly on: number; readonly messages: readonly Message[] }
-  /** Close a connection. What closing throws is reported, let go, or thrown on, as `thrown` says. */
-  | { readonly do: 'close'; readonly on: number; readonly thrown: 'reported' | 'let go' | 'raised' }
+  /** Close a connection. What closing throws is reported or let go, as `thrown` says: it never stops what follows. */
+  | { readonly do: 'close'; readonly on: number; readonly thrown: 'reported' | 'let go' }
   /** Turn a connection away: send it this, if anything, and close it, and whatever either throws is let go. */
   | { readonly do: 'away'; readonly on: number; readonly message?: Message }
   /** Say when this turn is over, for a connection. */
@@ -432,6 +432,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     delete s.now
     off(s.holding)
     delete s.holding
+    // Nothing is watched on a connection that has gone.
+    off(s.watching?.timer)
+    delete s.watching
     if (s.ending) return
     if (once) { end({ why: 'closed' }); return }
     s.failed = on.held ? 0 : s.failed + 1
@@ -493,7 +496,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     off(s.holding)
     delete s.holding
     s.kept = []
+    s.keptSize = 0
     s.waiting = []
+    s.waitingSize = 0
     s.showing.clear()
     delete s.parting
     const was = s.now
@@ -614,7 +619,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (now?.id !== on || s.ending) return
     if (asked) {
       // Nothing of any kind arrived for the whole window: this connection is let go, and another is made.
-      out.push({ do: 'close', on, thrown: 'raised' })
+      out.push({ do: 'close', on, thrown: 'reported' })
       return
     }
     // Owed nothing now: nothing to ask.
@@ -789,6 +794,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       if (take(s.now, taking.said[taking.at++])) return
     }
     s.taking.pop()
+    // Whoever was handed its last frame may have ended the link, or put it on another connection.
+    if (s.ending || s.now?.id !== taking.on) return
     // Anything arriving is when an end looks again at whether there is room to number what waits: what carries it
     // says nothing when it has written all it was given. And it starts a quiet connection's window over.
     pump()
@@ -800,10 +807,12 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     delete s.reopening
     off(s.holding)
     delete s.holding
+    off(s.watching?.timer)
+    delete s.watching
     const was = s.now
     const on: Connection = { id, ...(most === undefined ? {} : { most }), met: false, live: once, held: false, told: s.heard, takes: Infinity, batch: [], sizes: [], due: false }
     s.now = on
-    if (was) out.push({ do: 'close', on: was.id, thrown: 'raised' })
+    if (was) out.push({ do: 'close', on: was.id, thrown: 'reported' })
     say(on, hello(most))
     return on
   }
@@ -843,7 +852,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     end({ why: 'closed' })
   }
   const carry = (id: number, most: number | undefined): void => {
-    if (s.ending) { out.push({ do: 'close', on: id, thrown: 'raised' }); return }
+    if (s.ending) { out.push({ do: 'close', on: id, thrown: 'reported' }); return }
     if (!s.now?.met) { begin(id, most); return }
     // The other end has been met on the connection this end is on, so that one is kept until whoever is on this
     // one has said a hello that fits: nothing is said on it before, and nothing that arrives on the other is missed
@@ -898,11 +907,15 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       case 'turn': if (s.now?.id === event.on) flush(s.now); break
       case 'due': due(event.timer); break
       // What cannot be opened, or carried, is a connection that did not hold.
-      case 'unopened': s.failed++; reopen(); break
+      case 'unopened': if (!s.ending) { s.failed++; reopen() } break
       case 'owed': s.owed++; watch(false); break
       case 'settled': s.owed--; break
       case 'tapped': s.tapped = true; break
     }
-    return out
+    // Nothing is held between steps but what was handed in: not the end, the message, or what was asked for.
+    const asked = out
+    s = out = undefined as never
+    arriving = ''
+    return asked
   }
 }

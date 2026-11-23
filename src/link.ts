@@ -202,7 +202,6 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
         }
         return
       case 'close':
-        if (effect.thrown === 'raised') { transport?.close(); return }
         try { transport?.close() } catch (error) { if (effect.thrown === 'reported') report(error) }
         return
       case 'away':
@@ -216,10 +215,14 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
         return
       case 'after': {
         const clock = effect.clock === 'reopen' ? pace!.clock : options.there!.clock
-        calledOff.set(effect.timer, clock.after(effect.ms, () => {
+        // A clock may run what it is handed before it returns: then there is nothing left to call off.
+        let ran = false
+        const off = clock.after(effect.ms, () => {
+          ran = true
           calledOff.delete(effect.timer)
           tell({ is: 'due', timer: effect.timer })
-        }))
+        })
+        if (!ran) calledOff.set(effect.timer, off)
         return
       }
       case 'off': {

@@ -7,6 +7,7 @@ import { space, type Act, type Script } from './support/space.ts'
 
 const sends = (by: 'a' | 'b', count: number): Act[] => Array.from({ length: count }, () => ({ does: 'send', by }))
 const drop: Act = { does: 'drop' }
+const half: Act = { does: 'drop', half: true }
 
 describe('every state two ends can reach', () => {
   const scripts: ReadonlyArray<readonly [string, Script]> = [
@@ -21,6 +22,10 @@ describe('every state two ends can reach', () => {
     ['the end that opens says goodbye', { kind: 'opens', lanes: [[...sends('a', 1), { does: 'close', by: 'a', bye: 'ended' }], sends('b', 1)] }],
     ['the listener says goodbye as the connection drops', { kind: 'opens', lanes: [sends('a', 1), [...sends('b', 1), { does: 'close', by: 'b', bye: 'ended' }], [drop]] }],
     ['a quiet connection is watched, and let go', { kind: 'opens', window: 100, quiet: 2, lanes: [sends('a', 1)] }],
+    ['the connection goes at one end first, and the next reaches an end still on it', { kind: 'opens', lanes: [sends('a', 1), sends('b', 1), [half]] }],
+    ['a watched connection goes at one end first', { kind: 'opens', window: 100, quiet: 1, lanes: [sends('a', 1), [half]] }],
+    ["a view's results, more than may be kept, as the connection drops", { kind: 'opens', kept: 1, frames: 'results', lanes: [sends('a', 3), [drop]] }],
+    ['a frame in parts as the connection drops', { kind: 'opens', frames: { part: 16 }, lanes: [sends('a', 1), [drop]] }],
   ]
   it.each(scripts)('%s', (_, script) => {
     const looked = space(script)

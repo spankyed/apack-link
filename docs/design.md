@@ -422,11 +422,13 @@ handed over. `tests/model.spec.ts` shows it able to fail, on ends that are wrong
 
 And the core is run from every state two ends can reach (`tests/core.spec.ts`): both sending, a connection that
 drops, more sent than may be kept, a first connection that reaches nobody, a listener that restarts, a goodbye from
-either end, and a quiet connection watched and let go. Each state is held to the same model, kept as counts (a
+either end, a quiet connection watched and let go, a connection that goes at one end before the other so that the next
+reaches an end still on it, a view's results overtaken where they wait, and a frame in parts across a drop. Each state is held to the same model, kept as counts (a
 frame handed over is the next one the other end sent, by the one end this one talks to), to no ending for what
 crossed and no session lost with every end there, and to what an end holds adding up: what is kept is exactly what
 was numbered and not let go, and the sizes counted are the sizes held. At rest, two ends still there have each been
-handed all the other sent. More can happen here than on a schedule: a clock runs out and a turn ends at any
+handed all the other sent. An end that has ended holds nothing and has nothing on a clock, and one that has not
+has on a clock exactly what it holds a number for. More can happen here than on a schedule: a clock runs out and a turn ends at any
 moment, where a schedule keeps each in a lane. For one frame each way and one drop that is 7,004 states, where the
 schedule runs 10,992 orderings of fewer. The same spec spoils what a step asked for, one way at a time, and each is
 found.
