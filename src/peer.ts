@@ -76,7 +76,7 @@ interface Round { readonly upTo: number; readonly waiting: Set<Work> }
 export function join(link: Link, mine: Port): Port {
   let closed = false
   /** What this end asked and has not been answered, and what it follows. */
-  const asked = new Map<Id, { heard(update: unknown): void; ended(outcome: Outcome): void }>()
+  const asked = new Map<Id, { heard(update: unknown): void; ended(outcome: Outcome): void; settle(): void }>()
   const followed = new Map<Id, { shown(update: unknown): void; over(failure: Failure): void }>()
   /** What this end is answering for the other, and the views it runs for it. */
   const answering = new Map<Id, Work>()
@@ -240,7 +240,7 @@ export function join(link: Link, mine: Port): Port {
       case 'progress': asked.get(frame.id)?.heard(frame.update); return
       case 'answer': {
         const waiting = asked.get(frame.id)
-        if (waiting) { asked.delete(frame.id); waiting.ended(frame.outcome as Outcome) }
+        if (waiting) { asked.delete(frame.id); waiting.settle(); waiting.ended(frame.outcome as Outcome) }
         return
       }
       case 'follow':
@@ -286,12 +286,14 @@ export function join(link: Link, mine: Port): Port {
     ask: (to, name, args, heard, ended) => {
       if (closed) { ended({ ok: false, failure: disconnected() }); return () => {} }
       const id = ++asks
-      asked.set(id, { heard, ended })
+      // Owed an answer: the link watches a quiet connection while it is.
+      const settle = link.awaiting()
+      asked.set(id, { heard, ended, settle })
       hand({
         frame: { kind: 'ask', id, to, name, args },
-        refused: () => { if (asked.delete(id)) ended({ ok: false, failure: unsendable() }); return undefined },
+        refused: () => { if (asked.delete(id)) { settle(); ended({ ok: false, failure: unsendable() }) } return undefined },
       })
-      return () => { if (asked.delete(id)) hand({ frame: { kind: 'left', id } }) }
+      return () => { if (asked.delete(id)) { settle(); hand({ frame: { kind: 'left', id } }) } }
     },
     follow: (feature, view, args, shown, over) => {
       if (closed) { over(disconnected()); return { stop: () => {} } }

@@ -22,6 +22,11 @@
 // What is kept is bounded. How far behind the other end is, is what it has not said it took: past a mark, a link
 // stops numbering, and what is sent waits unnumbered, where a view's result that a later one has overtaken can be
 // let go. What waits is bounded too, and past it, with nothing left to let go, the link ends `overrun`.
+//
+// What carries a link saying it closed is the first word that the other end has gone. For a connection that can go
+// quiet without closing, a link given a window and a clock watches while it is owed something, a `taken` or an
+// answer: quiet for half the window, it asks whether the other end is there; quiet for the whole of it, with nothing
+// of any kind arriving, it closes the connection, to be opened again. Nothing is given a time to answer in.
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
 
@@ -73,6 +78,11 @@ export interface Link {
   kept(): number
   /** How many frames wait to be numbered, because the other end is behind or there is no connection. */
   waiting(): number
+  /**
+   * Says this end is owed something by the other, an answer, so that a quiet connection is watched while it is.
+   * Call what it returns when it has come, or is no longer wanted.
+   */
+  awaiting(): () => void
 }
 
 /** What an end says of itself. None takes a number. */
@@ -81,6 +91,9 @@ type Hello = { readonly link: number; readonly session: string; readonly taken: 
 type Taken = { readonly taken: number }
 type Goodbye = { readonly bye: Bye }
 type Lost = { readonly lost: true }
+/** Whether the other end is there, and that it is. */
+type There = { readonly there: number }
+type Here = { readonly here: number }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
@@ -94,7 +107,16 @@ export interface Options {
    * before the link ends `overrun`.
    */
   bound?: { readonly kept?: Size; readonly waiting?: Size }
+  /**
+   * For a connection that can go quiet without closing: how long a connection may be quiet while this end is owed
+   * something, and the clock that says when that long has passed. Without it, only a connection closing says the
+   * other end has gone, which is all two ends on one machine need.
+   */
+  there?: { readonly window: number; readonly clock: Clock }
 }
+
+/** A clock, handed in: `after` runs something once, that long from now, unless what it returns is called first. */
+export interface Clock { after(ms: number, run: () => void): () => void }
 
 /** A link a little behind sends at once; one far behind lets a view's results be overtaken; one past it ends. */
 const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
@@ -131,6 +153,10 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const hears: Array<(frame: Frame) => void> = []
   const ends: Array<(ending: Ending) => void> = []
   const once = typeof over === 'object'
+  /** How many things this end is owed beside a `taken`, and the watch on a quiet connection while it is owed any. */
+  let owed = 0
+  let watching: (() => void) | undefined
+  let asked = 0
 
   /** The connection a link is on now, with what is said on it this turn. */
   interface Connection {
@@ -168,6 +194,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const end = (why: Ending): void => {
     if (ending) return
     ending = why
+    watching?.()
+    watching = undefined
     kept = []
     waiting = []
     showing.clear()
@@ -201,6 +229,34 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     kept.push({ seq: sent, text })
     keptSize += text.length
     say(now!, text)
+    watch(false)
+  }
+
+  /**
+   * Watches a quiet connection while this end is owed something. `again` starts the window over, as anything
+   * arriving does; without it, a watch already running goes on.
+   */
+  const watch = (again: boolean): void => {
+    const there = options.there
+    if (!there) return
+    if (watching && !again) return
+    watching?.()
+    watching = undefined
+    const on = now
+    if (ending || !on?.met || (!kept.length && !owed)) return
+    const half = there.window / 2
+    watching = there.clock.after(half, () => {
+      watching = undefined
+      // Owed nothing now: nothing to ask.
+      if (now !== on || ending || (!kept.length && !owed)) return
+      asked++
+      say(on, JSON.stringify({ there: asked } satisfies There))
+      watching = there.clock.after(there.window - half, () => {
+        watching = undefined
+        // Nothing of any kind arrived for the whole window: this connection is let go, and another is made.
+        if (now === on && !ending) on.transport.close()
+      })
+    })
   }
   /** Numbers what waits, oldest first, for as long as there is room. */
   const pump = (): void => {
@@ -235,6 +291,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       return
     }
     if (arrived.lost === true) { end({ why: 'lost' }); return }
+    if (isCount(arrived.there)) { say(on, JSON.stringify({ here: arrived.there } satisfies Here)); return }
+    if (isCount(arrived.here)) return
     if (arrived.bye === 'ended') { end({ why: 'goodbye', bye: 'ended' }); return }
     if (arrived.bye === 'restarting') {
       // A link that comes back waits for the other end to: if it comes back a new session, that is lost.
@@ -281,8 +339,10 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
         take(on, one, unknown)
       }
       // Anything arriving is when a link looks again at whether there is room to number what waits: a transport
-      // that had not written all it was given says nothing when it has.
+      // that had not written all it was given says nothing when it has. And it starts a quiet connection's window
+      // over.
       pump()
+      watch(true)
     })
     say(on, JSON.stringify({ link: LINK, session: mine, taken: heard, ...(on.first ? {} : { again: true }) } satisfies Hello))
     told = heard
@@ -323,6 +383,16 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     },
     carry,
     kept: () => kept.length,
+    awaiting: () => {
+      owed++
+      watch(false)
+      let settled = false
+      return () => {
+        if (settled) return
+        settled = true
+        owed--
+      }
+    },
     waiting: () => waiting.length,
   }
   if (typeof over === 'object') carry(over)

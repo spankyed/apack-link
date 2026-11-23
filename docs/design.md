@@ -103,6 +103,7 @@ only a frame is numbered. A link that numbered its own words would have more to 
 | `{ "link": 1, "session": s, "taken": n }` | Hello: which link, which session this end is, and the last number it took. First on each connection, and nothing is taken before it. `"again": true` on every connection after an end's first |
 | `{ "taken": n }` | The last number this end took. In a batch when it has more to say of it |
 | `{ "lost": true }` | The session cannot be picked up again; the link ends `lost` |
+| `{ "there": n }`, `{ "here": n }` | Whether the other end is there, and that it is, with the same number |
 | `{ "bye": "restarting" }` | This end is going on purpose and is to be reached again |
 | `{ "bye": "ended" }` | This end is going on purpose and is not coming back |
 
@@ -180,6 +181,18 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   process instead.
 - **What is kept is never let go before it is taken.** Numbering stops at its mark, so it does not pass its
   bound, and a resume never finds what it needs gone.
+
+## Knowing the other end is there
+
+- **What carries a link saying it closed is the first word**, and for two ends on one machine the only one needed:
+  a process that ends closes its sockets.
+- **For a connection that can go quiet without closing**, a link is given a window and a clock (`there`). While it
+  is owed something (a `taken` for what it sent, or an answer: a peer says so with `link.awaiting()` for each ask
+  it waits on) and nothing at all has arrived for half the window, it sends `{ there: n }`. The other end answers
+  `{ here: n }` at once. After a whole window in which nothing of any kind arrived, it closes the connection, and
+  step 5 opens another. Anything arriving starts the window over; what this end sends does not.
+- **Owed nothing, it sends nothing**, however long it is quiet.
+- **Nothing is given a time to answer in.** An ask that takes an hour, with the other end there, is left alone.
 
 ## What a link is carried on
 
@@ -274,7 +287,7 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-step 4 (a socket, a port and a stream) step 5 (a connection that comes back) and step 6 (a bound).
+step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound) and step 7 (knowing the other end is there).
 
 ## What is not decided
 

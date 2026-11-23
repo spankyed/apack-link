@@ -49,6 +49,11 @@ and so can keep all of it in order.
   numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
   matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
   `link(transport, { bound: { kept, waiting } })` sets both, in frames and in length of text.
+- **Never a time to answer in.** What carries a link saying it closed is how an end knows the other has gone. For
+  a connection that can go quiet without closing, `link(open, { there: { window, clock } })`: while this end is
+  owed something, a `taken` or an answer, and nothing at all has arrived for half the window, it asks whether the
+  other end is there. After a whole window with nothing arriving, it opens another connection. An ask that takes an
+  hour is not a link that has gone.
 - **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
@@ -170,7 +175,7 @@ be done:
 4. A socket, a message port and a stream of bytes to be carried on. **Built.**
 5. A connection that comes back, with nothing taken twice. **Built.**
 6. A bound on what waits, with a view's overtaken update let go. **Built.**
-7. Knowing the other end is there by what it does, never by a time to reply.
+7. Knowing the other end is there by what it does, never by a time to reply. **Built.**
 8. What caused a frame, a tap that never sees what one carries, and frames that are private.
 9. Bytes, and frames too large for one write.
 10. Releases apack can pin, and the wire written down once.
