@@ -260,9 +260,9 @@ things beyond what is below. A hello says which session it is going on with (`re
 one, and a link that can come back numbers nothing until it has met the other end: an end that has met nobody
 has handed nothing to anybody, so a window whose first connection reached nobody, or dropped before it heard
 anything, starts afresh with whichever backend it meets, and a backend that restarted finds a window going on
-with another session and says `lost`. And `open` is called again in a later turn, never the one a connection
-closed in, or when a clock handed in says (`Options.reopen`), waiting longer for each connection in a row that
-met nobody.
+with another session and says `lost`. And `open` is called again when a clock handed in says
+(`Options.reopen`, without which such a link is not made), waiting longer for each connection in a row that did
+not hold, and not at all after one that did.
 
 A link outlives what carries it.
 

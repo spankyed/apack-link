@@ -46,14 +46,17 @@ and so can keep all of it in order.
 - **A window hears of a step after its views show it.** What a system says to the other end waits until the views
   it runs for that end have caught up with what was kept before it was said. A view's own updates are what is
   waited for, and go at once.
-- **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
-  number. The link goes on, with nothing missing before the next frame.
-- **One write a turn.** What an end sends within one turn of the event loop crosses as one text.
+- **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number: a
+  `TypeError` for one that cannot be put into text, a `RangeError` for one larger than a frame may be
+  (`bound.frame`, 64 MiB unless given) or than what the link is carried on takes. The link goes on, with nothing
+  missing before the next frame. Through `join`, the one ask or view it belonged to fails, and no other.
+- **One write a turn.** What an end sends within one turn of the event loop crosses as one text. Where what
+  carries it takes no message that long (`Transport.most`), it crosses as the fewest that fit, cut between
+  frames, in order: a link never hands a transport more than it takes.
 - **Bounded.** How far behind the other end is, is what it has not said it took. Past a mark a link stops
   numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
-  matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much; a
-  single frame larger than that bound ends it the same way where it is sent.
-  `link(transport, { bound: { kept, waiting } })` sets both, in frames and in bytes. Every size a link counts or
+  matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
+  `link(transport, { bound: { kept, waiting, frame } })` sets them, in frames and in bytes. Every size a link counts or
   reports is in bytes of text as UTF-8, which is what a transport counts what it has not written in.
 - **Never a time to answer in.** What carries a link saying it closed is how an end knows the other has gone. For
   a connection that can go quiet without closing, `link(open, { there: { window, clock } })`: while this end is
@@ -64,9 +67,11 @@ and so can keep all of it in order.
   listener is still called, and the link goes on. What was thrown is handed to `link(…, { thrown })`, or thrown
   again in a turn of its own, to be reported as anything uncaught is. A system joined to a link is a listener:
   one that throws where it is told, answered or shown is told, answered and shown everything after.
-- **Closing sends what was sent.** `close()` on a connection where the other end has been met sends everything
-  sent before it, what waited for room included, and then the goodbye. What waited for a connection, or for the
-  other end to be met on one, has nowhere to go and is let go.
+- **Closing sends what was sent.** `close()` sends everything sent before it, what waited for room included, and
+  then the goodbye, wherever it can arrive no more than once: on a connection where the other end has been met,
+  and on any connection of an end that has never met anybody, so a window that says one thing and closes is
+  heard. What waited with no connection, or on one where an end met before has not been met again, has nowhere
+  to go and is let go.
 - **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
@@ -109,23 +114,26 @@ A link that comes back is given what opens a connection, and a backend takes con
 each to its link:
 
 ```ts
-import { accept, link, socket } from '@apackdev/link'
+import { accept, link, socket, timers } from '@apackdev/link'
 
-// A window: opens a socket now, and another whenever one closes.
-const toBackend = link(() => socket(new WebSocket(url, [token])))
+// A window: opens a socket now, and another after each one closes, on the clock it is handed.
+const toBackend = link(() => socket(new WebSocket(url, [token])), { reopen: { clock: timers } })
 
 // A backend: a new session is a new link; a known one is handed back to the link it was.
 const take = accept((link) => { /* join(link, backendPort) */ })
 server.on('connection', (ws) => take(socket(ws)))
 ```
 
-A link has no clock of its own. When a connection closes, `open` is called again in a later turn of the event
-loop, never within the one it closed in. Given a clock, `link(open, { reopen: { clock, first, most } })`, it waits
-before opening after a connection on which the other end was never met: `first` milliseconds (100), doubled for
-each such connection in a row, `most` (10 000) at most, and not at all after one on which it was met. Anything
-that dials over a network should be given one: without it a link whose connections fail at once opens one every
-turn. A transport that throws where it is handed something to send is a connection that has gone, and what it
-was handed is sent again on the next.
+A link has no clock of its own, and one that opens its own connections is not made without being handed one:
+`link(open, { reopen: { clock, first, most } })` (`timers` is a clock on `setTimeout`, to hand it). A connection
+has held once it has stayed up, after the other end said hello on it, for as long as the wait before it was
+opened, and `first` at least. After one that held, the next is opened at once. After one that did not, met or
+not, the link waits `first` milliseconds (100), doubled for each such connection in a row, `most` (10 000) at
+most. So a backend that is not there, and one that says hello and goes every time, are each dialled ever more
+slowly, and a connection that drops after doing its work is dialled again at once.
+
+A transport that throws where it is handed something to send is a connection that has gone: what it was handed
+is sent again on the next, and what it threw goes to `thrown`, since none of the transports here throws.
 
 Whoever holds a link says when the other end is gone for good, with `close()`: until then what was sent is kept.
 `accept` keeps each link until it ends, so a backend closes the link of a window it knows is gone; nothing ends
@@ -142,7 +150,7 @@ order, until it closes. Four are here, and none imports what it is carried on:
 |---|---|
 | `socket(ws)` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. What is sent while it is opening waits for it to open |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
-| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (160 MiB unless given, twice what a link's default bounds allow it to hold) closes the stream, as does anything that is not a message, and the stream beneath is destroyed |
+| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed. A link carried on it is told `most`, and sends nothing longer |
 | `memoryPair()` | Two ends in memory, for specs |
 
 Whoever holds the socket opens it, with whatever it needs to be let in.

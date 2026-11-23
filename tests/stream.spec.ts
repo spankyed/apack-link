@@ -2,7 +2,7 @@
 // came in, within a bound on how long a message may claim to be, and letting go of the stream beneath when it
 // closes for what arrived. The stream beneath is one the spec feeds by hand.
 import { describe, expect, it } from 'vitest'
-import { BOUND, stream, type DuplexLike, type Message } from '../src/index.ts'
+import { stream, type DuplexLike, type Message } from '../src/index.ts'
 
 /** A stream the spec is the other end of: `feed` hands it a piece, and what was written, ended or let go is noted. */
 const fed = (has: { destroy: boolean } = { destroy: true }) => {
@@ -131,8 +131,10 @@ describe('a message longer than a stream takes', () => {
     expect(heard).toHaveLength(1)
   })
 
-  it('is, unless told, more than a link with the bounds it has by default puts in one message', () => {
-    const most = 2 * (BOUND.kept.size + BOUND.waiting.size)
+  it('is, unless told, one of more than 128 MiB, and the transport says so', () => {
+    const most = 128 * 1024 * 1024
+    expect(stream(fed().duplex).most).toBe(most)
+    expect(stream(fed().duplex, { most: 10 }).most).toBe(10)
     const within = fed()
     const taking = listening(within.duplex)
     within.feed(framed(1, new Uint8Array(0), most))

@@ -18,14 +18,17 @@
 // again what the other has not taken, in order, and goes on; since a frame is taken only in turn, nothing is taken
 // twice. A link that can come back numbers nothing until it has met the other end, so an end that has met nobody
 // has sent nothing anybody could have taken, and starts afresh with whoever it meets. A link given what opens a
-// connection opens another when one closes, in a later turn, or when the clock it was given says; a link made with
-// nothing is handed each connection (`carry`), as a backend's are by `accept`. Neither is given a time to wait for
-// the other end in: whoever holds a link says when the other end is gone, with `close`.
+// connection opens another when one closes, when the clock it was given says; a link made with nothing is handed
+// each connection (`carry`), as a backend's are by `accept`. Neither is given a time to wait for the other end
+// in: whoever holds a link says when the other end is gone, with `close`.
 //
 // What is kept is bounded. How far behind the other end is, is what it has not said it took: past a mark, a link
 // stops numbering, and what is sent waits unnumbered, where a view's result that a later one has overtaken can be
-// let go. What waits is bounded too, and past it, with nothing left to let go, the link ends `overrun`. Every size
-// is in bytes, of text as UTF-8.
+// let go. What waits is bounded too, and past it, with nothing left to let go, the link ends `overrun`. One frame
+// is bounded as well, and one past it is refused where it is sent. Every size is in bytes, of text as UTF-8.
+//
+// What carries a link may take no message longer than it says (`most`). A batch that would be longer crosses as
+// more than one, cut between frames, in order.
 //
 // What carries a link saying it closed is the first word that the other end has gone. For a connection that can go
 // quiet without closing, a link given a window and a clock watches while it is owed something, a `taken` or an
@@ -58,6 +61,11 @@ export type Ending =
   | { readonly why: 'not a frame'; readonly size: number }
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
+  /**
+   * Something this end had taken on to send is longer than what the link is now carried on takes in one message:
+   * how many bytes it is, and the most that takes. A frame sent while carried on that is refused where it is sent.
+   */
+  | { readonly why: 'too large'; readonly size: number; readonly most: number }
 
 /** How much: a count of frames, and how many bytes their text is as UTF-8. */
 export interface Size { readonly frames: number; readonly size: number }
@@ -84,11 +92,17 @@ export type Traffic =
 
 export interface Link {
   /**
-   * Sends a frame. Throws if the frame cannot be put into text, having sent nothing and taken no number: that one
-   * frame is refused, and the link goes on. While there is no connection it waits, and leaves on the next. After
-   * the link has closed it sends nothing. A frame larger than the bound on what waits ends the link `overrun`.
+   * Sends a frame. Throws if the frame cannot be sent, having sent nothing and taken no number: that one frame is
+   * refused, and the link goes on. A `TypeError` for one that cannot be put into text, and a `RangeError` for one
+   * larger, with its cause, than `bound.frame` or than what the link is carried on takes. While there is no
+   * connection it waits, and leaves on the next. After the link has closed it sends nothing.
    */
   send(frame: Frame, how?: Sending): void
+  /**
+   * Throws what `send` would throw for this frame now, and sends nothing: for what is to be sent later, to be
+   * refused where it was said.
+   */
+  check(frame: Frame, how?: Sending): void
   /**
    * Called with each frame the other end sent, in the order it sent them, once each, with what caused it. One that
    * throws stops nothing: the others are called, the frames after it are taken, and what it threw goes to `thrown`.
@@ -99,11 +113,13 @@ export interface Link {
   /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. */
   onEnd(ended: (ending: Ending) => void): void
   /**
-   * Closes the link. On a connection where the other end has been met, or the only one of a link that does not come
-   * back, everything sent before leaves first, what waited for room included. Then a goodbye, if one is given, on
-   * whatever connection there is, so the other end's ending says which it was. What waited for a connection, or
-   * for the other end to be met on one, has nowhere to go, and is let go with what was kept. This is also how
-   * whoever holds a link says the other end is gone for good.
+   * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
+   * no more than once: on a connection where the other end has been met, on the only one of a link that does not
+   * come back, and on a connection of an end that has never met anybody, which has nothing sent before to be out
+   * of step with. Then a goodbye, if one is given, on whatever connection there is, so the other end's ending
+   * says which it was. What waited with no connection, or on one where an end met before has not been met again,
+   * has nowhere to go, and is let go with what was kept. This is also how whoever holds a link says the other end
+   * is gone for good.
    */
   close(bye?: Bye): void
   /** Hands the link a connection to be carried on, in place of the one it has. */
@@ -138,50 +154,62 @@ export interface Options {
   /**
    * `kept`: how much sent and not yet taken there may be before a link stops numbering what is sent, counted as
    * well against what the transport says it has not yet written. `waiting`: how much may wait to be numbered
-   * before the link ends `overrun`.
+   * before the link ends `overrun`. `frame`: how many bytes one frame and its cause may be, past which it is
+   * refused where it is sent; 64 MiB unless given, and 1024 at least.
    */
-  bound?: { readonly kept?: Size; readonly waiting?: Size }
+  bound?: { readonly kept?: Size; readonly waiting?: Size; readonly frame?: number }
   /**
    * For a connection that can go quiet without closing: how long a connection may be quiet while this end is owed
    * something, and the clock that says when that long has passed. Without it, only a connection closing says the
    * other end has gone, which is all two ends on one machine need.
    */
   there?: { readonly window: number; readonly clock: Clock }
+  /** How a link given what opens a connection paces opening another. Such a link is not made without it. */
+  reopen?: Reopen
   /**
-   * How a link given what opens a connection paces opening another. After a connection on which the other end was
-   * met, the next is opened as soon as the clock runs something asked for after no time. After one on which it
-   * was not, the wait is `first` milliseconds (100 unless given), doubled for each such connection in a row, and
-   * never more than `most` (10 000 unless given). Without a clock a link waits on none: each connection is opened
-   * in a turn of the event loop after the one before it closed, however many close unmet.
-   */
-  reopen?: { readonly clock: Clock; readonly first?: number; readonly most?: number }
-  /**
-   * Handed what a listener threw (`onFrame`, `onEnd`), or what opening a connection threw. Without it, each is
-   * thrown again in a turn of its own, to be reported as anything uncaught is.
+   * Handed what a listener threw (`onFrame`, `onEnd`), what opening a connection threw, or what a transport threw
+   * where it was handed something to send. Without it, each is thrown again in a turn of its own, to be reported
+   * as anything uncaught is.
    */
   thrown?(error: unknown): void
 }
 
+/**
+ * How opening a connection again is paced, on a clock handed in. A connection has held once it has stayed up,
+ * after the other end said hello on it, for as long as the wait before it was opened, and for `first` at least.
+ * After one that held, the next is opened as soon as the clock runs something asked for after no time. After one
+ * that did not, met or not, the wait is `first` milliseconds (100 unless given), doubled for each such connection
+ * in a row, and never more than `most` (10 000 unless given).
+ */
+export interface Reopen { readonly clock: Clock; readonly first?: number; readonly most?: number }
+
 /** A clock, handed in: `after` runs something once, that long from now, unless what it returns is called first. */
 export interface Clock { after(ms: number, run: () => void): () => void }
+
+/**
+ * A clock on the timers a window and Node both have, for whoever makes a link to hand it. A link reaches for no
+ * clock itself: it has this one only where it is given it.
+ */
+export const timers: Clock = {
+  after: (ms, run) => {
+    const timer = setTimeout(run, ms)
+    return () => { clearTimeout(timer) }
+  },
+}
 
 /** A link a little behind sends at once; one far behind lets a view's results be overtaken; one past it ends. */
 const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
 const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
-/** The bounds a link has unless given others. */
-export const BOUND: { readonly kept: Size; readonly waiting: Size } = { kept: KEPT, waiting: WAITING }
+/** How many bytes one frame and its cause may be, unless given. */
+const FRAME = 64 * 1024 * 1024
+/** The least `bound.frame` may be: more than anything a peer says in place of what could not be sent. */
+const SMALLEST = 1024
+/** More than everything a link puts around a frame and its cause where it numbers it: a number, and the names. */
+const AROUND = 64
 
-/** How long a link with a clock waits to open a connection after the first that met nobody, and the most it waits. */
+/** How long a link waits to open a connection after the first that did not hold, and the most it waits. */
 const REOPEN_FIRST = 100
 const REOPEN_MOST = 10_000
-
-/** Runs something in a later turn of the event loop, on no clock: a message to itself. */
-const nextTurn = (run: () => void): void => {
-  const { port1, port2 } = new MessageChannel()
-  // A port given a listener this way is started by it, in a window and in Node alike.
-  ;(port1 as unknown as { onmessage: (() => void) | null }).onmessage = () => { port1.close(); run() }
-  port2.postMessage(0)
-}
 
 /** What a tap may be told of a frame. */
 interface About {
@@ -209,11 +237,16 @@ const sizeOf = (message: Message): number => (typeof message === 'string' ? byte
 
 /**
  * Makes one end of a link. Given a transport, the link is carried on it alone and ends when it closes: what it
- * sends goes at once. Given what opens a transport, it opens one now and another after each one closes, paced by
- * `reopen`. Given nothing, it waits to be handed each connection with `carry`. A link of the last two kinds can
- * come back, and numbers nothing until the other end has said hello.
+ * sends goes at once. Given what opens a transport, and the clock to pace it on (`reopen`), it opens one now and
+ * another after each one closes. Given nothing, it waits to be handed each connection with `carry`. A link of the
+ * last two kinds can come back, and numbers nothing until the other end has said hello.
  */
+export function link(open: () => Transport, options: Options & { readonly reopen: Reopen }): Link
+export function link(over?: Transport, options?: Options): Link
 export function link(over?: Transport | (() => Transport), options: Options = {}): Link {
+  const pace = options.reopen
+  // Opening again with nothing to pace it is a link that spins while its connections fail: not one to be made.
+  if (typeof over === 'function' && !pace) throw new TypeError('A link that opens its own connections is given a clock to open them on')
   const later = options.later ?? queueMicrotask
   const mine = crypto.randomUUID()
   /** The other end's session, once it has said it. A connection from another is not this link's. */
@@ -229,6 +262,9 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   let keptSize = 0
   const mark = { ...KEPT, ...options.bound?.kept }
   const bound = { ...WAITING, ...options.bound?.waiting }
+  const largest = options.bound?.frame ?? FRAME
+  // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
+  if (largest < SMALLEST) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
   /** What was sent and waits to be numbered, as each frame's own text, oldest first, and the size of all of it. */
   let waiting: Array<{ text: string; size: number; about: About; readonly view?: number }> = []
   let waitingSize = 0
@@ -248,9 +284,13 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   }
   /** Whether this link is carried on one connection alone, and ends with it. */
   const once = typeof over === 'object'
-  /** How many connections in a row have gone with nobody met on them, and what calls off the next being opened. */
-  let unmet = 0
+  /** How many connections in a row have gone without having held, and what calls off the next being opened. */
+  let failed = 0
   let reopening: (() => void) | undefined
+  /** What calls off finding that the connection this link is on has held. */
+  let holding: (() => void) | undefined
+  /** How long the wait is before a connection is opened, after that many in a row that did not hold. */
+  const wait = (after: number): number => (after ? Math.min(pace?.most ?? REOPEN_MOST, (pace?.first ?? REOPEN_FIRST) * 2 ** (after - 1)) : 0)
   /** How many things this end is owed beside a `taken`, and the watch on a quiet connection while it is owed any. */
   let owed = 0
   let watching: (() => void) | undefined
@@ -263,57 +303,80 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     met: boolean
     /** Whether what is sent goes out on it now: at once on the one connection of a link that does not come back, and on any other once the other end has said hello. */
     live: boolean
+    /** Whether it has held: stayed up, once the other end was met, for as long as the wait before it. */
+    held: boolean
+    /** What is said on it this turn, and how many bytes each is. */
     batch: string[]
+    sizes: number[]
     due: boolean
   }
   let now: Connection | undefined
 
-  /** Opens the next connection of a link given what opens one: when the clock says, or in a later turn. */
+  /** Opens the next connection of a link given what opens one, when the clock says. */
   const reopen = (): void => {
     const open = over as () => Transport
     let off = false
-    const go = (): void => {
+    const stop = pace!.clock.after(wait(failed), () => {
       if (off) return
       reopening = undefined
       if (ending || now) return
       let transport: Transport
-      // What cannot be opened is a connection that met nobody.
-      try { transport = open() } catch (error) { unmet++; reopen(); report(error); return }
+      // What cannot be opened is a connection that did not hold.
+      try { transport = open() } catch (error) { failed++; reopen(); report(error); return }
       carry(transport)
-    }
-    const pace = options.reopen
-    const stop = pace
-      ? pace.clock.after(unmet ? Math.min(pace.most ?? REOPEN_MOST, (pace.first ?? REOPEN_FIRST) * 2 ** (unmet - 1)) : 0, go)
-      : (nextTurn(go), undefined)
-    reopening = () => { off = true; stop?.() }
+    })
+    reopening = () => { off = true; stop() }
   }
   /** A connection has gone: a link that does not come back ends, and one that opens its own opens another. */
   const dropped = (on: Connection): void => {
     if (now !== on) return
     now = undefined
+    holding?.()
+    holding = undefined
     if (ending) return
     if (once) { end({ why: 'closed' }); return }
-    if (!on.met) unmet++
+    failed = on.held ? 0 : failed + 1
     if (typeof over === 'function') reopen()
   }
+  /** Puts something in what is said on a connection this turn. What a link says of itself is a byte a character. */
+  const put = (on: Connection, text: string, size = text.length): void => { on.batch.push(text); on.sizes.push(size) }
 
   const flush = (on: Connection): void => {
     on.due = false
     if (ending || now !== on) return
     if (!on.batch.length && !(on.met && heard > told)) return
     // What this end has taken goes with it, when there is more to say of it: last, behind a hello if there is one.
-    if (on.met && heard > told) { on.batch.push(JSON.stringify({ taken: heard } satisfies Taken)); told = heard }
-    const text = `[${on.batch.join(',')}]`
+    if (on.met && heard > told) { put(on, JSON.stringify({ taken: heard } satisfies Taken)); told = heard }
+    const { batch, sizes } = on
     on.batch = []
+    on.sizes = []
+    // One text, unless what carries it takes no message that long: then as few as it takes, cut between what was
+    // said, in order. A text of `n` things is their bytes, a comma between each two, and two more around them.
+    const most = on.transport.most ?? Infinity
+    const texts: string[] = []
+    let from = 0
+    let bytes = 2
+    for (let at = 0; at < batch.length; at++) {
+      const size = sizes[at]!
+      if (size + 2 > most) { end({ why: 'too large', size, most }); return }
+      if (at > from && bytes + 1 + size > most) {
+        texts.push(`[${batch.slice(from, at).join(',')}]`)
+        from = at
+        bytes = 2
+      }
+      bytes += size + (at > from ? 1 : 0)
+    }
+    texts.push(`[${(from ? batch.slice(from) : batch).join(',')}]`)
     // A transport that cannot send is a connection that has gone. Every frame in the batch is kept, and is sent
-    // again on the next.
-    try { on.transport.send(text) } catch {
+    // again on the next. None of those here throws, so what one threw is handed on as well.
+    try { for (const text of texts) on.transport.send(text) } catch (error) {
       dropped(on)
       try { on.transport.close() } catch { /* it has gone already */ }
+      report(error)
     }
   }
-  const say = (on: Connection, text: string): void => {
-    on.batch.push(text)
+  const say = (on: Connection, text: string, size?: number): void => {
+    put(on, text, size)
     if (on.due) return
     on.due = true
     later(() => flush(on))
@@ -326,6 +389,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     watching = undefined
     reopening?.()
     reopening = undefined
+    holding?.()
+    holding = undefined
     kept = []
     waiting = []
     showing.clear()
@@ -336,7 +401,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   }
   /** Says the session cannot go on, and ends. */
   const lose = (on: Connection): void => {
-    on.batch.push(JSON.stringify({ lost: true } satisfies Lost))
+    put(on, JSON.stringify({ lost: true } satisfies Lost))
     flush(on)
     end({ why: 'lost' })
   }
@@ -365,7 +430,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     const size = frameSize + (text.length - frameText.length - cause.length) + bytesOf(cause)
     kept.push({ seq: sent, text, size })
     keptSize += size
-    say(now!, text)
+    say(now!, text, size)
     tap(seen('out', sent, size, about))
     watch(false)
   }
@@ -424,10 +489,12 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       if (!letGo(taken)) { lose(on); return }
       theirs = session
       on.met = true
-      unmet = 0
+      // It has held once it has stayed up from here for as long as the wait before it, and for the first wait at
+      // least: one that goes sooner is one more that did not.
+      if (pace && typeof over === 'function') holding = pace.clock.after(Math.max(wait(1), wait(failed)), () => { holding = undefined; on.held = true })
       if (!on.live) {
         on.live = true
-        for (const one of kept) on.batch.push(one.text)
+        for (const one of kept) put(on, one.text, one.size)
         if (on.batch.length && !on.due) { on.due = true; later(() => flush(on)) }
       }
       return
@@ -461,8 +528,10 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     if (ending) { transport.close(); return }
     reopening?.()
     reopening = undefined
+    holding?.()
+    holding = undefined
     const was = now
-    const on: Connection = { transport, met: false, live: once, batch: [], due: false }
+    const on: Connection = { transport, met: false, live: once, held: false, batch: [], sizes: [], due: false }
     now = on
     was?.transport.close()
     transport.onClose(() => dropped(on))
@@ -487,19 +556,27 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
     told = heard
   }
 
+  /**
+   * A frame as text, and how many bytes that is. Throws for one that cannot be sent: one that cannot be put into
+   * text, or one larger, with its cause, than a frame may be or than what the link is carried on now takes in a
+   * message. Nothing thrown says what the frame holds.
+   */
+  const sendable = (frame: Frame, how: Sending): { readonly text: string; readonly size: number } => {
+    const text = toText(frame)
+    const size = bytesOf(text)
+    const whole = size + (how.cause === undefined ? 0 : bytesOf(JSON.stringify(how.cause)))
+    if (whole > largest || whole + AROUND > (now?.transport.most ?? Infinity)) throw new RangeError('A frame is larger than may be sent')
+    return { text, size }
+  }
+
   const made: Link = {
+    check: (frame, how = {}) => { if (!ending) sendable(frame, how) },
     send: (frame, how = {}) => {
       if (ending) return
-      // Put into text before it is numbered: a frame that cannot be is refused alone, and leaves no gap behind it.
-      const text = toText(frame)
-      const size = bytesOf(text)
+      // Put into text and measured before it is numbered: a frame that cannot be sent is refused alone, and leaves
+      // no gap behind it.
+      const { text, size } = sendable(frame, how)
       const about = aboutOf(frame, how)
-      // A frame larger than all that may wait is not sent, even with room: nothing a link puts in one message is
-      // more than what it may keep and one frame that waited.
-      if (size > bound.size) {
-        end({ why: 'overrun', waiting: { frames: waiting.length + 1, size: waitingSize + size }, bound: { frames: bound.frames, size: bound.size } })
-        return
-      }
       if (!waiting.length && roomy()) { number(text, size, about); return }
       // A view's result waiting to be numbered is overtaken by a later one, which takes its place in the order.
       const view = frame.kind === 'shown' ? frame.id : undefined
@@ -528,8 +605,10 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       // is the last this end sends, so the mark that room is counted against no longer holds anything back.
       const on = now
       if (on) {
-        if (on.live) while (waiting.length) next()
-        if (bye) on.batch.push(JSON.stringify({ bye } satisfies Goodbye))
+        // An end that has met nobody has numbered nothing: what it numbers now arrives once or not at all, since
+        // it sends nothing again.
+        if (on.live || theirs === undefined) while (waiting.length) next()
+        if (bye) put(on, JSON.stringify({ bye } satisfies Goodbye))
         flush(on)
       }
       end({ why: 'closed' })
@@ -578,6 +657,8 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
       onData: (heard) => { hears.push(heard) },
       onClose: (then) => { if (closed) then(); else closes.push(then) },
       close: () => transport.close(),
+      ...(transport.waiting ? { waiting: () => transport.waiting!() } : {}),
+      ...(transport.most === undefined ? {} : { most: transport.most }),
     }
     transport.onClose(() => { closed = true; for (const then of closes.splice(0)) then() })
     transport.onData((message) => {

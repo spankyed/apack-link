@@ -1,133 +1,184 @@
-// Opening a connection again: never in the turn the last one closed in, on a clock the link is handed when it has
-// one, waiting longer for each connection in a row that met nobody, and on none of its own.
+// Opening a connection again: on the clock the link is handed and never without one, waiting longer for each
+// connection in a row that did not hold, and at once after one that did.
 import { describe, expect, it } from 'vitest'
-import { link, type Clock, type Message, type Transport } from '../src/index.ts'
+import { link, timers, type Clock, type Message, type Transport } from '../src/index.ts'
 
-const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
-const until = async (done: () => boolean): Promise<void> => { while (!done()) await turn() }
-
-/** A clock that notes how long it was asked to wait, and waits until the spec says. */
-const notedClock = () => {
-  const asked: number[] = []
-  let waiting: (() => void) | undefined
-  let calledOff = 0
+/** A clock the spec moves: what falls due as it is moved on runs, in the order it falls due. */
+const moved = () => {
+  let at = 0
+  const waiting = new Set<{ readonly due: number; readonly run: () => void }>()
   const clock: Clock = {
     after: (ms, run) => {
-      asked.push(ms)
-      waiting = run
-      return () => { if (waiting === run) { waiting = undefined; calledOff++ } }
+      const timer = { due: at + ms, run }
+      waiting.add(timer)
+      return () => { waiting.delete(timer) }
     },
   }
-  return { clock, asked, calledOff: () => calledOff, pending: () => waiting !== undefined, pass: () => { const run = waiting; waiting = undefined; run?.() } }
+  return {
+    clock,
+    waiting: () => waiting.size,
+    pass: (ms: number): void => {
+      const until = at + ms
+      for (;;) {
+        const next = [...waiting].filter((timer) => timer.due <= until).sort((x, y) => x.due - y.due)[0]
+        if (!next) break
+        waiting.delete(next)
+        at = next.due
+        next.run()
+      }
+      at = until
+    },
+  }
 }
 
 /** What opens connections the spec holds the other end of: it says when each closes, and what arrives on it. */
 const dialled = () => {
-  const made: Array<{ close(): void; hello(): void; closed: number }> = []
+  const made: Array<{ close(): void; hello(): void }> = []
   const open = (): Transport => {
     let closes: (() => void) | undefined
     let hears: ((message: Message) => void) | undefined
-    const one = {
-      closed: 0,
+    made.push({
       close: () => { closes?.() },
-      hello: () => { hears?.(JSON.stringify([{ link: 1, session: 'backend', taken: 0 }])) },
-    }
-    made.push(one)
-    return { send: () => {}, onData: (heard) => { hears = heard }, onClose: (closed) => { closes = closed }, close: () => { one.closed++ } }
+      hello: () => { hears?.(JSON.stringify([{ link: 1, session: 'backend', taken: 0}])) },
+    })
+    return { send: () => {}, onData: (heard) => { hears = heard }, onClose: (closed) => { closes = closed }, close: () => {} }
   }
   return { open, made }
 }
 
-describe('a link with a clock to open again on', () => {
-  it('waits longer for each connection in a row that met nobody, up to the most, and starts over once it meets one', () => {
-    const { clock, asked, pass } = notedClock()
+/** The latest connection closes, and the next is opened when exactly `wait` has passed, not before. */
+const closesAndWaits = (made: ReadonlyArray<{ close(): void }>, pass: (ms: number) => void, wait: number): void => {
+  const before = made.length
+  made.at(-1)!.close()
+  expect(made).toHaveLength(before)
+  if (wait > 0) {
+    pass(wait - 1)
+    expect([wait, made.length]).toEqual([wait, before])
+    pass(1)
+  } else pass(0)
+  expect([wait, made.length]).toEqual([wait, before + 1])
+}
+
+describe('a link that opens its own connections', () => {
+  it('is not made without a clock to open them on, and opens nothing', () => {
+    const { open, made } = dialled()
+    expect(() => link(open as never)).toThrow(TypeError)
+    expect(() => link(open as never, {})).toThrow(TypeError)
+    expect(made).toHaveLength(0)
+  })
+
+  it('waits longer for each connection in a row that met nobody, up to the most', () => {
+    const { clock, pass } = moved()
     const { open, made } = dialled()
     link(open, { reopen: { clock, first: 100, most: 1000 } })
-    for (let failed = 0; failed < 7; failed++) {
-      made.at(-1)!.close()
-      // Nothing is opened until the clock says.
-      expect(made).toHaveLength(failed + 1)
-      pass()
-      expect(made).toHaveLength(failed + 2)
-    }
-    expect(asked).toEqual([100, 200, 400, 800, 1000, 1000, 1000])
-    // One on which the other end said hello: the next is opened with no wait, and the count starts over.
-    made.at(-1)!.hello()
-    made.at(-1)!.close()
-    pass()
-    made.at(-1)!.close()
-    pass()
-    made.at(-1)!.close()
-    expect(asked.slice(7)).toEqual([0, 100, 200])
+    for (const wait of [100, 200, 400, 800, 1000, 1000, 1000]) closesAndWaits(made, pass, wait)
   })
 
   it('waits a tenth of a second first and ten seconds at most, unless told', () => {
-    const { clock, asked, pass } = notedClock()
+    const { clock, pass } = moved()
     const { open, made } = dialled()
     link(open, { reopen: { clock } })
-    for (let failed = 0; failed < 10; failed++) { made.at(-1)!.close(); pass() }
-    expect(asked).toEqual([100, 200, 400, 800, 1600, 3200, 6400, 10_000, 10_000, 10_000])
+    for (const wait of [100, 200, 400, 800, 1600, 3200, 6400, 10_000, 10_000]) closesAndWaits(made, pass, wait)
   })
 
-  it('opens nothing more once it has closed, and calls the wait off', () => {
-    const { clock, pass, calledOff } = notedClock()
+  it('opens the next at once after a connection that held, and starts the count over', () => {
+    const { clock, pass } = moved()
+    const { open, made } = dialled()
+    link(open, { reopen: { clock } })
+    closesAndWaits(made, pass, 100)
+    closesAndWaits(made, pass, 200)
+    // Met, and up for as long as the wait before it: it has held.
+    made.at(-1)!.hello()
+    pass(200)
+    closesAndWaits(made, pass, 0)
+    closesAndWaits(made, pass, 100)
+  })
+
+  it('counts a connection that met the other end and went before it had held as one more that did not', () => {
+    const { clock, pass } = moved()
+    const { open, made } = dialled()
+    link(open, { reopen: { clock } })
+    // An end that says hello and goes, every time, is dialled no faster than one that is not there.
+    for (const wait of [100, 200, 400]) {
+      made.at(-1)!.hello()
+      closesAndWaits(made, pass, wait)
+    }
+    // One short of as long as the wait before it.
+    made.at(-1)!.hello()
+    pass(399)
+    closesAndWaits(made, pass, 800)
+    // The first connection of all holds once it has been up for the first wait.
+    const fresh = dialled()
+    link(fresh.open, { reopen: { clock } })
+    fresh.made[0]!.hello()
+    pass(99)
+    closesAndWaits(fresh.made, pass, 100)
+  })
+
+  it('does not take a connection to have held because it stayed up without the other end being met', () => {
+    const { clock, pass } = moved()
+    const { open, made } = dialled()
+    link(open, { reopen: { clock } })
+    pass(60_000)
+    closesAndWaits(made, pass, 100)
+  })
+
+  it('opens nothing more once it has closed, and waits on nothing', () => {
+    const { clock, pass, waiting } = moved()
     const { open, made } = dialled()
     const a = link(open, { reopen: { clock } })
     made[0]!.close()
+    expect(waiting()).toBe(1)
     a.close()
-    expect(calledOff()).toBe(1)
-    pass()
+    expect(waiting()).toBe(0)
+    pass(60_000)
     expect(made).toHaveLength(1)
+    // Nor while a connection it was finding out about is up.
+    const held = dialled()
+    const b = link(held.open, { reopen: { clock } })
+    held.made[0]!.hello()
+    expect(waiting()).toBe(1)
+    b.close()
+    expect(waiting()).toBe(0)
   })
 
   it('is handed a connection in place of the one it was waiting to open', () => {
-    const { clock, pass, pending } = notedClock()
+    const { clock, pass, waiting } = moved()
     const { open, made } = dialled()
     const a = link(open, { reopen: { clock } })
     made[0]!.close()
-    const handed = dialled()
-    a.carry(handed.open())
-    expect(pending()).toBe(false)
-    pass()
+    a.carry(dialled().open())
+    expect(waiting()).toBe(0)
+    pass(60_000)
     expect(made).toHaveLength(1)
   })
 
-  it('counts what could not be opened as a connection that met nobody, and hands on what was thrown', () => {
-    const { clock, asked, pass } = notedClock()
+  it('counts what could not be opened as a connection that did not hold, and hands on what was thrown', () => {
+    const { clock, pass } = moved()
     const { open, made } = dialled()
     const thrown: unknown[] = []
     let refusing = false
     link(() => { if (refusing) throw new Error('refused'); return open() }, { reopen: { clock }, thrown: (error) => { thrown.push(error) } })
     refusing = true
     made[0]!.close()
-    pass()
-    pass()
-    refusing = false
-    pass()
-    expect(asked).toEqual([100, 200, 400])
+    // Refused after 100 and again after 200 more: the next is tried 400 after that.
+    pass(300)
     expect(thrown).toEqual([new Error('refused'), new Error('refused')])
+    refusing = false
+    pass(399)
+    expect(made).toHaveLength(1)
+    pass(1)
     expect(made).toHaveLength(2)
   })
 })
 
-describe('a link with no clock', () => {
-  it('opens one connection a turn at most, however fast they close, and none once it has closed', async () => {
-    let opened = 0
-    // Each of the first fifty connections closes as soon as it is asked to say when it has: enough to tell a link
-    // that opens them all in one turn, and an end to it for one that does.
-    const a = link(() => {
-      opened++
-      return { send: () => {}, onData: () => {}, onClose: (closed) => { if (opened < 50) closed() }, close: () => {} }
-    })
-    expect(opened).toBe(1)
-    // Everything a turn can still do without the event loop turning is done, and nothing more has been opened.
-    for (let hop = 0; hop < 1000; hop++) await Promise.resolve()
-    expect(opened).toBe(1)
-    // It does go on opening, as turns pass.
-    await until(() => opened >= 5)
-    a.close()
-    const before = opened
-    for (let turns = 0; turns < 5; turns++) await turn()
-    expect(opened).toBe(before)
+describe('the clock on timers', () => {
+  it('runs what it is asked to, later, and not what was called off first', async () => {
+    const ran: string[] = []
+    timers.after(0, () => { ran.push('first') })
+    timers.after(0, () => { ran.push('called off') })()
+    expect(ran).toEqual([])
+    await new Promise<void>((resolve) => { timers.after(1, resolve) })
+    expect(ran).toEqual(['first'])
   })
 })

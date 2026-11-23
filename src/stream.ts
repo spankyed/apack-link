@@ -3,8 +3,7 @@
 //
 // What arrives is kept as the pieces it came in, and a message is joined once, when all of it is here: the work
 // is in proportion to the bytes that arrive, however small the pieces. A head may claim no more than `most`, so
-// what is kept waiting for a message is bounded by it.
-import { BOUND } from './link.ts'
+// what is kept waiting for a message is bounded by it, and a link is told `most`, so it hands over nothing longer.
 import { once, type Message, type Transport } from './transport.ts'
 
 /** What a Node `Duplex` has, and all a link uses of one. */
@@ -23,9 +22,8 @@ export interface DuplexLike {
 export interface StreamOptions {
   /**
    * The longest message, in bytes, that is sent or taken: a head that claims more closes the stream, and so does
-   * sending more. Unless given, twice what a link with the bounds it has by default may keep and have one frame
-   * wait: more than such a link ever puts in one message. A link given larger bounds is to be given a larger `most`.
-   * Never more than a length in four bytes can say.
+   * sending more. 128 MiB unless given, and never more than a length in four bytes can say. The transport says it
+   * (`most`), and a link carried on it sends nothing longer, so both ends are to be given the same.
    */
   readonly most?: number
 }
@@ -34,7 +32,7 @@ export interface StreamOptions {
 const HEAD = 5
 const TEXT = 0
 const BYTES = 1
-const MOST = 2 * (BOUND.kept.size + BOUND.waiting.size)
+const MOST = 128 * 1024 * 1024
 const LONGEST = 0xffff_ffff
 
 const encoder = new TextEncoder()
@@ -136,6 +134,7 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
+    most,
     waiting: () => duplex.writableLength ?? 0,
     close: () => {
       if (closes.fired) return

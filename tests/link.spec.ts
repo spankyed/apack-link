@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { bytesOf, link, memoryPair, socket, type Ending, type Frame } from '../src/index.ts'
-import { everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
+import { accept, bytesOf, join, link, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
+import { asking, desk, everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
@@ -429,20 +429,193 @@ describe('a size', () => {
   })
 })
 
-describe('a frame larger than all that may wait', () => {
-  it('ends the link overrun where it is sent, with room or without, and is not sent', async () => {
+describe('a frame larger than a frame may be', () => {
+  const around = JSON.stringify(tell('')).length
+
+  it('is refused where it is sent, alone: the link goes on, and nothing is missing before the next', async () => {
     const [left, right] = memoryPair()
-    const a = link(left, { bound: { waiting: { frames: 100, size: 100 } } })
+    const a = link(left, { bound: { frame: 1024 } })
     const heard: Frame[] = []
     link(right).onFrame((frame) => { heard.push(frame) })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
-    a.send(tell('x'.repeat(60)))
+    const fits = tell('x'.repeat(1024 - around))
+    a.send(fits)
+    let thrown: unknown
+    try { a.send(tell('x'.repeat(1024 - around + 1))) } catch (error) { thrown = error }
+    // Nothing it says holds what the frame did.
+    expect(thrown).toBeInstanceOf(RangeError)
+    expect(thrown).toEqual(new RangeError('A frame is larger than may be sent'))
+    // Its cause is counted with it, and both in bytes: four hundred characters here are twelve hundred bytes.
+    expect(() => a.send(fits, { cause: 'c' })).toThrow(RangeError)
+    expect(() => a.send(tell('✓'.repeat(400)))).toThrow(RangeError)
+    expect(() => a.send(tell('small'), { cause: '✓'.repeat(400) })).toThrow(RangeError)
+    a.send(tell('after'))
+    await turn()
+    expect(heard).toEqual([fits, tell('after')])
     expect(ended).toEqual([])
-    a.send(tell('x'.repeat(100)))
-    expect(ended).toEqual([{ why: 'overrun', waiting: { frames: 1, size: JSON.stringify(tell('x'.repeat(100))).length }, bound: { frames: 100, size: 100 } }])
+  })
+
+  it('is found by asking, as it would be by sending, with nothing sent', async () => {
+    const [left, right] = memoryPair()
+    const a = link(left, { bound: { frame: 1024 } })
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    expect(() => a.check(tell('x'.repeat(1024 - around + 1)))).toThrow(RangeError)
+    expect(() => a.check(tell('small'), { cause: 'x'.repeat(1024) })).toThrow(RangeError)
+    expect(() => a.check(tell({ big: 1n }))).toThrow(TypeError)
+    expect(() => a.check(tell('x'.repeat(1024 - around)))).not.toThrow()
     await turn()
     expect(heard).toEqual([])
+  })
+
+  it('may be 64 MiB unless told, and is never told to be less than 1024 bytes', () => {
+    const a = link(memoryPair()[0])
+    const most = 64 * 1024 * 1024
+    expect(() => a.check(tell('x'.repeat(most - around)))).not.toThrow()
+    expect(() => a.check(tell('x'.repeat(most - around + 1)))).toThrow(RangeError)
+    expect(() => link(memoryPair()[0], { bound: { frame: 1023 } })).toThrow(RangeError)
+  })
+
+  it('fails the one ask it was the answer to, and the next is answered', async () => {
+    await everyOrder((schedule) => {
+      const [left, right] = scheduledPair(schedule)
+      const backend = desk({ ask: (asked) => { asked.ended({ ok: true, value: asked.args === 'large' ? 'x'.repeat(2000) : 'small' }) } })
+      join(link(right, { bound: { frame: 1024 } }), backend.port)
+      const toBackend = join(link(left), desk().port)
+      const large = asking(toBackend, 'x', 'ASK', 'large')
+      const small = asking(toBackend, 'x', 'ASK', 'small')
+      return () => {
+        expect(large.ended).toEqual([{ ok: false, failure: { kind: 'failed', message: 'A value could not be sent' } }])
+        expect(small.ended).toEqual([{ ok: true, value: 'small' }])
+      }
+    })
+  })
+
+  it('is refused where it was said, when what a system says is held for its views', async () => {
+    const [bare, there] = memoryPair()
+    const texts: unknown[] = []
+    bare.onData((text) => { texts.push(...JSON.parse(text as string) as unknown[]) })
+    // A system whose view never says it has caught up: everything it says to the other end is held.
+    const toOther = join(link(there, { bound: { frame: 1024 } }), desk({ follow: () => ({ caughtUp: () => {} }) }).port)
+    bare.send(wire(HELLO, { seq: 1, frame: { kind: 'follow', id: 1, feature: 'x', view: 'list', args: {} } }))
+    await turn()
+    toOther.tell('x', 'held')
+    expect(() => toOther.tell('x', 'y'.repeat(2000))).toThrow(RangeError)
+    await turn()
+    expect(texts.filter((said) => typeof said === 'object' && said !== null && 'seq' in said)).toEqual([])
+  })
+})
+
+describe('what carries a link taking no message longer than it says', () => {
+  /** One end in memory that takes no message longer than `most`, noting each it is handed. */
+  const limited = (most: number) => {
+    const [left, right] = memoryPair()
+    const texts: string[] = []
+    const narrow: Transport = { ...left, most, send: (message) => { texts.push(message as string); left.send(message) } }
+    return { narrow, right, texts }
+  }
+  const bytes = (text: string): number => new TextEncoder().encode(text).length
+
+  it('is handed a turn\'s frames as more than one text, none longer, and they arrive in order', async () => {
+    const { narrow, right, texts } = limited(300)
+    const a = link(narrow)
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const b = link(right)
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    const sent = Array.from({ length: 40 }, (_, at) => tell(`✓ ${String(at)}`))
+    for (const frame of sent) a.send(frame, { cause: 'é' })
+    a.close('ended')
+    await turn()
+    expect(heard).toEqual(sent)
+    expect(ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
+    expect(texts.length).toBeGreaterThan(1)
+    expect(Math.max(...texts.map(bytes))).toBeLessThanOrEqual(300)
+    // As few as it takes: no two that follow one another would have fitted in one.
+    for (let at = 1; at < texts.length; at++) expect(bytes(texts[at - 1]!) + bytes(texts[at]!) - 1).toBeGreaterThan(300)
+    // The hello is first, in the first, and the goodbye last, in the last.
+    expect((JSON.parse(texts[0]!) as unknown[])[0]).toEqual(saidHello)
+    expect((JSON.parse(texts.at(-1)!) as unknown[]).at(-1)).toEqual({ bye: 'ended' })
+  })
+
+  it('is handed one text for a turn that fits in one', async () => {
+    const { narrow, texts } = limited(300)
+    const a = link(narrow)
+    a.send(tell(1))
+    a.send(tell(2))
+    await turn()
+    expect(texts).toHaveLength(1)
+  })
+
+  it('has a frame that would not fit in one message refused where it is sent', async () => {
+    const { narrow, right } = limited(300)
+    const a = link(narrow)
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    expect(() => a.send(tell('x'.repeat(300)))).toThrow(RangeError)
+    a.send(tell('fits'))
+    await turn()
+    expect(heard).toEqual([tell('fits')])
+  })
+
+  it('is handed what was kept in as many texts as it takes, on a connection that comes back', async () => {
+    const a = link()
+    // Met on a connection the other end never says it took anything on: everything sent is kept.
+    const [first, there] = memoryPair()
+    const said: Array<{ session: string }> = []
+    first.onData((text) => { said.push(...JSON.parse(text as string) as Array<{ session: string }>) })
+    a.carry(there)
+    first.send(hello)
+    await turn()
+    // Past one byte a character, so that it is bytes the texts are cut by.
+    const sent = Array.from({ length: 40 }, (_, at) => tell(`✓✓✓✓✓✓✓✓ ${String(at)}`))
+    for (const frame of sent) a.send(frame)
+    await turn()
+    expect(a.kept()).toBe(40)
+    const { narrow, right, texts } = limited(300)
+    a.carry(narrow)
+    right.send(wire({ ...HELLO, resumes: said[0]!.session }))
+    await turn()
+    expect(texts.length).toBeGreaterThan(2)
+    expect(Math.max(...texts.map(bytes))).toBeLessThanOrEqual(300)
+    const crossed = texts.flatMap((text) => JSON.parse(text) as Array<{ seq?: number; frame?: Frame }>).filter((one) => one.seq !== undefined)
+    expect(crossed.map((one) => one.seq)).toEqual(sent.map((_, at) => at + 1))
+    expect(crossed.map((one) => one.frame)).toEqual(sent)
+  })
+
+  it('ends the link, saying how large and how much is taken, when something it had taken on to send does not fit what it is carried on now', async () => {
+    const a = link()
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    const frame = tell('x'.repeat(300))
+    // With nothing carrying it, there is nothing it would not fit.
+    a.send(frame)
+    const { narrow, right } = limited(300)
+    a.carry(narrow)
+    right.send(hello)
+    await turn()
+    expect(ended).toEqual([{ why: 'too large', size: JSON.stringify({ seq: 1, frame }).length, most: 300 }])
+  })
+
+  it('is asked through what accepts connections, as is how much it has not written', async () => {
+    const made: Array<ReturnType<typeof link>> = []
+    const take = accept((one) => { made.push(one) }, { bound: { kept: { frames: 1000, size: 1000 } } })
+    const { narrow, right, texts } = limited(300)
+    let unwritten = 0
+    take({ ...narrow, waiting: () => unwritten })
+    const heard: Frame[] = []
+    link(right).onFrame((frame) => { heard.push(frame) })
+    await turn()
+    const sent = Array.from({ length: 40 }, (_, at) => tell(at))
+    for (const frame of sent) made[0]!.send(frame)
+    await turn()
+    expect(heard).toEqual(sent)
+    expect(Math.max(...texts.map(bytes))).toBeLessThanOrEqual(300)
+    unwritten = 5000
+    made[0]!.send(tell('waits'))
+    expect(made[0]!.waiting()).toBe(1)
   })
 })
 
@@ -463,32 +636,66 @@ describe('closing', () => {
     expect(ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
   })
 
-  it('says goodbye to an end it has not met, and lets go of what waited to meet it', async () => {
+  it('sends what waited to meet the other end, from an end that has never met anybody, and a goodbye last', async () => {
     const [bare, right] = memoryPair()
     const texts: unknown[] = []
     bare.onData((text) => { texts.push(JSON.parse(text as string)) })
     // A link that can come back numbers nothing until the other end has said hello.
     const a = link()
     a.carry(right)
-    a.send(tell('waits to meet'))
-    expect(a.waiting()).toBe(1)
+    for (const event of [1, 2]) a.send(tell(event))
+    expect(a.waiting()).toBe(2)
     a.close('ended')
     await turn()
-    expect(texts).toEqual([[saidHello, { bye: 'ended' }]])
-    expect(a.waiting()).toBe(0)
+    expect(texts).toEqual([[saidHello, { seq: 1, frame: tell(1) }, { seq: 2, frame: tell(2) }, { bye: 'ended' }]])
+  })
+
+  it('is taken whole by what accepts connections: a window that says something and closes at once is heard', async () => {
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const take = accept((one) => { one.onFrame((frame) => { heard.push(frame) }); one.onEnd((ending) => { ended.push(ending) }) })
+    const [left, right] = memoryPair()
+    take(right)
+    const window = link()
+    window.carry(left)
+    window.send(tell('all it had to say'))
+    window.close('ended')
+    await turn()
+    expect(told(heard)).toEqual(['all it had to say'])
+    expect(ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
+  })
+
+  it('says goodbye and lets go of what waited, on a connection where an end it met before has not been met again', async () => {
+    const a = link()
+    const [first, there] = memoryPair()
+    a.carry(there)
+    first.send(hello)
+    await turn()
+    const [bare, right] = memoryPair()
+    const texts: unknown[] = []
+    bare.onData((text) => { texts.push(JSON.parse(text as string)) })
+    a.carry(right)
+    a.send(tell('waits to meet again'))
+    a.close('ended')
+    await turn()
+    // What it sent before may be out of step with what the other end took: nothing more is numbered.
+    expect(texts).toEqual([[{ ...saidHello, resumes: HELLO.session }, { bye: 'ended' }]])
   })
 })
 
 describe('a transport that throws where it is handed something to send', () => {
   it('is a connection that has gone: the link ends closed, when it is the only one it has', async () => {
     let closed = 0
-    const a = link({ send: () => { throw new Error('cannot send') }, onData: () => {}, onClose: () => {}, close: () => { closed++ } })
+    const thrown: unknown[] = []
+    const a = link({ send: () => { throw new Error('cannot send') }, onData: () => {}, onClose: () => {}, close: () => { closed++ } }, { thrown: (error) => { thrown.push(error) } })
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
     a.send(tell(1))
     await turn()
     expect(ended).toEqual([{ why: 'closed' }])
     expect(closed).toBe(1)
+    // None of the transports here throws: what one did is handed on.
+    expect(thrown).toEqual([new Error('cannot send')])
   })
 
   it('is a connection that has gone: what it was handed is sent again on the next, once, in order', async () => {
@@ -504,7 +711,8 @@ describe('a transport that throws where it is handed something to send', () => {
       b.carry(right)
       return { ...left, send: (message) => { if (failing) { failing = false; throw new Error('cannot send') } left.send(message) }, close: () => { closed.push(at); left.close() } }
     // Opened again a turn after it is asked, however long was asked for.
-    }, { reopen: { clock: { after: (_, run) => { let off = false; setImmediate(() => { if (!off) run() }); return () => { off = true } } } } })
+    }, { reopen: { clock: { after: (_, run) => { let off = false; setImmediate(() => { if (!off) run() }); return () => { off = true } } } }, thrown: (error) => { thrown.push(error) } })
+    const thrown: unknown[] = []
     const ended: Ending[] = []
     a.onEnd((ending) => { ended.push(ending) })
     try {
@@ -520,6 +728,7 @@ describe('a transport that throws where it is handed something to send', () => {
       expect(told(heard)).toEqual([1, 2, 3, 4])
       expect([opened, closed, ended]).toEqual([2, [0], []])
       expect(a.kept()).toBe(0)
+      expect(thrown).toEqual([new Error('cannot send')])
     } finally { a.close() }
   })
 })

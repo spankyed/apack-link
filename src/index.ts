@@ -1,5 +1,5 @@
 export { asFrame, bytesOf, toText, type Failure, type Frame, type Id, type Sent } from './frames.ts'
-export { accept, BOUND, LINK, link, type Bye, type Clock, type Ending, type Link, type Options, type Sending, type Size, type Traffic } from './link.ts'
+export { accept, LINK, link, timers, type Bye, type Clock, type Ending, type Link, type Options, type Reopen, type Sending, type Size, type Traffic } from './link.ts'
 export { join, type Following, type Outcome, type Port } from './peer.ts'
 export { port, type MessagePortLike } from './port.ts'
 export { socket, type WebSocketLike } from './socket.ts'

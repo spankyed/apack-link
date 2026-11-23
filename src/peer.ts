@@ -8,7 +8,7 @@
 // What a system says to the other end waits until the views it runs for that end have caught up: the hold. A view's
 // `shown` and `over` are what is waited for, and go at once; everything else the system says is one queue, in the
 // order it was said, and leaves a round at a time once every view the round asked has called back.
-import { toText, type Failure, type Frame, type Id } from './frames.ts'
+import type { Failure, Frame, Id } from './frames.ts'
 import type { Link } from './link.ts'
 
 /** How an ask ended. A system's own outcomes pass through as they are; these are the ones a link makes. */
@@ -136,7 +136,7 @@ export function join(link: Link, mine: Port): Port {
     const views = [...running.values()].filter((work) => work.caughtUp)
     if (!held.length && !views.length) { emit(one); return }
     // Found to be unsendable where it was said, as when it is sent at once: what is refused is refused there.
-    try { toText(one.frame) } catch (error) {
+    try { link.check(one.frame) } catch (error) {
       if (!one.refused) throw error
       const instead = one.refused()
       if (instead) hand({ frame: instead })

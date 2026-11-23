@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { accept, join, link, memoryPair, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
+import { accept, join, link, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
 import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, type Desk, type Schedule } from '../src/testing/index.ts'
 
 describe('resuming, over memory', () => {
   for (const scenario of resume) {
     it(scenario.name, async () => {
-      expect(await everyOrder((schedule) => scenario.play(schedule, droppingMemoryEnds(schedule, { unreachable: scenario.unreachable ?? 0 })))).toBeGreaterThan(1)
-    })
+      // When a connection is found to have held is one more thing in the order: a few of these are past everyOrder's usual limit.
+      expect(await everyOrder((schedule) => scenario.play(schedule, droppingMemoryEnds(schedule, { unreachable: scenario.unreachable ?? 0 })), { limit: 500_000 })).toBeGreaterThan(1)
+    }, 300_000)
   }
 })
 
 describe('accepting connections', () => {
   const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
+  /** A clock that keeps no time: what is asked for runs a turn later, however long was asked for. */
+  const turns: Clock = { after: (_, run) => { let off = false; setImmediate(() => { if (!off) run() }); return () => { off = true } } }
   const until = async (done: () => boolean): Promise<void> => { while (!done()) await turn() }
 
   it('makes a link for a new session, and hands a known one back to its link', async () => {
@@ -25,7 +28,7 @@ describe('accepting connections', () => {
       current = left
       take(right)
       return left
-    })
+    }, { reopen: { clock: turns } })
     const ended: Ending[] = []
     window.onEnd((ending) => { ended.push(ending) })
     const toBackend = join(window, desk().port)
@@ -63,7 +66,7 @@ describe('accepting connections', () => {
       current = left
       take(right)
       return left
-    })
+    }, { reopen: { clock: turns } })
     const ended: Ending[] = []
     window.onEnd((ending) => { ended.push(ending) })
     await turn()
