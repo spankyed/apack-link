@@ -322,7 +322,9 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   two. By how much is the codec's to know, so a piece is tried: one too long as data is tried again shorter by as
   much as it was too long, and one with room to spare longer by as much as it had, between the longest found to
   fit and the shortest found not to, until it is within a character or two of a part or nothing lies between.
-  Text that says nothing in two takes two tries a part. `part` is 16 bytes at least, so that one character
+  Text that says nothing in two takes two tries a part, and nothing takes more than six: after that the longest
+  found to fit is taken as it is, so the work of cutting a frame stays in proportion to the frame whatever it
+  holds, and a part of text that is plain in one place and all quotes in the next may be shorter than it could be. `part` is 16 bytes at least, so that one character
   always fits. With what goes around it, a part is then never longer than what carries the link was found wide
   enough for, whatever the frame holds, and no part but the last is much shorter than it may be.
 - **What a frame's parts add up to is bounded where they arrive.** An end keeps the parts of one frame until the

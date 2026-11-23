@@ -72,15 +72,19 @@ export type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as a frame this end may send: the longest it said it takes, and how
-   * many bytes a frame may be here. The two ends are not set to talk to each other.
+   * The other end takes no message as long as this end may need for one thing it numbers: the longest it said it
+   * takes, and how many bytes this end needs (a part, or a frame no longer than one, with what caused it and
+   * what goes around it). The two ends are not set to talk to each other.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
 
 /** How much: a count of frames, and how many bytes they are encoded, text as UTF-8. */
 export interface Size { readonly frames: number; readonly size: number }
 
-/** How a frame is sent: what caused it, a short text the kernel makes and a link never reads, and whether it is private. */
+/**
+ * How a frame is sent: what caused it, a short text the kernel makes and a link never reads, 1024 bytes at most as
+ * it crosses; and whether it is private.
+ */
 export interface Sending { readonly cause?: string; readonly private?: boolean }
 
 /**
@@ -105,7 +109,8 @@ export interface Link {
   /**
    * Sends a frame, or one this link prepared. Throws if the frame cannot be sent, having sent nothing and taken no
    * number: that one frame is refused, and the link goes on. A `TypeError` for one that cannot be encoded,
-   * and a `RangeError` for one larger, with its cause, than `bound.frame`. While there is no connection it waits,
+   * and a `RangeError` for one larger, with its cause, than `bound.frame`, or whose cause is longer than 1024
+   * bytes. While there is no connection it waits,
    * and leaves on the next. After the link has closed it sends nothing.
    */
   send(frame: Frame | Prepared, how?: Sending): void
@@ -201,7 +206,11 @@ export interface Options {
   thrown?(error: unknown): void
   /** What batches are encoded in. Both ends are given the same. JSON unless given. */
   codec?: Codec
-  /** How many bytes a part may be: a frame longer crosses in parts, and a batch leaves once it is this long. 1 MiB unless given. */
+  /**
+   * How many bytes a part may be: a frame longer crosses in parts, and a batch longer crosses as more than one
+   * message. 1 MiB unless given, and 16 at least. What carries a link has to take a message this long and a
+   * little more, so a server with a limit on a message is given a part under it.
+   */
   part?: number
 }
 
@@ -244,6 +253,8 @@ const AROUND = 128
 const SHORTEST = 16
 /** How many bytes a part may have to spare and be taken as full: a character or two. */
 const SPARE = 8
+/** How many times a piece of a frame is tried as a part's data before the longest found to fit is taken. */
+const TRIES = 6
 /** How many bytes what caused a frame may be, as it crosses: it is a short text, and it crosses whole beside a frame or its first part. */
 const CAUSE = 1024
 /**
@@ -256,7 +267,20 @@ const needs = (largest: number, part: number): number => Math.min(largest, part 
 const wideEnough = (transport: Transport, needed: number): void => {
   if (transport.most === undefined || transport.most >= needed) return
   try { transport.close() } catch { /* it is not this link's to report */ }
-  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least, for what it may send`)
+  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least, for what it may send: a part, or a frame no longer than one, and what goes with it. A shorter \`part\` needs less`)
+}
+
+/**
+ * What a link's options come to, or a `RangeError` for ones no link is made with: how large a frame may be, how
+ * long a part, and the shortest message that holds any one thing such a link numbers.
+ */
+const limits = (options: Options): { readonly largest: number; readonly part: number; readonly needed: number } => {
+  const part = options.part ?? PART
+  if (!(part >= SHORTEST)) throw new RangeError(`part is ${SHORTEST} bytes at least`)
+  const largest = options.bound?.frame ?? FRAME
+  // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
+  if (!(largest >= SMALLEST)) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
+  return { largest, part, needed: needs(largest, part) }
 }
 
 /** How long a link waits to open a connection after the first that did not hold, and the most it waits. */
@@ -303,8 +327,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   if (typeof over === 'function' && !pace) throw new TypeError('A link that opens its own connections is given a clock to open them on')
   const later = options.later ?? queueMicrotask
   const codec = options.codec ?? json
-  const part = options.part ?? PART
-  if (part < SHORTEST) throw new RangeError(`part is ${SHORTEST} bytes at least`)
+  const { largest, part, needed } = limits(options)
   const mine = crypto.randomUUID()
   /** The other end's session, once it has said it. A connection from another is not this link's. */
   let theirs: string | undefined
@@ -317,11 +340,6 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   let keptSize = 0
   const mark = { ...KEPT, ...options.bound?.kept }
   const bound = { ...WAITING, ...options.bound?.waiting }
-  const largest = options.bound?.frame ?? FRAME
-  // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
-  if (largest < SMALLEST) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
-  /** The shortest message that holds any one thing this link numbers. */
-  const needed = needs(largest, part)
   /** A frame encoded, with what is told of it and, for a view's result, which view. */
   interface Ready { encoded: Message; size: number; about: About; readonly view?: number }
   /** What was sent and waits to be numbered, each frame encoded, oldest first, and the size of all of it. */
@@ -511,7 +529,8 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
    * in JSON has two around it, and each quote in it said in two), and by how much is the codec's to know. So a
    * piece is tried, and tried again shorter by as much as it was too long, or longer by as much as it had to
    * spare, between the longest found to fit and the shortest found not to, until what is to spare is next to
-   * nothing or there is nothing between the two.
+   * nothing or there is nothing between the two; and six times at most, after which the longest found to fit is
+   * taken, so that no frame, whatever it holds, is encoded more than a few times over to be cut.
    */
   const partsOf = (encoded: Message): Message[] => {
     const all: Message[] = []
@@ -520,20 +539,23 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       let fits: { readonly want: number; readonly taken: number; readonly data: Message } | undefined
       let over = Infinity
       let want = part
-      for (;;) {
+      for (let tries = 1; ; tries++) {
         const taken = head(rest, want)
         const data = codec.encode(slice(rest, 0, taken))
         const size = sizeOf(data)
         if (size <= part) {
           fits = { want, taken, data }
-          if (part - size < SPARE || taken === lengthOf(rest) || want + 1 >= over) break
+          // Tried often enough, the longest found to fit is taken as it is: the work stays in proportion to the frame.
+          if (part - size < SPARE || taken === lengthOf(rest) || want + 1 >= over || tries >= TRIES) break
           want = Math.min(over - 1, want + Math.max(1, Math.floor((part - size) * want / size)))
         } else {
           over = want
           // One character is taken however long it is as data: a part is long enough for any one.
           if (want <= 1) { fits = { want, taken, data }; break }
-          if (fits && fits.want + 1 >= over) break
-          want = Math.max(fits ? fits.want + 1 : 1, Math.min(want - 1, Math.floor(want * part / size)))
+          if (fits && (fits.want + 1 >= over || tries >= TRIES)) break
+          // Shorter by as much as it was too long; and by half, once nothing tried has fitted, so that one soon does.
+          const shorter = Math.min(want - 1, Math.floor(want * part / size))
+          want = Math.max(fits ? fits.want + 1 : 1, tries >= TRIES ? Math.min(shorter, want >> 1) : shorter)
         }
       }
       all.push(fits.data)
@@ -894,10 +916,11 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
 export function accept(onLink: (link: Link) => void, options: Options = {}): (transport: Transport) => void {
   const codec = options.codec ?? json
   const links = new Map<string, Link>()
-  const largest = options.bound?.frame ?? FRAME
+  // What a link would refuse to be made with is refused here, and not where the first connection says hello.
+  const { needed } = limits(options)
   return (transport) => {
     // Found when the connection arrives, not when a frame is too long for it.
-    wideEnough(transport, needs(largest, options.part ?? PART))
+    wideEnough(transport, needed)
     const hears: Array<(message: Message) => void> = []
     const closes: Array<() => void> = []
     let first = true

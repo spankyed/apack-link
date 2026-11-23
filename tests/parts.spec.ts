@@ -411,3 +411,58 @@ describe('a WebSocket that takes no message longer than some length', () => {
     expect(() => link(socket(ws, { most: 1024 * 1024 }), { part: 512 * 1024 })).not.toThrow()
   })
 })
+
+describe('the work of cutting a frame', () => {
+  /** A codec that counts each piece it is handed to encode as a part's data: text or bytes by itself. */
+  const counting = (codec: typeof msgpack) => {
+    const count = { pieces: 0 }
+    return { count, codec: { ...codec, encode: (value: unknown) => { if (typeof value === 'string' || value instanceof Uint8Array) count.pieces++; return codec.encode(value) } } }
+  }
+  const jsonCodec = { encode: (value: unknown) => JSON.stringify(value), list: (parts: readonly Message[]) => `[${parts.join(',')}]`, record: (fields: ReadonlyArray<readonly [string, Message]>) => `{${fields.map(([name, value]) => `${JSON.stringify(name)}:${value as string}`).join(',')}}`, decode: (message: Message) => JSON.parse(message as string) as unknown }
+
+  for (const [name, base] of [['JSON', jsonCodec], ['msgpack', msgpack]] as const) {
+    for (const [what, event] of [
+      ['plain text', 'x'.repeat(200_000)],
+      ['plain text with a wall of quotes wherever a part would end', ('x'.repeat(3900) + '"'.repeat(400)).repeat(40)],
+      ['runs of plain text and of quotes', ('x'.repeat(997) + '"'.repeat(503)).repeat(100)],
+      ['quotes, backslashes and characters of every length, mixed', Array.from({ length: 60_000 }, (_, at) => ['x', '"', '\\', '✓', '𝄞', '\n'][(at * 7919 + (at >> 3) * 31) % 6]).join('')],
+    ] as const) {
+      it(`is in proportion to the frame, whatever it holds, in ${name}: ${what}`, async () => {
+        for (const part of [64, 4096]) {
+          const { count, codec } = counting(base)
+          const [left, right] = memoryPair()
+          let parts = 0
+          const a = link({ ...left, send: (message) => { parts += (base.decode(message) as Array<Record<string, unknown>>).filter((one) => 'part' in one).length; left.send(message) } }, { part, codec })
+          const heard: Frame[] = []
+          link(right, { part, codec: base }).onFrame((frame) => { heard.push(frame) })
+          a.send(tell(event))
+          await until(() => heard.length === 1)
+          expect(heard).toEqual([tell(event)])
+          // No piece is tried more than a few times, and so no frame encoded more than a few times over.
+          expect([part, count.pieces <= 6 * parts]).toEqual([part, true])
+        }
+      })
+    }
+  }
+
+  it('leaves no part but the last much shorter than a part may be, in msgpack as in JSON', async () => {
+    const [left, right] = memoryPair()
+    const data: number[] = []
+    const a = link({ ...left, send: (message) => { for (const one of decode(message as Uint8Array) as Array<Record<string, unknown>>) if ('part' in one) data.push((one.data as Uint8Array).byteLength); left.send(message) } }, { part: 300, codec: msgpack })
+    const heard: Frame[] = []
+    link(right, { part: 300, codec: msgpack }).onFrame((frame) => { heard.push(frame) })
+    a.send(tell('"✓'.repeat(2000)))
+    await until(() => heard.length === 1)
+    expect(Math.min(...data.slice(0, -1))).toBeGreaterThanOrEqual(300 - 8 - 3)
+  })
+})
+
+describe('what accepts connections', () => {
+  it('is not made with options no link is made with: found there, and not where a connection says hello', () => {
+    expect(() => accept(() => {}, { part: 15 })).toThrow(RangeError)
+    expect(() => accept(() => {}, { bound: { frame: 1023 } })).toThrow(RangeError)
+    expect(() => accept(() => {}, { part: Number.NaN })).toThrow(RangeError)
+    expect(() => link(memoryPair()[0], { part: Number.NaN })).toThrow(RangeError)
+    expect(() => accept(() => {}, { part: 16, bound: { frame: 1024 } })).not.toThrow()
+  })
+})

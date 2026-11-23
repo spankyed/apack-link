@@ -48,7 +48,7 @@ and so can keep all of it in order.
   waited for, and go at once.
 - **One bad frame is one refusal.** A frame that cannot be sent throws where it was sent and takes no number: a
   `TypeError` for one that cannot be encoded, a `RangeError` for one larger than a frame may be
-  (`bound.frame`, 64 MiB unless given). The link goes on, with nothing missing before the next frame. Through
+  (`bound.frame`, 64 MiB unless given) or sent with a cause longer than 1024 bytes. The link goes on, with nothing missing before the next frame. Through
   `join`, the one ask or view it belonged to fails, and no other. `prepare(frame)` encodes a frame now, to be
   sent later without being encoded again: what a peer holds for its views is refused where it was said, and
   crosses as it was when it was said.
@@ -56,7 +56,7 @@ and so can keep all of it in order.
   message, unless it is longer than a part (`part`, 1 MiB unless given). Where what carries it takes no message
   that long (`Transport.most`), or the other end says it takes none that long (each says so in its hello), it
   crosses as the fewest that fit, cut between what was said, in order: a link never hands over more than is
-  taken. What takes no message as long as a frame the link may send is not carried on at all: `link`, `carry`
+  taken. What takes no message as long as a part and what goes with one is not carried on at all: `link`, `carry`
   and `accept` throw as it is handed over. A frame longer than a part crosses as parts, each numbered, and is
   handed over whole in the place of its first; a resume picks up within it.
 - **Text or bytes.** A codec is handed in (`codec`): JSON is built in, and a host with msgpack hands its own.

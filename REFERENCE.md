@@ -113,8 +113,9 @@ type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as a frame this end may send: the longest it said it takes, and how
-   * many bytes a frame may be here. The two ends are not set to talk to each other.
+   * The other end takes no message as long as this end may need for one thing it numbers: the longest it said it
+   * takes, and how many bytes this end needs (a part, or a frame no longer than one, with what caused it and
+   * what goes around it). The two ends are not set to talk to each other.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
 ```
@@ -207,7 +208,8 @@ interface Link {
   /**
    * Sends a frame, or one this link prepared. Throws if the frame cannot be sent, having sent nothing and taken no
    * number: that one frame is refused, and the link goes on. A `TypeError` for one that cannot be encoded,
-   * and a `RangeError` for one larger, with its cause, than `bound.frame`. While there is no connection it waits,
+   * and a `RangeError` for one larger, with its cause, than `bound.frame`, or whose cause is longer than 1024
+   * bytes. While there is no connection it waits,
    * and leaves on the next. After the link has closed it sends nothing.
    */
   send(frame: Frame | Prepared, how?: Sending): void
@@ -318,7 +320,11 @@ interface Options {
   thrown?(error: unknown): void
   /** What batches are encoded in. Both ends are given the same. JSON unless given. */
   codec?: Codec
-  /** How many bytes a part may be: a frame longer crosses in parts, and a batch leaves once it is this long. 1 MiB unless given. */
+  /**
+   * How many bytes a part may be: a frame longer crosses in parts, and a batch longer crosses as more than one
+   * message. 1 MiB unless given, and 16 at least. What carries a link has to take a message this long and a
+   * little more, so a server with a limit on a message is given a part under it.
+   */
   part?: number
 }
 ```
@@ -377,7 +383,8 @@ interface Reopen { readonly clock: Clock; readonly first?: number; readonly most
 
 ### `Sending`
 
-How a frame is sent: what caused it, a short text the kernel makes and a link never reads, and whether it is private.
+How a frame is sent: what caused it, a short text the kernel makes and a link never reads, 1024 bytes at most as
+it crosses; and whether it is private.
 
 ```ts
 interface Sending { readonly cause?: string; readonly private?: boolean }
