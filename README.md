@@ -45,6 +45,10 @@ and so can keep all of it in order.
 - **One bad frame is one refusal.** A frame that cannot be put into text throws where it was sent and takes no
   number. The link goes on, with nothing missing before the next frame.
 - **One write a turn.** What an end sends within one turn of the event loop crosses as one text.
+- **Bounded.** How far behind the other end is, is what it has not said it took. Past a mark a link stops
+  numbering what is sent, and a view's result that a later one overtakes while it waits is let go: only the last
+  matters. Nothing else is let go. Past the bound on what waits, the link ends `overrun`, saying by how much.
+  `link(transport, { bound: { kept, waiting } })` sets both, in frames and in length of text.
 - **Ending is said once, to both ends**, with why. Every ask waiting ends `disconnected`, every view followed is
   said to be over, and whatever an end was answering or showing for the other is told to stop. An end going on purpose says goodbye first, as `restarting` or
   `ended`, and the other end's ending says which.
@@ -165,7 +169,7 @@ be done:
 3. One write a turn. **Built.**
 4. A socket, a message port and a stream of bytes to be carried on. **Built.**
 5. A connection that comes back, with nothing taken twice. **Built.**
-6. A bound on what waits, with a view's overtaken update let go.
+6. A bound on what waits, with a view's overtaken update let go. **Built.**
 7. Knowing the other end is there by what it does, never by a time to reply.
 8. What caused a frame, a tap that never sees what one carries, and frames that are private.
 9. Bytes, and frames too large for one write.
