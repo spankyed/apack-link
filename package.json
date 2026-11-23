@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "REFERENCE.md"
   ],
   "repository": {
     "type": "git",
@@ -33,7 +34,12 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build",
+    "reference:check": "node scripts/reference.mjs",
+    "reference:update": "node scripts/reference.mjs --write",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "workflows:check": "node scripts/workflows-check.mjs"
   },
   "devDependencies": {
     "@msgpack/msgpack": "^3.1.3",

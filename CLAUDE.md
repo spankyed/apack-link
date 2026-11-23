@@ -18,6 +18,10 @@ know before changing it.
 - `src/testing/` is what specs are written with, exported as `@apackdev/link/testing`: a schedule that runs a
   scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios every end is
   held to (`scenarios.ts`), written against what the package exports and nothing else.
+- `docs/wire.md` is everything an end sends, ending in a recorded exchange that `tests/wire.spec.ts` holds the
+  package to text for text. `REFERENCE.md` is every export, made by `npm run reference:update`.
+- `scripts/` is what CI and a release run: the reference, the package smoke, and the check that no workflow
+  publishes to npm.
 - `docs/design.md` is why a link exists and what holds; `docs/plan.md` is what is to be built, a step at a time,
   and `docs/deferred/` what is left out of it and why.
 
@@ -50,4 +54,6 @@ know before changing it.
 npm run typecheck
 npm test
 npm run build
+npm run reference:check
+npm run package:smoke
 ```

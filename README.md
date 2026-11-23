@@ -8,7 +8,7 @@ any two things that run states. As a package, `@apackdev/link`.
 Status: started, 2026-11-22. What is here is the frames, one end of a link over anything that carries text, a
 peer that matches asks to answers and views to what they show and holds what a system says until its views have
 caught up, things to carry it on (a WebSocket, a message port, a stream of bytes, and two ends in memory), and a
-schedule that runs a spec under every order. Nothing in apack uses it yet.
+schedule that runs a spec under every order, released for apack to pin. Nothing in apack uses it yet.
 
 ## Why it exists
 
@@ -170,6 +170,18 @@ order, until it closes. Four are here, and none imports what it is carried on:
 
 Whoever holds the socket opens it, with whatever it needs to be let in.
 
+## Getting it
+
+Never from npm. Each commit on `master` whose CI passed is released as `pkg-<commit>`, with the tarball attached:
+
+```bash
+npm install https://github.com/spankyed/apack-link/releases/download/pkg-<commit>/apackdev-link-0.1.0.tgz
+```
+
+[`REFERENCE.md`](REFERENCE.md) is every export with its doc comment and signature. [`docs/wire.md`](docs/wire.md)
+is everything an end sends, for whoever speaks to a link without this package, with an exchange recorded as it
+crossed that the specs hold the package to.
+
 ## Specs under every order
 
 `@apackdev/link/testing` is what this package's own specs are written with. A schedule stands in for the event
@@ -230,7 +242,7 @@ be done:
 7. Knowing the other end is there by what it does, never by a time to reply. **Built.**
 8. What caused a frame, a tap that never sees what one carries, and frames that are private. **Built.**
 9. Bytes, and frames too large for one write. **Built.**
-10. Releases apack can pin, and the wire written down once.
+10. Releases apack can pin, and the wire written down once. **Built.**
 
 Left out on purpose, with a plan of its own:
 [views that never pass through the server's JavaScript](docs/deferred/views-from-the-engine.md).
@@ -242,6 +254,8 @@ npm ci
 npm run typecheck
 npm test
 npm run build
+npm run reference:check    # REFERENCE.md as the source says; :update writes it
+npm run package:smoke      # the tarball installed elsewhere, and the README's example run from it
 ```
 
 Node 24.12 or later.

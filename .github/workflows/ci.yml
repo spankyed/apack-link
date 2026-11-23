@@ -30,3 +30,15 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - run: npm run reference:check
+      - run: npm run workflows:check
+      # The package as a consumer gets it: packed, installed elsewhere, and the README's example run from it.
+      - run: npm run package:smoke
+
+  # The one check a release waits on: every job above passed.
+  ci-pass:
+    if: always()
+    needs: [suite]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: test "${{ needs.suite.result }}" = "success"

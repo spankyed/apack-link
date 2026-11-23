@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accept, bytesOf, join, link, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
+import { accept, bytesOf, join, link, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
 import { asking, desk, everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -259,10 +259,10 @@ describe('hello', () => {
 
   it('refuses an end that says another number, naming both', async () => {
     const { bare, heard, ended } = facing()
-    bare.send(wire({ ...HELLO, link: 2 }, { seq: 1, frame: tell('from another link') }))
+    bare.send(wire({ ...HELLO, link: LINK + 1 }, { seq: 1, frame: tell('from another link') }))
     await turn()
     expect(heard).toEqual([])
-    expect(ended).toEqual([{ why: 'version', mine: 1, theirs: 2 }])
+    expect(ended).toEqual([{ why: 'version', mine: LINK, theirs: LINK + 1 }])
   })
 
   it('is waited for: a frame from an end that has not said it is not taken', async () => {

@@ -116,6 +116,11 @@ A frame crosses as `{ "seq": n, "frame": { … } }`, with `"cause"` and `"privat
 [{"seq":3,"frame":{"kind":"left","id":1}},{"bye":"ended"}]
 ```
 
+[`wire.md`](wire.md) says all of it once, for whoever speaks to a link without this package, and ends with an
+exchange recorded as it crossed, hello to goodbye with one of each frame and each thing an end says of itself.
+`tests/wire.spec.ts` makes the same exchange and compares it with that recording text for text, so a change to
+anything an end sends is a change to that file.
+
 ## What holds, and how
 
 - **Order.** A frame is numbered as it is sent and taken only in turn. What carries a link is expected to keep
@@ -350,6 +355,17 @@ seed. Over something real, `carried` (`src/testing/carried.ts`) puts what arrive
 direction, so the schedule chooses among what has arrived, and `Schedule.outside` keeps a run from coming to rest
 while a message or a close is on its way.
 
+What a consumer gets is held too. `npm run reference:check` compares `REFERENCE.md` with what each entry exports,
+and fails for an export no spec uses, read from the type checker. `npm run package:smoke` packs the package,
+installs the tarball into a project of its own, imports each entry by its name and runs the README's first example
+there as it is written. CI runs both, and a release is made only from a commit where they passed.
+
+## How it is released
+
+Never to npm. Each commit on `master` whose CI passed is packed, and the tarball, `apackdev-link-<version>.tgz`,
+is attached with its checksum to a GitHub release tagged `pkg-<commit>`, which is never replaced. apack names that
+address in its `overrides` and moves it with its `deps:pin`, as it does for its other repositories' packages.
+
 ## What was read, and what was taken from it
 
 Read 2026-11-22, before peers were built. Written down so that it is not argued again.
@@ -413,8 +429,8 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound), step 7 (knowing the other end is there), step 8 (cause, tap and private frames) and step 9 (a codec, and
-frames in parts).
+step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound), step 7 (knowing the other end is there), step 8 (cause, tap and private frames), step 9 (a codec, and
+frames in parts) and step 10 (releases, the reference and the wire written down).
 
 ## What is not decided
 
