@@ -148,7 +148,6 @@ export function model(options: ModelOptions = {}): Model {
       for (const by of end.from.keys()) {
         // Nobody else is handed its frames by that end, and that end is handed its own, if any, by this one.
         if ([...with_].some(([other, theirs]) => theirs === by && other !== end)) continue
-        if ([...with_].some(([other, theirs]) => theirs === end && other !== by)) continue
         if (by.heard && (with_.get(by) ?? end) !== end) continue
         if (by.heard && !by.from.has(end)) continue
         if (match(at + 1, new Map(with_).set(end, by))) return true

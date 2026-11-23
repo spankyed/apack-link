@@ -2,7 +2,7 @@
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
 import { link, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
-import { everyOrder, memoryEnds, model, underModel, type Model } from '../src/testing/index.ts'
+import { droppingMemoryEnds, everyOrder, memoryEnds, model, underModel, type Model, type Schedule } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 /** An end that does what it is told to, and nothing a link does: it hands over what the spec says, when it says. */
@@ -247,12 +247,42 @@ describe('what the model finds', () => {
     expect(found(({ left, right, a }) => { left.end({ why: 'closed' }); a.send(tell('after')); right.hand(tell('after')) })).toMatch(/not the next one/)
   })
 
+  it('bytes that are not the bytes that were sent', () => {
+    expect(found(({ right, a }) => { a.send(tell(new Uint8Array([1, 2, 3]))); right.hand(tell(new Uint8Array([1, 2, 4]))) }, model({ codec: msgpack }))).toMatch(/not the next one/)
+  })
+
+  it('a goodbye that was only said by an end that had already ended', () => {
+    expect(found(({ left, right, b }) => { right.end({ why: 'closed' }); b.close('ended'); left.end({ why: 'goodbye', bye: 'ended' }) })).toMatch(/a goodbye nobody said/)
+  })
+
   it('says what led to it', () => {
     expect(found(({ right, a }) => { a.send(tell(1)); a.send(tell(2)); right.hand(tell(2)) })).toMatch(/after:\n\s+a sent .*"event":1.*\n\s+a sent .*"event":2.*\n\s+b was handed/)
   })
 })
 
 describe('real ends under the model', () => {
+  /** A schedule that never gets to anything: whatever is sent is never handed over. */
+  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {} }
+
+  it("the kit's ends are under the model they are given", () => {
+    const held = model()
+    memoryEnds(never, {}, held).a.send(tell(1))
+    expect(() => held.check()).toThrow(/at rest, b has not been handed what a sent it/)
+
+    const other = model()
+    const ends = droppingMemoryEnds(never, {}, other)
+    ends.b.send(tell(1))
+    expect(() => other.check()).toThrow(/at rest, a has not been handed what b sent it/)
+  })
+
+  it('and so is each end made when the second one restarts', () => {
+    const held = model()
+    const ends = droppingMemoryEnds(never, {}, held)
+    ends.restart()
+    ends.now.send(tell(1))
+    expect(() => held.check()).toThrow(/at rest, a has not been handed what b \(2\) sent it/)
+  })
+
   it('a scenario whose check passes fails for what the model finds in it', async () => {
     // The second end hands over each frame twice, as a link that took a frame again would: nothing here looks.
     const doubled = (real: Link): Link => ({ ...real, onFrame: (hear) => real.onFrame((frame, cause) => { hear(frame, cause); hear(frame, cause) }) })
