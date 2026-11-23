@@ -12,6 +12,8 @@ import { holds, same } from './check.ts'
 import { asking, desk, watching } from './desk.ts'
 import type { Schedule } from './schedule.ts'
 import { made } from './views.ts'
+import type { Dropping } from './dropping.ts'
+import type { Ending } from '../link.ts'
 
 /** Two ends of one link. */
 export interface Ends { readonly a: Link; readonly b: Link }
@@ -724,3 +726,117 @@ export const hold: readonly KitScenario[] = [
 
 /** The hold's scenarios with the hold taken out: views that offer no `caughtUp`. Each fails in some order. */
 export const withoutTheHold: readonly KitScenario[] = needsTheHold(false)
+
+export interface DroppingScenario {
+  readonly name: string
+  play(schedule: Schedule, ends: Dropping): () => void
+}
+
+const dropsOnce = (schedule: Schedule, ends: Dropping): void => { schedule.does('the network', ['drops', () => ends.drop()]) }
+
+/** Step 5's: a link that outlives what carries it, with nothing taken twice. Each drops at a moment the schedule picks. */
+export const resume: readonly DroppingScenario[] = [
+  {
+    name: 'an ask is answered once, and the one answering asked once, whenever the connection drops',
+    play: (schedule, ends) => {
+      const answers = { label: 'the backend answers' }
+      const backend = desk({ ask: (asked) => schedule.later(answers, () => asked.ended({ ok: true, value: asked.args })) })
+      join(ends.b, backend.port)
+      const made = asking(join(ends.a, desk().port), 'threads', 'CREATE', 'one')
+      dropsOnce(schedule, ends)
+      return () => {
+        same(made.ended, [{ ok: true, value: 'one' }], 'how the ask ended')
+        same(backend.asks.length, 1, 'times the backend was asked')
+      }
+    },
+  },
+  {
+    name: 'a view goes on being shown after a drop, with nothing shown twice',
+    play: (schedule, ends) => {
+      const changes = { label: 'the view changes' }
+      const backend = desk({ follow: (viewed) => { viewed.shown(0); for (const result of [1, 2]) schedule.later(changes, () => viewed.shown(result)) } })
+      join(ends.b, backend.port)
+      const view = watching(join(ends.a, desk().port), 'threads', 'count', {})
+      dropsOnce(schedule, ends)
+      return () => {
+        same(view.shown, [0, 1, 2], 'what was shown')
+        same(backend.views.length, 1, 'times the view was followed')
+      }
+    },
+  },
+  {
+    name: 'tells cross each way once, in order, whenever the connection drops',
+    play: (schedule, ends) => {
+      const window = desk()
+      const backend = desk()
+      const toBackend = join(ends.a, window.port)
+      const toWindow = join(ends.b, backend.port)
+      toBackend.tell('x', 1)
+      toWindow.tell('y', 1)
+      schedule.does('the window', ['tells 2', () => toBackend.tell('x', 2)])
+      schedule.does('the backend', ['tells 2', () => toWindow.tell('y', 2)])
+      dropsOnce(schedule, ends)
+      return () => {
+        same(backend.told.map((told) => told.event), [1, 2], 'what the backend was told')
+        same(window.told.map((told) => told.event), [1, 2], 'what the window was told')
+      }
+    },
+  },
+  {
+    name: 'what the other end says it took is let go',
+    play: (schedule, ends) => {
+      const toWindow = join(ends.b, desk().port)
+      // The window answers each tell with one of its own, and what it sends says what it took.
+      let toBackend!: ReturnType<typeof join>
+      toBackend = join(ends.a, desk({ tell: (_, event) => { toBackend.tell('x', `back ${String(event)}`) } }).port)
+      toWindow.tell('y', 1)
+      toWindow.tell('y', 2)
+      dropsOnce(schedule, ends)
+      return () => { same(ends.b.kept(), 0, 'what the backend keeps') }
+    },
+  },
+  {
+    name: 'a link that cannot be resumed ends, and every ask and view with it',
+    play: (schedule, ends) => {
+      const backend = desk()
+      join(ends.b, backend.port)
+      const toBackend = join(ends.a, desk().port)
+      const made = asking(toBackend, 'threads', 'CREATE', 'one')
+      const view = watching(toBackend, 'threads', 'count', {})
+      const ended: Ending[] = []
+      ends.a.onEnd((ending) => { ended.push(ending) })
+      schedule.does('the backend', ['restarts', () => ends.restart()])
+      return () => {
+        same(ended, [{ why: 'lost' }], 'how the window\'s link ended')
+        same(made.ended, [{ ok: false, failure: { kind: 'disconnected', message: 'The link closed' } }], 'how the ask ended')
+        same(view.over, [{ kind: 'disconnected', message: 'The link closed' }], 'how the view ended')
+      }
+    },
+  },
+  {
+    name: 'an end that says it is restarting is reached again, and found to be a new session',
+    play: (schedule, ends) => {
+      const ended: Ending[] = []
+      ends.a.onEnd((ending) => { ended.push(ending) })
+      schedule.does('the backend', ['says it is restarting', () => ends.b.close('restarting')], ['comes back new', () => ends.restart()])
+      return () => {
+        same(ended, [{ why: 'lost' }], 'how the window\'s link ended')
+        holds(ends.connections >= 2, 'the window opened another connection')
+      }
+    },
+  },
+  {
+    name: 'an end that says it has ended is not reached again',
+    play: (schedule, ends) => {
+      join(ends.b, desk().port)
+      join(ends.a, desk().port)
+      const ended: Ending[] = []
+      ends.a.onEnd((ending) => { ended.push(ending) })
+      schedule.does('the backend', ['says it has ended', () => ends.b.close('ended')])
+      return () => {
+        same(ended, [{ why: 'goodbye', bye: 'ended' }], 'how the window\'s link ended')
+        same(ends.connections, 1, 'connections opened')
+      }
+    },
+  },
+]
