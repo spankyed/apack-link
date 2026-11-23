@@ -27,7 +27,7 @@
 // quiet without closing, a link given a window and a clock watches while it is owed something, a `taken` or an
 // answer: quiet for half the window, it asks whether the other end is there; quiet for the whole of it, with nothing
 // of any kind arriving, it closes the connection, to be opened again. Nothing is given a time to answer in.
-import type { Frame } from './frames.ts'
+import { toText, type Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
 
 /** Which link this is. Both ends ship together, so there is one, and an end that says another is refused. */
@@ -55,15 +55,37 @@ export type Ending =
 /** How much: a count of frames, and the length of their text. */
 export interface Size { readonly frames: number; readonly size: number }
 
+/** How a frame is sent: what caused it, a short text the kernel makes and a link never reads, and whether it is private. */
+export interface Sending { readonly cause?: string; readonly private?: boolean }
+
+/**
+ * A frame crossing, as a tap sees it: never what it carries. `name` is a tell's `to`, an ask's name or a view's
+ * name. Of a private frame, only that it crossed, its number and its size.
+ */
+export type Traffic =
+  | {
+    readonly direction: 'out' | 'in'
+    readonly seq: number
+    readonly kind: Frame['kind']
+    readonly id?: number
+    readonly name?: string
+    /** The length of its text. */
+    readonly size: number
+    readonly cause?: string
+  }
+  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size: number }
+
 export interface Link {
   /**
    * Sends a frame. Throws if the frame cannot be put into text, having sent nothing and taken no number: that one
    * frame is refused, and the link goes on. While there is no connection it waits, and leaves on the next. After
    * the link has closed it sends nothing.
    */
-  send(frame: Frame): void
-  /** Called with each frame the other end sent, in the order it sent them, once each. */
-  onFrame(heard: (frame: Frame) => void): void
+  send(frame: Frame, how?: Sending): void
+  /** Called with each frame the other end sent, in the order it sent them, once each, with what caused it. */
+  onFrame(heard: (frame: Frame, cause?: string) => void): void
+  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. */
+  onTraffic(seen: (traffic: Traffic) => void): void
   /** Called once, when the link has closed, with why. */
   onEnd(ended: (ending: Ending) => void): void
   /**
@@ -122,6 +144,26 @@ export interface Clock { after(ms: number, run: () => void): () => void }
 const KEPT: Size = { frames: 1024, size: 16 * 1024 * 1024 }
 const WAITING: Size = { frames: 16384, size: 64 * 1024 * 1024 }
 
+/** What a tap may be told of a frame. */
+interface About {
+  readonly kind: Frame['kind']
+  readonly id?: number
+  readonly name?: string
+  readonly cause?: string
+  readonly private: boolean
+}
+const aboutOf = (frame: Frame, how: Sending): About => ({
+  kind: frame.kind,
+  ...('id' in frame ? { id: frame.id } : {}),
+  ...(frame.kind === 'tell' ? { name: frame.to } : frame.kind === 'ask' ? { name: frame.name } : frame.kind === 'follow' ? { name: frame.view } : {}),
+  ...(how.cause === undefined ? {} : { cause: how.cause }),
+  private: how.private === true,
+})
+/** A frame crossing, as a tap is told of it: of a private one, nothing but that it crossed. */
+const seen = (direction: 'out' | 'in', seq: number, size: number, about: About): Traffic => about.private
+  ? { direction, seq, private: true, size }
+  : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), size, ...(about.cause === undefined ? {} : { cause: about.cause }) }
+
 const decoder = new TextDecoder()
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
 
@@ -145,12 +187,15 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   const mark = { ...KEPT, ...options.bound?.kept }
   const bound = { ...WAITING, ...options.bound?.waiting }
   /** What was sent and waits to be numbered, as each frame's own text, oldest first, and the length of all of it. */
-  let waiting: Array<{ text: string; readonly view?: number }> = []
+  let waiting: Array<{ text: string; about: About; readonly view?: number }> = []
   let waitingSize = 0
   /** For each view with a result waiting, that result: a later one takes its place. */
   const showing = new Map<number, (typeof waiting)[number]>()
   let ending: Ending | undefined
-  const hears: Array<(frame: Frame) => void> = []
+  const hears: Array<(frame: Frame, cause?: string) => void> = []
+  const taps: Array<(traffic: Traffic) => void> = []
+  /** Tells each tap. A tap that throws is not this link's to report, and does not stop it. */
+  const tap = (traffic: Traffic): void => { for (const seen of taps) try { seen(traffic) } catch { /* the tap's */ } }
   const ends: Array<(ending: Ending) => void> = []
   const once = typeof over === 'object'
   /** How many things this end is owed beside a `taken`, and the watch on a quiet connection while it is owed any. */
@@ -222,13 +267,14 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
 
   /** Whether what is sent now can be numbered: there is a connection, and the other end is not too far behind. */
   const roomy = (): boolean => !!now?.live && kept.length < mark.frames && keptSize < mark.size && (now.transport.waiting?.() ?? 0) < mark.size
-  /** Numbers a frame and puts it in this turn's batch. Joining text cannot fail. */
-  const number = (frameText: string): void => {
+  /** Numbers a frame and puts it in this turn's batch. Joining text cannot fail, nor can putting a text into text. */
+  const number = (frameText: string, about: About): void => {
     sent++
-    const text = `{"seq":${sent},"frame":${frameText}}`
+    const text = `{"seq":${sent},"frame":${frameText}${about.cause === undefined ? '' : `,"cause":${JSON.stringify(about.cause)}`}${about.private ? ',"private":true' : ''}}`
     kept.push({ seq: sent, text })
     keptSize += text.length
     say(now!, text)
+    tap(seen('out', sent, text.length, about))
     watch(false)
   }
 
@@ -264,7 +310,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       const one = waiting.shift()!
       waitingSize -= one.text.length
       if (one.view !== undefined && showing.get(one.view) === one) showing.delete(one.view)
-      number(one.text)
+      number(one.text, one.about)
     }
   }
 
@@ -303,13 +349,15 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       if (!isCount(arrived.taken) || !letGo(arrived.taken)) unknown()
       return
     }
-    const { seq, frame } = arrived
+    const { seq, frame, cause } = arrived
     if (typeof seq !== 'number' || !isObject(frame) || typeof frame.kind !== 'string') { unknown(); return }
+    if ((cause !== undefined && typeof cause !== 'string') || (arrived.private !== undefined && arrived.private !== true)) { unknown(); return }
     if (seq !== heard + 1) { end({ why: 'out of order', expected: heard + 1, got: seq }); return }
     heard = seq
     // This end says it took it with its next batch, and has one leave for that alone if none is to.
     if (!on.due) { on.due = true; later(() => flush(on)) }
-    for (const hear of hears) hear(frame as Frame)
+    if (taps.length) tap(seen('in', seq, JSON.stringify(arrived).length, aboutOf(frame as Frame, { ...(cause === undefined ? {} : { cause }), private: arrived.private === true })))
+    for (const hear of hears) hear(frame as Frame, cause)
   }
 
   const carry = (transport: Transport): void => {
@@ -349,19 +397,21 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
   }
 
   const made: Link = {
-    send: (frame) => {
+    send: (frame, how = {}) => {
       if (ending) return
       // Put into text before it is numbered: a frame that cannot be is refused alone, and leaves no gap behind it.
-      const text = JSON.stringify(frame)
-      if (!waiting.length && roomy()) { number(text); return }
+      const text = toText(frame)
+      const about = aboutOf(frame, how)
+      if (!waiting.length && roomy()) { number(text, about); return }
       // A view's result waiting to be numbered is overtaken by a later one, which takes its place in the order.
       const view = frame.kind === 'shown' ? frame.id : undefined
       const overtaken = view === undefined ? undefined : showing.get(view)
       if (overtaken) {
         waitingSize += text.length - overtaken.text.length
         overtaken.text = text
+        overtaken.about = about
       } else {
-        const one = { text, ...(view === undefined ? {} : { view }) }
+        const one = { text, about, ...(view === undefined ? {} : { view }) }
         waiting.push(one)
         waitingSize += text.length
         if (view !== undefined) showing.set(view, one)
@@ -371,6 +421,7 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
       }
     },
     onFrame: (hear) => { hears.push(hear) },
+    onTraffic: (seen_) => { taps.push(seen_) },
     onEnd: (ended) => { if (ending) ended(ending); else ends.push(ended) },
     close: (bye) => {
       if (ending) return

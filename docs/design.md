@@ -194,6 +194,21 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 - **Owed nothing, it sends nothing**, however long it is quiet.
 - **Nothing is given a time to answer in.** An ask that takes an hour, with the other end there, is left alone.
 
+## What caused a frame, and what may be seen of it
+
+- **Cause.** `send(frame, { cause })`. A cause is a short text the kernel makes, naming the step that sent the
+  frame. It crosses beside the frame (`{ "seq", "frame", "cause" }`), and `onFrame` hears it. A link never reads
+  it. A result that overtook another while waiting carries its own cause.
+- **Tap.** `onTraffic(seen)` is told of each frame as it is numbered to go out, and as it is taken in: direction,
+  number, kind, id, name (a tell's `to`, an ask's name, a view's name), length of its text, and cause. Never what it
+  carries. A tap that throws is the tap's to answer for; the link goes on.
+- **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
+  told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
+  in. The frame itself reaches the other end as any other does.
+- **Nothing a link reports holds what a frame carries.** A frame that cannot be put into text is refused with
+  `TypeError('A frame could not be put into text')`: what JSON says of a value it cannot take names its keys, and a
+  key is something a frame carries. An ending holds kinds, numbers and sizes.
+
 ## What a link is carried on
 
 A `Transport` hands over whole messages, `string | Uint8Array`, in order, and says once when nothing more will
@@ -287,7 +302,7 @@ something arriving done in a lane of its own, so it falls in every place among w
 
 [`plan.md`](plan.md) has it, a step at a time. What is built: the frames, one end of a link, two ends in
 memory, step 0 (the schedule, hello and goodbye), step 1 (peers), step 2 (the hold), step 3 (one write a turn)
-step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound) and step 7 (knowing the other end is there).
+step 4 (a socket, a port and a stream) step 5 (a connection that comes back), step 6 (a bound), step 7 (knowing the other end is there) and step 8 (cause, tap and private frames).
 
 ## What is not decided
 

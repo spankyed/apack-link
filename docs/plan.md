@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 7.
+Status: under way, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 8.
 No step after them is started.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
@@ -337,6 +337,10 @@ that is owed something and hears nothing asks, and reconnects after the window; 
 ask outstanding for many windows with progress arriving is left alone.
 
 ## Step 8. What caused a frame, and what may be seen of it
+
+Built, in `src/link.ts`: `send(frame, { cause, private })`, `onFrame(heard(frame, cause))`, `onTraffic`, and
+`toText` in `src/frames.ts`. `join` does not yet take a cause: `Port` has nowhere to put one, and that is the
+kernel's to add when it reaches a link through a port.
 
 - **Cause.** `send(frame, cause?)`, and a frame arrives with the cause it was sent with. A cause is a short text
   the kernel makes, naming the step that sent the frame. A link passes it on and never reads it.
