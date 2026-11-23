@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "One ordered stream between two systems: what one sends the other arrives once, in the order it was sent, or the sender is told it did not.",
   "private": true,
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
     "REFERENCE.md"
   ],
   "repository": {
