@@ -543,20 +543,23 @@ export function link(over?: Transport | (() => Transport), options: Options = {}
         const taken = head(rest, want)
         const data = codec.encode(slice(rest, 0, taken))
         const size = sizeOf(data)
+        let grown: number
         if (size <= part) {
           fits = { want, taken, data }
-          // Tried often enough, the longest found to fit is taken as it is: the work stays in proportion to the frame.
-          if (part - size < SPARE || taken === lengthOf(rest) || want + 1 >= over || tries >= TRIES) break
-          want = Math.min(over - 1, want + Math.max(1, Math.floor((part - size) * want / size)))
+          if (part - size < SPARE || taken === lengthOf(rest) || want + 1 >= over) break
+          grown = Math.min(over - 1, want + Math.max(1, Math.floor((part - size) * want / size)))
         } else {
           over = want
           // One character is taken however long it is as data: a part is long enough for any one.
           if (want <= 1) { fits = { want, taken, data }; break }
-          if (fits && (fits.want + 1 >= over || tries >= TRIES)) break
+          if (fits && fits.want + 1 >= over) break
           // Shorter by as much as it was too long; and by half, once nothing tried has fitted, so that one soon does.
           const shorter = Math.min(want - 1, Math.floor(want * part / size))
-          want = Math.max(fits ? fits.want + 1 : 1, tries >= TRIES ? Math.min(shorter, want >> 1) : shorter)
+          grown = Math.max(fits ? fits.want + 1 : 1, tries >= TRIES ? Math.min(shorter, want >> 1) : shorter)
         }
+        // Tried often enough, the longest found to fit is taken as it is: the work stays in proportion to the frame.
+        if (fits && tries >= TRIES) break
+        want = grown
       }
       all.push(fits.data)
       rest = slice(rest, fits.taken)

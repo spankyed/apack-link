@@ -425,6 +425,8 @@ describe('the work of cutting a frame', () => {
       ['plain text', 'x'.repeat(200_000)],
       ['plain text with a wall of quotes wherever a part would end', ('x'.repeat(3900) + '"'.repeat(400)).repeat(40)],
       ['runs of plain text and of quotes', ('x'.repeat(997) + '"'.repeat(503)).repeat(100)],
+      ['quotes and then plain text, in each part', ('"'.repeat(700) + 'x'.repeat(2600)).repeat(40)],
+      ['a little plain text and then quotes, in each part', ('x'.repeat(300) + '"'.repeat(1500)).repeat(60)],
       ['quotes, backslashes and characters of every length, mixed', Array.from({ length: 60_000 }, (_, at) => ['x', '"', '\\', '✓', '𝄞', '\n'][(at * 7919 + (at >> 3) * 31) % 6]).join('')],
     ] as const) {
       it(`is in proportion to the frame, whatever it holds, in ${name}: ${what}`, async () => {
