@@ -8,12 +8,12 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, firstOf, isHello, isObject, limits, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
+import { core, firstOf, isHello, isObject, LEAST, limits, LINK, narrowest, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
 import { json, type Codec } from './codec.ts'
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
 
-export { LINK, type Bye, type Ending, type Sending, type Size, type Traffic } from './core.ts'
+export { LEAST, LINK, type Bye, type Ending, type Sending, type Size, type Traffic } from './core.ts'
 
 export interface Link {
   /**
@@ -68,7 +68,8 @@ export interface Listener extends Link {
    * stays on the one it has, until a hello that fits has arrived on it: then it is on this one, and says its own.
    * One whose first word does not fit is closed, told why where it would otherwise wait, and the link goes on:
    * it ends for nothing a connection says before a hello that fits. Only the last handed over waits. Throws a
-   * `RangeError`, having closed it, for a transport that takes no message as long as this link may need.
+   * `RangeError`, having closed it, for a transport that takes no message of `LEAST` bytes, or none as long as
+   * something this link numbered and still keeps.
    */
   carry(transport: Transport): void
 }
@@ -103,9 +104,9 @@ export interface Options {
   /** What batches are encoded in. Both ends are given the same. JSON unless given. */
   codec?: Codec
   /**
-   * How many bytes a part may be: a frame longer crosses in parts, and a batch longer crosses as more than one
-   * message. 1 MiB unless given, and 16 at least. What carries a link has to take a message this long and a
-   * little more, so a server with a limit on a message is given a part under it.
+   * How many bytes a part may be at most: a frame longer crosses in parts, and a batch longer crosses as more
+   * than one message. 1 MiB unless given, and 16 at least. Where what carries the link, or the other end, takes
+   * less, a part is as much shorter as fits: nothing has to be set to match.
    */
   part?: number
 }
@@ -134,11 +135,11 @@ export const timers: Clock = {
 }
 
 
-/** Throws for what takes no message as long as the link may need to send, having closed it: a link is not carried on that. */
+/** Throws for what takes no message as long as the link needs, having closed it: a link is not carried on that. */
 const wideEnough = (transport: Transport, needed: number): void => {
   if (transport.most === undefined || transport.most >= needed) return
   try { transport.close() } catch { /* it is not this link's to report */ }
-  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least, for what it may send: a part, or a frame no longer than one, and what goes with it. A shorter \`part\` needs less`)
+  throw new RangeError(`What a link is carried on takes messages of ${needed} bytes at least: what any link needs, or what this one still keeps to send again`)
 }
 
 /**
@@ -283,7 +284,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
 
   const carry = (transport: Transport): void => {
     if (state.ending) { transport.close(); return }
-    wideEnough(transport, set.needed)
+    wideEnough(transport, narrowest(state))
     const on = ++connections
     transports.set(on, transport)
     tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
@@ -358,10 +359,10 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
   const codec = options.codec ?? json
   const links = new Map<string, Listener>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
-  const { needed } = limits(options)
+  limits(options)
   return (transport) => {
     // Found when the connection arrives, not when a frame is too long for it.
-    wideEnough(transport, needed)
+    wideEnough(transport, LEAST)
     const hears: Array<(message: Message) => void> = []
     const closes: Array<() => void> = []
     let first = true
@@ -401,8 +402,8 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
       // Going on with a session from before this end began, or one that says it took what nobody here sent: a
       // new session says so, and the other end finds it lost.
       else if (said.resumes !== undefined || said.taken !== 0) { turnAway('lost'); return }
-      // One that takes no message as long as a link here may need is not a session to begin: no link is made for it.
-      else if (said.most !== undefined && said.most < needed) { turnAway('lost'); return }
+      // One that takes no message as long as any link needs is not a session to begin: no link is made for it.
+      else if (said.most !== undefined && said.most < LEAST) { turnAway('lost'); return }
       else {
         const session = said.session
         const made = listen(undefined, options)

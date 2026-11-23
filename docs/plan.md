@@ -442,6 +442,24 @@ Done when: every scenario passes over an end that dials and one that listens, in
 state; an end that listens says nothing before a hello that fits, on one connection or handed many; it is ended
 by nothing said before one; and an end cannot be set to dial and be handed connections, or to listen and open them.
 
+## Step 14. Parts cut to fit, and whose a link is
+
+Built: a part as long as a connection has room for, `LEAST`, `narrowest` in the core, and `accept` handing
+`onLink` the transport a session began on.
+
+How long a part was, how large a frame might be and how long a message the transport took had to agree, and a link
+left as it came was refused by a server that took a megabyte. Now a frame is cut, where it is numbered, to what
+the transport and the other end take; `part` is only the most a part may be; and the least a link is carried on
+is one number, 1170 bytes, that depends on nothing it is set with. What is kept is sent again as it was, so the
+one thing still refused is a connection narrower than what is kept was cut for.
+
+A window that is gone leaves a link the backend keeps running views for until it closes it. `accept` now says
+whose each link is, by the transport its session began on, so that a backend can.
+
+Done when: a link left as it comes is carried on anything that takes 1170 bytes, at either end, with a frame as
+large as one may be; nothing sent is longer than either end takes; and a backend closes the link of one window
+by the connection it handed over.
+
 ## What is not this plan's to build
 
 These land with apack-state, by whoever is doing that work, and are here so the seam is known.
@@ -457,4 +475,4 @@ These land with apack-state, by whoever is doing that work, and are here so the 
 
 Steps 0 to 3 in order: each is the ground the next stands on. After step 3, steps 4, 8 and 10 touch different
 files and can be done side by side. Step 5 needs 3; 6 and 7 need 5; 9 needs 4 and 5. Step 11 needs 5, and is the ground for anything that changes how a
-link does what it does. Step 12 needs 11, and 13 needs 12.
+link does what it does. Step 12 needs 11, 13 needs 12, and 14 needs 13.

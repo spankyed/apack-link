@@ -5,6 +5,7 @@
 import { core, ready, setup, start, type Bye, type Effect, type Ending, type Event, type State } from '../../src/core.ts'
 import type { Frame } from '../../src/frames.ts'
 import type { Message } from '../../src/transport.ts'
+import { sizeOf } from '../../src/codec.ts'
 
 /** One thing the script does. `b` is whoever listens now. */
 export type Act =
@@ -30,6 +31,8 @@ export interface Script {
   readonly quiet?: number
   /** How many frames may be kept before nothing more is numbered. */
   readonly kept?: number
+  /** The longest message each connection takes, in bytes, where it takes no longer. */
+  readonly most?: number
   /**
    * What is sent: tells, each of which is handed over; results of one view, where a later one may take the place
    * of one that waits; or tells longer than a part, with how many bytes a part is.
@@ -90,6 +93,7 @@ export function space(script: Script): { readonly states: number; readonly rests
     return world.ends.length - 1
   }
   const fail = (what: string): never => { throw new Error(what) }
+  const carried = script.most === undefined ? {} : { most: script.most }
 
   /** A frame is handed over: it is the next one the end it is from sent, and each of the two talks to the other alone. */
   const handed = (world: World, to: number, frame: Frame): void => {
@@ -137,6 +141,8 @@ export function space(script: Script): { readonly states: number; readonly rests
   const write = (world: World, at: number, on: number, messages: readonly Message[]): void => {
     const wire = world.wires[on]!
     const side = wire.ends.indexOf(at) as 0 | 1
+    // Nothing is handed to a connection that it does not take.
+    for (const message of messages) if (script.most !== undefined && sizeOf(message) > script.most) fail(`${world.ends[at]!.session} wrote ${sizeOf(message)} bytes to what takes ${script.most}`)
     if (wire.open[side]) wire.crossing[side].push(...messages)
   }
   /** Who a connection opened now reaches: the listener, or a new one where that has ended by itself. */
@@ -150,13 +156,13 @@ export function space(script: Script): { readonly states: number; readonly rests
     if (world.opened <= (script.unreachable ?? 0)) {
       // Nobody is there: it closes with nothing having crossed.
       world.wires.push({ ends: [at, -1], open: [true, false], crossing: [[], [null]] })
-      tell(world, at, { is: 'carry', on })
+      tell(world, at, { is: 'carry', on, ...carried })
       return
     }
     const to = listening(world)
     world.wires.push({ ends: [at, to], open: [true, true], crossing: [[], []] })
-    tell(world, to, { is: 'carry', on })
-    tell(world, at, { is: 'carry', on })
+    tell(world, to, { is: 'carry', on, ...carried })
+    tell(world, at, { is: 'carry', on, ...carried })
   }
   const perform = (world: World, at: number, effect: Effect): void => {
     const end = world.ends[at]!
@@ -323,8 +329,8 @@ export function space(script: Script): { readonly states: number; readonly rests
     make(first, 'dials', 'one', 'a')
     make(first, 'listens', 'one', 'b')
     first.wires.push({ ends: [0, 1], open: [true, true], crossing: [[], []] })
-    tell(first, 0, { is: 'carry', on: 0 })
-    tell(first, 1, { is: 'carry', on: 0 })
+    tell(first, 0, { is: 'carry', on: 0, ...carried })
+    tell(first, 1, { is: 'carry', on: 0, ...carried })
   } else {
     make(first, 'dials', 'opened', 'a')
     make(first, 'listens', 'handed', 'b')

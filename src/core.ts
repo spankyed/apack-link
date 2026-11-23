@@ -77,9 +77,9 @@ export type Ending =
   /** What waits to be sent passed its bound, with nothing left that could be let go: how much waits, and the bound. */
   | { readonly why: 'overrun'; readonly waiting: Size; readonly bound: Size }
   /**
-   * The other end takes no message as long as this end may need for one thing it numbers: the longest it said it
-   * takes, and how many bytes this end needs (a part, or a frame no longer than one, with what caused it and
-   * what goes around it). The two ends are not set to talk to each other.
+   * The other end takes no message as long as this end needs: the longest it said it takes, and how many bytes
+   * this end needs. That is what any link needs (`LEAST`), or, where this end keeps something it numbered for a
+   * connection that took longer messages, as many bytes as that is.
    */
   | { readonly why: 'too narrow'; readonly most: number; readonly needs: number }
 
@@ -148,8 +148,8 @@ const FRAME = 64 * 1024 * 1024
 /** The least `bound.frame` may be: more than anything a peer says in place of what could not be sent. */
 const SMALLEST = 1024
 /**
- * More than everything a link puts around a frame and its cause where it numbers it, or around a part of one: the
- * numbers, and the names.
+ * More than everything a link puts around a frame or a part of one where it numbers it, beside what caused it:
+ * the numbers, and the names.
  */
 const AROUND = 128
 /** The least a part may be: more than any one character is as a part's data, so that a frame can always be cut to it. */
@@ -160,6 +160,13 @@ const SPARE = 8
 const TRIES = 6
 /** How many bytes what caused a frame may be, as it crosses: it is a short text, and it crosses whole beside a frame or its first part. */
 const CAUSE = 1024
+/**
+ * The shortest message a link is carried on at all: one that holds the shortest part there is, the longest cause
+ * there may be beside it, what is put around them, and the batch's own two. On anything that takes this, and on
+ * an end that says it does, a link cuts what it sends to fit.
+ */
+export const LEAST = SHORTEST + CAUSE + AROUND + 2
+
 /** How long a link waits to open a connection after the first that did not hold, and the most it waits. */
 const REOPEN_FIRST = 100
 const REOPEN_MOST = 10_000
@@ -178,7 +185,7 @@ export interface Setup {
   /** This end's session: a text no other end has. */
   readonly session: string
   readonly codec: Codec
-  /** How many bytes a part may be. */
+  /** How many bytes a part may be at most: it is shorter where what carries the link, or the other end, takes less. */
   readonly part: number
   /** How much sent and not yet taken there may be before nothing more is numbered. */
   readonly mark: Size
@@ -186,8 +193,6 @@ export interface Setup {
   readonly bound: Size
   /** How many bytes one frame and its cause may be. */
   readonly largest: number
-  /** The shortest message that holds any one thing this end numbers: what carries it takes that at least. */
-  readonly needed: number
   /** How long a connection may be quiet while this end is owed something, where it is watched. */
   readonly window?: number
   /** The wait before a connection is opened after the first that did not hold, and the most it is. */
@@ -209,16 +214,16 @@ export interface Given {
 }
 
 /**
- * What an end's sizes come to, or a `RangeError` for ones no end is set with: how large a frame may be, how long
- * a part, and the shortest message that holds any one thing such an end numbers.
+ * What an end's sizes come to, or a `RangeError` for ones no end is set with: how large a frame may be, and how
+ * long a part at most.
  */
-export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest: number; readonly part: number; readonly needed: number } {
+export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest: number; readonly part: number } {
   const part = given.part ?? PART
   if (!(part >= SHORTEST)) throw new RangeError(`part is ${SHORTEST} bytes at least`)
   const largest = given.bound?.frame ?? FRAME
   // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
   if (!(largest >= SMALLEST)) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
-  return { largest, part, needed: needs(largest, part) }
+  return { largest, part }
 }
 
 /**
@@ -226,7 +231,7 @@ export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest
  * and is handed its connections, or listens and opens them: whoever opens a connection is the one that dials on it.
  */
 export function setup(given: Given): Setup {
-  const { largest, part, needed } = limits(given)
+  const { largest, part } = limits(given)
   if (given.connections === (given.role === 'dials' ? 'handed' : 'opened')) throw new TypeError(`An end that ${given.role} is not ${given.connections} its connections`)
   return {
     role: given.role,
@@ -237,7 +242,6 @@ export function setup(given: Given): Setup {
     mark: { ...KEPT, ...given.bound?.kept },
     bound: { ...WAITING, ...given.bound?.waiting },
     largest,
-    needed,
     ...(given.window === undefined ? {} : { window: given.window }),
     first: given.first ?? REOPEN_FIRST,
     most: given.most ?? REOPEN_MOST,
@@ -245,11 +249,15 @@ export function setup(given: Given): Setup {
 }
 
 /**
- * The shortest message that holds any one thing a link numbers: a frame no longer than a part, or a part of a
- * longer one, with its cause; what is put around it; and the batch's own two. Never more than a whole frame of
- * `largest` bytes would be.
+ * The shortest message an end can go on being carried on, as it stands: what any link needs, and no less than the
+ * longest thing it numbered and still keeps, with the batch's own two. What is kept is sent again as it was, so a
+ * connection that takes less than it was cut for cannot carry it.
  */
-function needs(largest: number, part: number): number { return Math.min(largest, part + CAUSE) + AROUND + 2 }
+export function narrowest(state: State): number {
+  let longest = 0
+  for (const one of state.kept) if (one.size > longest) longest = one.size
+  return Math.max(LEAST, longest + 2)
+}
 
 /** What a tap may be told of a frame. */
 interface About {
@@ -424,7 +432,7 @@ type Unfit =
  * what it holds, and returns what is to be done, in order.
  */
 export function core(set: Setup): (state: State, event: Event) => Effect[] {
-  const { codec, part, mark, bound, largest, needed, session: mine } = set
+  const { codec, part, mark, bound, largest, session: mine } = set
   const dials = set.role === 'dials'
   const once = set.connections === 'one'
   const opens = set.connections === 'opened'
@@ -561,18 +569,20 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     return size
   }
   /**
-   * A frame's encoding as the data of its parts, in order, each no longer than a part as it crosses, and none but
-   * the last more than a character or two shorter. A piece of the encoding may be longer as data than it was (text
+   * A frame's encoding as the data of its parts, in order, each no longer as it crosses than there is room for,
+   * the first having `first` bytes and each after it `after`, and none but the last more than a character or two
+   * shorter. A piece of the encoding may be longer as data than it was (text
    * in JSON has two around it, and each quote in it said in two), and by how much is the codec's to know. So a
    * piece is tried, and tried again shorter by as much as it was too long, or longer by as much as it had to
    * spare, between the longest found to fit and the shortest found not to, until what is to spare is next to
    * nothing or there is nothing between the two; and six times at most, after which the longest found to fit is
    * taken, so that no frame, whatever it holds, is encoded more than a few times over to be cut.
    */
-  const partsOf = (encoded: Message): Message[] => {
+  const partsOf = (encoded: Message, first: number, after: number): Message[] => {
     const all: Message[] = []
     let rest = encoded
     while (lengthOf(rest)) {
+      const part = all.length ? after : first
       let fits: { readonly want: number; readonly taken: number; readonly data: Message } | undefined
       let over = Infinity
       let overs = 0
@@ -607,13 +617,20 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     }
     return all
   }
-  /** Numbers a frame, in parts if it is longer than a part, each in turn. */
+  /**
+   * Numbers a frame, in parts if it is longer than a part or than the connection has room for, each in turn. The
+   * room is what the transport and the other end take, less what is put around a thing numbered and the batch's
+   * two; what caused the frame crosses beside it, or beside its first part, and has its share of that.
+   */
   const number = (encoded: Message, size: number, about: About): void => {
     const first = s.sent + 1
+    const on = s.now!
+    const room = Math.min(on.most ?? Infinity, on.takes) - AROUND - 2
+    const beside = about.cause === undefined ? 0 : sizeOf(codec.encode(about.cause))
     let crossing = 0
-    if (size <= part) crossing = unit([['frame', encoded]], about, true)
+    if (size <= Math.min(part, room - beside)) crossing = unit([['frame', encoded]], about, true)
     else {
-      const pieces = partsOf(encoded)
+      const pieces = partsOf(encoded, Math.min(part, room - beside), Math.min(part, room))
       pieces.forEach((data, at) => { crossing += unit([['part', codec.encode(at)], ['of', codec.encode(pieces.length)], ['data', data]], about, at === 0) })
     }
     if (s.tapped) out.push({ do: 'traffic', traffic: seen('out', first, crossing, about) })
@@ -678,7 +695,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (resumes !== undefined && resumes !== mine) return { no: 'lost' }
     if (resumes === undefined && taken !== 0) return { no: 'lost' }
     if (taken > s.sent || taken < s.released) return { no: 'lost' }
-    if (most !== undefined && most < needed) return { no: 'too narrow', most }
+    if (most !== undefined && most < narrowest(s)) return { no: 'too narrow', most }
     return arrived
   }
   /** This end's hello on a connection that takes messages of `most` bytes, where it says. */
@@ -696,7 +713,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const refuse = (on: Connection, unfit: Unfit): void => {
     if (toldLost(unfit)) put(on, word({ lost: true }))
     if (unfit.no === 'lost') { flush(on); end({ why: 'lost' }); return }
-    if (unfit.no === 'too narrow') { flush(on); end({ why: 'too narrow', most: unfit.most, needs: needed }); return }
+    if (unfit.no === 'too narrow') { flush(on); end({ why: 'too narrow', most: unfit.most, needs: narrowest(s) }); return }
     if (unfit.no === 'version') { end({ why: 'version', mine: LINK, theirs: unfit.theirs }); return }
     unknown()
   }

@@ -4,7 +4,7 @@ import { once as eventOnce } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import { decode } from '@msgpack/msgpack'
 import { WebSocket, WebSocketServer } from 'ws'
-import { accept, dial, listen, memoryPair, socket, timers, type Ending, type Frame, type Message, type Traffic, type Transport } from '../src/index.ts'
+import { accept, dial, LEAST, listen, memoryPair, socket, timers, type Ending, type Frame, type Message, type Traffic, type Transport } from '../src/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -297,9 +297,7 @@ describe('how a frame is cut', () => {
 
 describe('what a link needs of what carries it, with frames in parts', () => {
   const bytes = (message: Message): number => (typeof message === 'string' ? new TextEncoder().encode(message).byteLength : message.byteLength)
-  /** A part of 2000 bytes, what caused a frame at 1024 at most, 128 around them, and the batch's two. */
-  const options = { bound: { frame: 100_000 }, part: 2000 }
-  const NEEDS = 2000 + 1024 + 128 + 2
+  const options = { bound: { frame: 100_000 } }
   const narrow = (most: number) => {
     const [left, right] = memoryPair()
     const writes: number[] = []
@@ -307,35 +305,79 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     const transport: Transport = { ...left, most, send: (message) => { writes.push(bytes(message)); left.send(message) }, close: () => { closed++; left.close() } }
     return { transport, right, writes, closed: () => closed }
   }
-
-  it('is room for a part and what goes with one, not for a whole frame: a frame as large as one may be crosses on it', async () => {
-    const { transport, right, writes } = narrow(NEEDS)
-    const a = dial(transport, options)
+  const watched = (link: ReturnType<typeof dial>) => {
     const heard: Array<{ frame: Frame; cause: string | undefined }> = []
     const ended: Ending[] = []
-    const b = listen(right, options)
-    b.onFrame((frame, cause) => { heard.push({ frame, cause }) })
-    b.onEnd((ending) => { ended.push(ending) })
-    const cause = 'c'.repeat(1022)
-    const around = JSON.stringify(tell('')).length
-    const largest = tell('"'.repeat((100_000 - 1024 - around) / 2))
-    // And one no longer than a part, which crosses whole beside the longest cause there may be.
-    const whole = tell('x'.repeat(2000 - around))
-    a.send(largest, { cause })
-    a.send(whole, { cause })
-    await until(() => heard.length === 2 || ended.length > 0)
-    expect(ended).toEqual([])
-    expect(heard).toEqual([{ frame: largest, cause }, { frame: whole, cause }])
-    expect(Math.max(...writes)).toBeLessThanOrEqual(NEEDS)
+    link.onFrame((frame, cause) => { heard.push({ frame, cause }) })
+    link.onEnd((ending) => { ended.push(ending) })
+    return { heard, ended }
+  }
+  const cause = 'c'.repeat(1022)
+  const around = JSON.stringify(tell('')).length
+  /** As large as a frame may be here, of text that is twice as long as a part's data. */
+  const largest = tell('"'.repeat((100_000 - 1024 - around) / 2))
+
+  it('is 1170 bytes at the least, whatever a link is set with: the shortest part, the longest cause, what goes around them, and the batch\'s two', () => {
+    expect(LEAST).toBe(16 + 1024 + 128 + 2)
   })
 
-  it('is found wanting as it is handed over, and in the other end\'s hello, one byte short of that', async () => {
-    const short = narrow(NEEDS - 1)
+  it('is the least any link is carried on, however long a part is said to be: a frame as large as one may be crosses on it, cut to fit', async () => {
+    for (const part of [undefined, 2000, 64]) {
+      const { transport, right, writes } = narrow(LEAST)
+      const a = dial(transport, { ...options, ...(part ? { part } : {}) })
+      const { heard, ended } = watched(listen(right, options))
+      // And one short enough to cross whole, beside the longest cause there may be.
+      const whole = tell('x')
+      a.send(largest, { cause })
+      a.send(whole, { cause })
+      await until(() => heard.length === 2 || ended.length > 0)
+      expect([part, ended]).toEqual([part, []])
+      expect(heard).toEqual([{ frame: largest, cause }, { frame: whole, cause }])
+      expect([part, Math.max(...writes) <= LEAST]).toEqual([part, true])
+    }
+  })
+
+  it('is as much of a part as there is room for: parts are no shorter than what carries them makes them', async () => {
+    const sizes = async (most: number, part: number | undefined): Promise<number[]> => {
+      const { transport, right } = narrow(most)
+      const a = dial(transport, { ...options, ...(part ? { part } : {}) })
+      const crossed: number[] = []
+      right.onData((message) => { for (const said of JSON.parse(message as string) as Array<{ data?: string }>) if (said.data !== undefined) crossed.push(bytes(JSON.stringify(said.data))) })
+      a.send(tell('x'.repeat(50_000)))
+      await turn()
+      return crossed
+    }
+    // What carries it takes 5000: a part's data is all of that but what goes around it, and no more than a part where one is said.
+    const fitted = await sizes(5000, undefined)
+    expect(Math.max(...fitted)).toBeLessThanOrEqual(5000 - 130)
+    expect(Math.min(...fitted.slice(0, -1))).toBeGreaterThan(5000 - 130 - 8)
+    const capped = await sizes(5000, 2000)
+    expect(Math.max(...capped)).toBeLessThanOrEqual(2000)
+    expect(Math.min(...capped.slice(0, -1))).toBeGreaterThan(2000 - 8)
+  })
+
+  it('is what the other end says it takes, where that is less: what is sent once it has said so is cut to it', async () => {
+    // This end is on something that takes any length, and the other on something that takes 3000.
+    const [left, right] = memoryPair()
+    const writes: number[] = []
+    const a = dial({ ...left, send: (message) => { writes.push(bytes(message)); left.send(message) } }, options)
+    const { heard, ended } = watched(listen({ ...right, most: 3000 }, options))
+    const at = watched(a)
+    await turn()
+    a.send(largest, { cause })
+    await until(() => heard.length === 1 || ended.length > 0)
+    expect([ended, at.ended]).toEqual([[], []])
+    expect(heard).toEqual([{ frame: largest, cause }])
+    expect(Math.max(...writes)).toBeLessThanOrEqual(3000)
+  })
+
+  it('is found wanting as it is handed over, and in the other end\'s hello, one byte short of what any link needs', async () => {
+    const short = narrow(LEAST - 1)
     expect(() => dial(short.transport, options)).toThrow(RangeError)
     expect(short.closed()).toBe(1)
-    expect(() => accept(() => {}, options)(narrow(NEEDS - 1).transport)).toThrow(RangeError)
-    expect(() => accept(() => {}, options)(narrow(NEEDS).transport)).not.toThrow()
-    for (const [most, ending] of [[NEEDS, []], [NEEDS - 1, [{ why: 'too narrow', most: NEEDS - 1, needs: NEEDS }]]] as const) {
+    expect(() => accept(() => {}, options)(narrow(LEAST - 1).transport)).toThrow(RangeError)
+    expect(() => accept(() => {}, options)(narrow(LEAST).transport)).not.toThrow()
+    for (const [most, ending] of [[LEAST, []], [LEAST - 1, [{ why: 'too narrow', most: LEAST - 1, needs: LEAST }]]] as const) {
       const [bare, right] = memoryPair()
       const ended: Ending[] = []
       dial(right, options).onEnd((end) => { ended.push(end) })
@@ -345,10 +387,74 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     }
   })
 
-  it('is never more than a whole frame would need, where a frame may be no longer than a part', () => {
-    const small = { bound: { frame: 1024 }, part: 2000 }
-    expect(() => dial(narrow(1024 + 128 + 2).transport, small)).not.toThrow()
-    expect(() => dial(narrow(1024 + 128 + 1).transport, small)).toThrow(RangeError)
+  it('is no less than what a link keeps was cut for: an end that said a long thing before it knew ends saying how long', async () => {
+    // On one connection alone it sends at once, beside its hello: here, before the other end has said what it takes.
+    const [bare, right] = memoryPair()
+    const sent: number[] = []
+    bare.onData((message) => { sent.push(bytes(message)) })
+    const a = dial(right, options)
+    const { ended } = watched(a)
+    a.send(tell('x'.repeat(5000)))
+    await turn()
+    bare.send(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most: 3000 }]))
+    await turn()
+    expect(ended).toEqual([{ why: 'too narrow', most: 3000, needs: expect.any(Number) }])
+    const needs = (ended[0] as { needs: number }).needs
+    // What it kept, and the batch's two.
+    expect([needs > 5000, needs <= Math.max(...sent)]).toEqual([true, true])
+  })
+
+  it('is no less than what a link keeps was cut for, on a connection that comes back, and anything once that has been taken', async () => {
+    const b = listen(undefined, options)
+    const { ended } = watched(b)
+    const first = memoryPair()
+    const said: Array<{ session?: string; seq?: number }> = []
+    first[0].onData((message) => { said.push(...(JSON.parse(message as string) as typeof said)) })
+    b.carry(first[1])
+    first[0].send(JSON.stringify([{ link: 1, session: 'w', taken: 0 }]))
+    await turn()
+    // Cut for a connection that takes any length, and not taken.
+    b.send(tell('x'.repeat(5000)))
+    await turn()
+    first[0].close()
+    await turn()
+    const mine = said[0]!.session
+    // Handed something that takes less than that: refused as it is handed over, and the link goes on.
+    const tight = narrow(3000)
+    expect(() => b.carry(tight.transport)).toThrow(RangeError)
+    expect(tight.closed()).toBe(1)
+    // One that says it takes less is turned away, told the session is lost.
+    const saying = memoryPair()
+    const told: unknown[] = []
+    saying[0].onData((message) => { told.push(...(JSON.parse(message as string) as unknown[])) })
+    b.carry(saying[1])
+    saying[0].send(JSON.stringify([{ link: 1, session: 'w', taken: 0, resumes: mine, most: 3000 }]))
+    await turn()
+    expect(told).toEqual([{ link: 1, session: '', taken: 0 }, { lost: true }])
+    expect(ended).toEqual([])
+    // One that takes it goes on, takes what was kept, and after that what is sent is cut to whatever carries it.
+    const wide = memoryPair()
+    const crossed: number[] = []
+    wide[0].onData((message) => { crossed.push(bytes(message)) })
+    b.carry(wide[1])
+    wide[0].send(JSON.stringify([{ link: 1, session: 'w', taken: 0, resumes: mine }]))
+    await turn()
+    wide[0].send(JSON.stringify([{ taken: 1 }]))
+    await turn()
+    expect(b.kept()).toBe(0)
+    wide[0].close()
+    await turn()
+    const again = narrow(3000)
+    const heard: unknown[] = []
+    again.right.onData((message) => { heard.push(...(JSON.parse(message as string) as unknown[])) })
+    expect(() => b.carry(again.transport)).not.toThrow()
+    again.right.send(JSON.stringify([{ link: 1, session: 'w', taken: 1, resumes: mine }]))
+    await turn()
+    b.send(tell('y'.repeat(5000)))
+    await turn()
+    expect(Math.max(...again.writes)).toBeLessThanOrEqual(3000)
+    expect(heard.filter((one) => typeof one === 'object' && one !== null && 'part' in one).length).toBeGreaterThan(1)
+    expect(ended).toEqual([])
   })
 })
 
@@ -404,11 +510,12 @@ describe('a WebSocket that takes no message longer than some length', () => {
     expect('most' in socket(ws)).toBe(false)
   })
 
-  it('is not opened to by a link that may need to send more, and carries one that does not, cut to it', () => {
+  it('carries a link whatever length of message it takes, down to the least any link needs: what is sent is cut to it', () => {
     const ws = { readyState: 0, bufferedAmount: 0, binaryType: '', send: () => {}, close: () => {}, addEventListener: () => {} }
-    // A part of 1 MiB unless told: a server that takes a megabyte takes less than a part and what goes with one.
-    expect(() => dial(socket(ws, { most: 1024 * 1024 }))).toThrow(RangeError)
-    expect(() => dial(socket(ws, { most: 1024 * 1024 }), { part: 512 * 1024 })).not.toThrow()
+    // A part is 1 MiB at most unless told: on a server that takes a megabyte, it is as much less as it takes to fit.
+    expect(() => dial(socket(ws, { most: 1024 * 1024 }))).not.toThrow()
+    expect(() => dial(socket(ws, { most: LEAST }))).not.toThrow()
+    expect(() => dial(socket(ws, { most: LEAST - 1 }))).toThrow(RangeError)
   })
 })
 

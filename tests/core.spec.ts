@@ -2,7 +2,7 @@
 // clocks, only the core stepped by hand and a network that is values. Each state is looked at once, however many
 // orders lead to it, and held to what a queue each way would have done.
 import { describe, expect, it } from 'vitest'
-import { core, ready, setup, start, type Effect, type Event, type State } from '../src/core.ts'
+import { core, LEAST, ready, setup, start, type Effect, type Event, type State } from '../src/core.ts'
 import { space, type Act, type Script } from './support/space.ts'
 
 const sends = (by: 'a' | 'b', count: number): Act[] => Array.from({ length: count }, () => ({ does: 'send', by }))
@@ -26,6 +26,7 @@ describe('every state two ends can reach', () => {
     ['a watched connection goes at one end first', { kind: 'opens', window: 100, quiet: 1, lanes: [sends('a', 1), [half]] }],
     ["a view's results, more than may be kept, as the connection drops", { kind: 'opens', kept: 1, frames: 'results', lanes: [sends('a', 3), [drop]] }],
     ['a frame in parts as the connection drops', { kind: 'opens', frames: { part: 16 }, lanes: [sends('a', 1), [drop]] }],
+    ['a frame longer than the connections take, as one drops', { kind: 'opens', most: LEAST, frames: { part: 2000 }, lanes: [sends('a', 1), [drop]] }],
   ]
   it.each(scripts)('%s', (_, script) => {
     const looked = space(script)
