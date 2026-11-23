@@ -68,7 +68,7 @@ it('is what docs/wire.md records, text for text', async () => {
   backend!.send({ kind: 'over', id: 2, failure: { kind: 'gone', message: 'No such view' } })
   await settle()
   // A frame longer than a part, 120 here, crosses in parts, and what caused it with the first.
-  window.send({ kind: 'tell', to: 'threads', event: 'a long event, longer than the hundred and twenty characters a part may be here, and so cut into two' }, { cause: 'paste' })
+  window.send({ kind: 'tell', to: 'threads', event: 'a long event, longer than the hundred and twenty characters a part may be here, and so cut into parts' }, { cause: 'paste' })
   await settle()
 
   // Owed an answer on a quiet connection: half the window, and the window's end asks whether the backend is there.

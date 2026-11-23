@@ -22,7 +22,7 @@ whoever reads the wire takes them one after another as if they were one. Each th
 | `"resumes":R` on a hello | The other end's session, from an end that has met it: it is going on with that session. Absent, this end has met nobody, and its `taken` is 0. |
 | `"most":M` on a hello | The longest message, in bytes, this end takes on this connection. Absent, any. The other end cuts its batches to fit. |
 | `{"seq":N,"frame":F}` | **A frame**, numbered: `seq` is one more than the last number this end sent, from 1. `F` is one of the nine frames below. |
-| `{"seq":N,"part":I,"of":K,"data":D}` | **A part** of a frame too long for one: the frame's encoded text cut into `K` pieces (2 or more), sent in turn, each with a number of its own. `D` is piece `I`, from 0. Nothing else is numbered between the parts of one frame. |
+| `{"seq":N,"part":I,"of":K,"data":D}` | **A part** of a frame too long for one: the frame's encoded text cut into `K` pieces (2 or more), sent in turn, each with a number of its own. `D` is piece `I`, from 0, and is never empty; as it crosses, quoted and escaped in JSON, it is no longer than a part may be, so pieces are not all one length. Nothing else is numbered between the parts of one frame. |
 | `"cause":C` on a frame or a first part | What caused it: a short text the kernel makes, passed on and never read. |
 | `"private":true` on a frame or a first part | A tap at either end is told only that it crossed, its number and its size. |
 | `{"taken":N}` | The last number this end took. What the other end kept for it up to there it may let go. |
@@ -69,6 +69,9 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
 - Each numbered thing is one more than the one before it from that end; one that is not ends the link
   `out of order`. A resume sends again everything after the `taken` the other end's hello names, and a frame in
   parts picks up at the part it got to.
+- The parts of one frame add up to no more than a frame may be at the end they arrive at (64 MiB unless that end
+  was told otherwise). Past it, or for a part that holds nothing, the link ends `not a frame`, however many parts
+  were said to be coming.
 - Anything else, or a batch that is not a list, ends the link `not a frame`. What it carried is not kept: only its
   length.
 
@@ -78,7 +81,8 @@ A window's end (A) and a backend's (B, behind `accept`), with a part 120 long, a
 is carried on something that takes no message longer than 4 KiB, and says so. A tells something it says a click
 caused, asks, and follows a view privately; B says something of the ask, shows the view and answers. A asks and
 leaves, follows a view B does not have and lets the first go; B ends the missing one. A sends a frame too long for
-one part, which a paste caused. Owed an answer on a quiet connection, A asks whether B is there. The connection
+one part, which a paste caused: its first piece is longer as a part's data than it was, with each quote in it
+said in two, and so is cut again. Owed an answer on a quiet connection, A asks whether B is there. The connection
 goes in the same turn as A says something: A opens another, each end says where it took the other to and whose
 session it resumes, and what A said goes on the new one. A says goodbye. Last, a backend that began after a
 session started is handed a hello that resumes it.
@@ -99,18 +103,17 @@ A → B  [{"seq":6,"frame":{"kind":"follow","id":2,"feature":"threads","view":"m
 B → A  [{"taken":7}]
 B → A  [{"seq":4,"frame":{"kind":"over","id":2,"failure":{"kind":"gone","message":"No such view"}}}]
 A → B  [{"taken":4}]
-A → B  [{"seq":8,"part":0,"of":2,"data":"{\"kind\":\"tell\",\"to\":\"threads\",\"event\":\"a long event, longer than the hundred and twenty characters a part may be here, a","cause":"paste"}]
-A → B  [{"seq":9,"part":1,"of":2,"data":"nd so cut into two\"}"}]
-B → A  [{"taken":8}]
-B → A  [{"taken":9}]
+A → B  [{"seq":8,"part":0,"of":3,"data":"{\"kind\":\"tell\",\"to\":\"threads\",\"event\":\"a long event, longer ","cause":"paste"}]
+A → B  [{"seq":9,"part":1,"of":3,"data":"than the hundred and twenty characters a part may be here, a"},{"seq":10,"part":2,"of":3,"data":"nd so cut into parts\"}"}]
+B → A  [{"taken":10}]
 A → B  [{"there":1}]
 B → A  [{"here":1}]
 A → B  [{"link":1,"session":"session-1","taken":4,"resumes":"session-2","most":4096}]
-B → A  [{"link":1,"session":"session-2","taken":9,"resumes":"session-1"}]
-A → B  [{"seq":10,"frame":{"kind":"tell","to":"threads","event":"said as it closed"}}]
-B → A  [{"taken":10}]
-A → B  [{"seq":11,"frame":{"kind":"tell","to":"threads","event":"after"}}]
+B → A  [{"link":1,"session":"session-2","taken":10,"resumes":"session-1"}]
+A → B  [{"seq":11,"frame":{"kind":"tell","to":"threads","event":"said as it closed"}}]
 B → A  [{"taken":11}]
+A → B  [{"seq":12,"frame":{"kind":"tell","to":"threads","event":"after"}}]
+B → A  [{"taken":12}]
 A → B  [{"bye":"ended"}]
 A → B  [{"link":1,"session":"session-3","taken":0,"resumes":"session-4"}]
 B → A  [{"link":1,"session":"session-5","taken":0},{"lost":true}]
