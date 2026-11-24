@@ -41,6 +41,21 @@ repository's to plan for and not only elmdb's. What a step sends a window would 
   across the two is the whole difficulty: it is a link's first rule, and here two writers share one stream.
 - **A codec both ends share with elmdb** (the plan's step 9 is the first half).
 
+## What the host's carrier and ownership mean for this
+
+- **Subscriptions end with the link, not only with its owner.** An engine-kept view is state held for one session.
+  Bind its teardown to `link.onEnd`, never directly to `gone(owner)`: a window reload keeps the same owner while
+  `accept()` ends the old link and starts a new one, and `gone(owner)` guarantees `link.onEnd` eventually fires when
+  a window closes and stops coming back.
+- **Rust can write to a socket, not to a `MessagePort`.** Writing link bytes without JavaScript in between requires
+  an OS socket or pipe that the engine (or a sidecar) can hold — a Unix domain socket, named pipe or TCP socket. An
+  Electron `MessagePort` (the primary carrier for desktop windows in the app's
+  `docs/plans/deferred/what-a-window-reaches-its-backend-over.md`) is a Chromium/V8 object that Rust cannot write to
+  directly without crossing Node's JavaScript. Choosing `MessagePort` for windows today does not permanently close
+  this off — a link's carrier is a swappable `Transport`, and Electron's preload can open a local socket directly —
+  but starting this work later means moving windows onto a local socket and moving admission beside whoever holds
+  that socket. Keeping `owner` as a plain local id that never crosses the wire keeps that move cheap.
+
 ## What would make it worth starting
 
 - A reading, in apack, of a view whose re-run and re-send costs enough to be felt: a list of thousands of rows
