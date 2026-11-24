@@ -548,11 +548,11 @@ type Traffic =
     readonly kind: Frame['kind']
     readonly id?: number
     readonly name?: string
-    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. */
-    readonly size: number
+    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. Absent if it could not be measured. */
+    readonly size?: number
     readonly cause?: string
   }
-  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size: number }
+  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size?: number }
 ```
 
 ### `Transport`

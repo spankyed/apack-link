@@ -106,11 +106,11 @@ export type Traffic =
     readonly kind: Frame['kind']
     readonly id?: number
     readonly name?: string
-    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. */
-    readonly size: number
+    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. Absent if it could not be measured. */
+    readonly size?: number
     readonly cause?: string
   }
-  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size: number }
+  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size?: number }
 
 /** What an end says of itself. None takes a number. */
 /**
@@ -299,9 +299,9 @@ const aboutOf = (frame: Frame, how: Sending): About => ({
   private: how.private === true,
 })
 /** A frame crossing, as a tap is told of it: of a private one, nothing but that it crossed. */
-const seen = (direction: 'out' | 'in', seq: number, size: number, about: About): Traffic => about.private
-  ? { direction, seq, private: true, size }
-  : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), size, ...(about.cause === undefined ? {} : { cause: about.cause }) }
+const seen = (direction: 'out' | 'in', seq: number, size: number | undefined, about: About): Traffic => about.private
+  ? { direction, seq, private: true, ...(size === undefined ? {} : { size }) }
+  : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), ...(size === undefined ? {} : { size }), ...(about.cause === undefined ? {} : { cause: about.cause }) }
 
 /** A frame encoded, with what is told of it and, for a view's result, which view. `size` includes its cause. */
 export interface Ready { encoded: Message; size: number; causeSize: number; about: About; readonly view?: number }
@@ -849,7 +849,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     out.push({
       do: 'hand', frame,
       ...(cause === undefined ? {} : { cause }),
-      ...(s.tapped && size !== undefined ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
+      ...(s.tapped ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
     })
   }
 

@@ -346,7 +346,7 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   tapping stops until another is added. Incoming sizes are measured directly from the arrived message (`Codec.sizes`)
   without encoding it again, falling back to encoding only for custom codecs that omit `sizes`. A tap that throws is
   the tap's to answer for; the link goes on. Where an incoming frame's size cannot be measured (such as a tap added
-  partway through a frame in parts), the tap event is omitted rather than invented.
+  partway through a frame in parts), the tap still sees the frame with `size` omitted rather than invented.
 - **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
   told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
   in. The frame itself reaches the other end as any other does.

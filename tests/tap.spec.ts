@@ -56,9 +56,9 @@ describe('a tap', () => {
     expect(out.map((traffic) => traffic.seq)).toEqual([1, 2])
   })
 
-  it('omits an incoming tap event rather than inventing a size when measurement is unavailable', async () => {
-    // A tap added partway through a frame in parts cannot know the earlier parts' size: the frame is handed over,
-    // and the tap hears nothing for it rather than a partial or zero size.
+  it('omits size rather than the frame or inventing zero when measurement is unavailable', async () => {
+    // A tap added partway through a frame in parts cannot know the earlier parts' size: the tap still sees the
+    // frame, without a size, rather than missing it or getting a partial or zero size.
     const [bare, right] = memoryPair()
     const b = listen(right)
     const heard: Frame[] = []
@@ -71,10 +71,14 @@ describe('a tap', () => {
     bare.send(JSON.stringify([{ seq: 3, frame: { kind: 'tell', to: 'x', event: 'next' } }]))
     await turn()
     expect(heard).toEqual([{ kind: 'tell', to: 'x', event: 'whole' }, { kind: 'tell', to: 'x', event: 'next' }])
-    expect(seen.map((traffic) => traffic.seq)).toEqual([3])
+    expect(seen).toEqual([
+      { direction: 'in', seq: 1, kind: 'tell', name: 'x' },
+      { direction: 'in', seq: 3, kind: 'tell', name: 'x', size: expect.any(Number) },
+    ])
+    expect('size' in seen[0]!).toBe(false)
 
     // And for a custom codec without `sizes` whose fallback `encode` throws on a received entry: the frame is still
-    // handed over and the unmeasurable tap event is omitted rather than throwing or inventing size 0.
+    // handed over and the tap still sees it without a size, rather than throwing, dropping the event, or inventing 0.
     const [bare2, right2] = memoryPair()
     const custom: Codec = {
       encode: (value) => {
@@ -92,35 +96,86 @@ describe('a tap', () => {
     bare2.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }, { seq: 1, frame: { kind: 'tell', to: 'x', event: 'ok' } }]))
     await turn()
     expect(heard2).toEqual([{ kind: 'tell', to: 'x', event: 'ok' }])
-    expect(seen2).toEqual([])
+    expect(seen2).toEqual([{ direction: 'in', seq: 1, kind: 'tell', name: 'x' }])
+    expect('size' in seen2[0]!).toBe(false)
   })
 
-  it('can be removed, stopping notifications and turning tapping off until another tap is added', async () => {
+  it('can be removed, stopping notifications and measurement until another tap is added', async () => {
+    let sizeCalls = 0
+    const tracked: Codec = {
+      ...json,
+      sizes: (message) => { sizeCalls++; return json.sizes!(message) },
+    }
     const [left, right] = memoryPair()
     const a = dial(left)
-    const b = listen(right)
+    const b = listen(right, { codec: tracked })
     const out: Traffic[] = []
-    const in_: Traffic[] = []
+    const in1: Traffic[] = []
+    const in2: Traffic[] = []
     const offA = a.onTraffic((traffic) => { out.push(traffic) })
-    const offB = b.onTraffic((traffic) => { in_.push(traffic) })
+    const offB1 = b.onTraffic((traffic) => { in1.push(traffic) })
+    const offB2 = b.onTraffic((traffic) => { in2.push(traffic) })
     a.send({ kind: 'tell', to: 'x', event: 1 })
     await turn()
     expect(out.map((t) => t.seq)).toEqual([1])
-    expect(in_.map((t) => t.seq)).toEqual([1])
-    offA()
-    offA() // idempotent
-    offB()
+    expect(in1.map((t) => t.seq)).toEqual([1])
+    expect(in2.map((t) => t.seq)).toEqual([1])
+    expect(sizeCalls).toBe(1)
+
+    // Removing one of two taps keeps measuring for the remaining tap.
+    offB1()
+    offB1() // idempotent
+    sizeCalls = 0
     a.send({ kind: 'tell', to: 'x', event: 2 })
     await turn()
-    expect(out.map((t) => t.seq)).toEqual([1])
-    expect(in_.map((t) => t.seq)).toEqual([1])
-    // Adding a tap again resumes reporting.
-    const in2: Traffic[] = []
-    const offB2 = b.onTraffic((traffic) => { in2.push(traffic) })
+    expect(in1.map((t) => t.seq)).toEqual([1])
+    expect(in2.map((t) => t.seq)).toEqual([1, 2])
+    expect(sizeCalls).toBe(1)
+
+    // Removing the last tap stops core measurement completely until another tap is added.
+    offA()
+    offB2()
+    sizeCalls = 0
     a.send({ kind: 'tell', to: 'x', event: 3 })
     await turn()
-    expect(in2.map((t) => t.seq)).toEqual([3])
-    offB2()
+    expect(out.map((t) => t.seq)).toEqual([1, 2])
+    expect(in2.map((t) => t.seq)).toEqual([1, 2])
+    expect(sizeCalls).toBe(0)
+
+    // Adding a tap again resumes measurement and reporting.
+    const in3: Traffic[] = []
+    const offB3 = b.onTraffic((traffic) => { in3.push(traffic) })
+    a.send({ kind: 'tell', to: 'x', event: 4 })
+    await turn()
+    expect(in3.map((t) => t.seq)).toEqual([4])
+    expect(sizeCalls).toBe(1)
+    offB3()
+
+    // Removing and re-adding a tap partway through a frame in parts stops measuring intermediate parts and omits size.
+    let partSizes = 0
+    const partTracked: Codec = {
+      ...json,
+      sizes: (message) => { partSizes++; return json.sizes!(message) },
+    }
+    const [bare, right2] = memoryPair()
+    const b2 = listen(right2, { codec: partTracked })
+    const offPart = b2.onTraffic(() => {})
+    bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }]))
+    bare.send(JSON.stringify([{ seq: 1, part: 0, of: 3, data: '{"kind":"tell",' }]))
+    await turn()
+    expect(partSizes).toBe(1)
+
+    offPart()
+    partSizes = 0
+    bare.send(JSON.stringify([{ seq: 2, part: 1, of: 3, data: '"to":"x",' }]))
+    await turn()
+    expect(partSizes).toBe(0)
+
+    const seenPart = tapped(b2)
+    bare.send(JSON.stringify([{ seq: 3, part: 2, of: 3, data: '"event":"whole"}' }]))
+    await turn()
+    expect(seenPart).toEqual([{ direction: 'in', seq: 1, kind: 'tell', name: 'x' }])
+    expect('size' in seenPart[0]!).toBe(false)
   })
 
   it('measures incoming frame sizes directly from arrived bytes without re-encoding, for JSON text, JSON bytes and msgpack', async () => {
@@ -139,7 +194,8 @@ describe('a tap', () => {
       }
     }
     const frames: Frame[] = [
-      { kind: 'tell', to: 'panel', event: { text: 'café 😀 "quoted" \\ slash', nums: [1, 2, 3] } },
+      // Escaped quotes holding structural delimiters (`},]`) and an escaped trailing backslash right before closing `"`.
+      { kind: 'tell', to: 'panel', event: { text: 'café 😀 "},]" end \\', after: [1, 2, 3] } },
       { kind: 'ask', id: 1, to: 'threads', name: 'CREATE', args: { nested: { a: true, b: null } } },
     ]
     for (const [label, base, asBytes] of [
@@ -156,16 +212,17 @@ describe('a tap', () => {
       const b = listen(right, { codec: recv.codec })
       const outA = tapped(a)
       const inB = tapped(b)
-      // Let handshake finish before counting encodes on the receiver (receiver encodes only its own hello + taken).
-      a.send(frames[0]!, { cause: 'step 1' })
+      // Complete handshake first so receiver encode count covers only arriving frames.
+      a.send({ kind: 'tell', to: 'init', event: 0 })
       await turn()
       await turn()
       recv.reset()
+      // Send both frames in one batch so any scanner split error shifts entry boundaries across the batch.
+      a.send(frames[0]!, { cause: 'step 1' })
       a.send(frames[1]!, { cause: 'step 2' })
-      // Only `taken` is encoded by the receiver when flushing — NEVER the arriving frame itself.
       await turn()
       expect(inB.map((t) => t.size), label).toEqual(outA.map((t) => t.size))
-      // Receiver encoded at most the `{ taken }` control word (1 encode), never the arriving frame.
+      // Receiver encoded at most the `{ taken }` control word (1 encode), never the arriving frames.
       expect(recv.encodes(), label).toBeLessThanOrEqual(1)
     }
     // Verify JSON byte sizes match actual arrived bytes even with extra whitespace on the wire.
@@ -176,7 +233,7 @@ describe('a tap', () => {
     bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }]))
     await turn()
     recv.reset()
-    const rawUnit = '{ "seq" : 1 , "frame" : { "kind" : "tell" , "to" : "x" , "event" : "café 😀" } }'
+    const rawUnit = '{ "seq" : 1 , "frame" : { "kind" : "tell" , "to" : "x" , "event" : "café 😀 \\"},]\\"" } }'
     bare.send(`[  ${rawUnit}  ]`)
     await turn()
     expect(seen).toEqual([{ direction: 'in', seq: 1, kind: 'tell', name: 'x', size: new TextEncoder().encode(rawUnit).byteLength }])

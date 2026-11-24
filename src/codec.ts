@@ -31,77 +31,41 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
 const isJsonSpace = (code: number): boolean => code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d
 
+/** How many bytes one unit of text is as UTF-8, with the unit after it when the two make one character. */
+const unitBytes = (text: string, at: number): number => {
+  const unit = text.charCodeAt(at)
+  if (unit < 0x80) return 1
+  if (unit < 0x800) return 2
+  return unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(at + 1) & 0xfc00) === 0xdc00 ? 4 : 3
+}
+
 /** Exact UTF-8 byte length of each top-level entry in a JSON array message, measured without re-encoding. */
 const jsonSizes = (message: Message): number[] | undefined => {
-  if (typeof message !== 'string') {
-    const len = message.byteLength
-    let at = 0
-    while (at < len && isJsonSpace(message[at]!)) at++
-    if (at >= len || message[at] !== 0x5b) return undefined
-    at++
-    const out: number[] = []
-    while (at < len) {
-      while (at < len && isJsonSpace(message[at]!)) at++
-      if (at >= len || message[at] === 0x5d) break
-      const start = at
-      let last = at
-      let depth = 0
-      let inString = false
-      let escaped = false
-      while (at < len) {
-        const b = message[at]!
-        if (inString) {
-          if (escaped) escaped = false
-          else if (b === 0x5c) escaped = true
-          else if (b === 0x22) inString = false
-          at++
-          last = at
-          continue
-        }
-        if (b === 0x22) { inString = true; at++; last = at; continue }
-        if (b === 0x7b || b === 0x5b) { depth++; at++; last = at; continue }
-        if (b === 0x7d || b === 0x5d) {
-          if (depth === 0) break
-          depth--
-          at++
-          last = at
-          continue
-        }
-        if (b === 0x2c && depth === 0) break
-        if (isJsonSpace(b)) { at++; continue }
-        at++
-        last = at
-      }
-      out.push(last - start)
-      if (at < len && message[at] === 0x2c) at++
-      else break
-    }
-    return out
-  }
-  const len = message.length
+  const isText = typeof message === 'string'
+  const len = isText ? message.length : message.byteLength
+  const code = isText ? (at: number) => message.charCodeAt(at) : (at: number) => message[at]!
   let at = 0
-  while (at < len && isJsonSpace(message.charCodeAt(at))) at++
-  if (at >= len || message.charCodeAt(at) !== 0x5b) return undefined
+  while (at < len && isJsonSpace(code(at))) at++
+  if (at >= len || code(at) !== 0x5b) return undefined
   at++
   const out: number[] = []
   while (at < len) {
-    while (at < len && isJsonSpace(message.charCodeAt(at))) at++
-    if (at >= len || message.charCodeAt(at) === 0x5d) break
+    while (at < len && isJsonSpace(code(at))) at++
+    if (at >= len || code(at) === 0x5d) break
     let bytes = 0
     let trailing = 0
     let depth = 0
     let inString = false
     let escaped = false
     while (at < len) {
-      const c = message.charCodeAt(at)
+      const c = code(at)
       if (inString) {
         if (escaped) escaped = false
         else if (c === 0x5c) escaped = true
         else if (c === 0x22) inString = false
-        if (c < 0x80) { bytes++; at++ }
-        else if (c < 0x800) { bytes += 2; at++ }
-        else if (c >= 0xd800 && c <= 0xdbff && (message.charCodeAt(at + 1) & 0xfc00) === 0xdc00) { bytes += 4; at += 2 }
-        else { bytes += 3; at++ }
+        const size = isText ? unitBytes(message, at) : 1
+        bytes += size
+        at += size === 4 ? 2 : 1
         continue
       }
       if (c === 0x22) { bytes += trailing + 1; trailing = 0; inString = true; at++; continue }
@@ -121,7 +85,7 @@ const jsonSizes = (message: Message): number[] | undefined => {
       at++
     }
     out.push(bytes)
-    if (at < len && message.charCodeAt(at) === 0x2c) at++
+    if (at < len && code(at) === 0x2c) at++
     else break
   }
   return out
@@ -142,14 +106,6 @@ export const json: Codec = {
 
 /** How many bytes a message is: text as UTF-8, which is how it crosses. */
 export const sizeOf = (message: Message): number => (typeof message === 'string' ? bytesOf(message) : message.byteLength)
-
-/** How many bytes one unit of text is as UTF-8, with the unit after it when the two make one character. */
-const unitBytes = (text: string, at: number): number => {
-  const unit = text.charCodeAt(at)
-  if (unit < 0x80) return 1
-  if (unit < 0x800) return 2
-  return unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(at + 1) & 0xfc00) === 0xdc00 ? 4 : 3
-}
 
 /**
  * How much of a message, from its start, is no more than `most` bytes: in units of text, or in bytes. Text is cut

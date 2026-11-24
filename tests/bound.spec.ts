@@ -111,7 +111,7 @@ describe('past the bound', () => {
     expect(ended).toEqual([{ why: 'overrun', waiting: { frames: 2, size: expect.any(Number) }, bound: { frames: 1000, size: 100 } }])
   })
 
-  it('counts cause bytes toward bound.waiting.size, including when an overtaken shown changes cause length', () => {
+  it('counts cause bytes toward bound.waiting.size, including when an overtaken shown changes cause length', async () => {
     const { left } = held()
     // Each short frame is ~35 bytes; a 120-byte cause pushes the waiting size past 100 even though the frame alone is under 100.
     const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 1000, size: 100 } } })
@@ -125,6 +125,20 @@ describe('past the bound', () => {
     expect(ended).toHaveLength(1)
     expect(ended[0]).toMatchObject({ why: 'overrun', waiting: { frames: 1 }, bound: { frames: 1000, size: 100 } })
     if (ended[0]?.why === 'overrun') expect(ended[0].waiting.size).toBeGreaterThan(100)
+
+    // When a waiting shown is overtaken with a much longer cause and then released under a small `part` limit,
+    // its updated `causeSize` keeps `frameSize` accurate so the short frame crosses whole instead of splitting.
+    const { left: left2, right: right2, release } = held()
+    const a2 = dial(left2, { part: 100, bound: { kept: { frames: 1, size: 1 << 20 } } })
+    const b2 = listening(right2)
+    a2.send(tell('numbered'))
+    a2.send(shown(1, 'a'), { cause: 'x' })
+    a2.send(shown(1, 'b'), { cause: 'y'.repeat(500) })
+    a2.send(tell('after'))
+    release()
+    await until(() => b2.heard.length === 3 || b2.ended.length > 0)
+    expect(b2.ended).toEqual([])
+    expect(b2.heard).toEqual([tell('numbered'), shown(1, 'b'), tell('after')])
   })
 })
 
