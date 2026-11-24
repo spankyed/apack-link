@@ -9,7 +9,7 @@ import type { Message } from './transport.ts'
 
 /**
  * A list a codec makes is no longer than its parts, one byte between each two, and two more, as JSON's is: a link
- * counts on it to cut a batch to what carries it.
+ * counts on it to cut a batch to what carries it. A codec encodes what it decodes.
  */
 export interface Codec {
   /** One value in a message's form. Throws for one it cannot hold. */
@@ -22,7 +22,7 @@ export interface Codec {
   decode(message: Message): unknown
 }
 
-const decoder = new TextDecoder()
+const decoder = new TextDecoder('utf-8', { fatal: true })
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
 
 /** Text, as JSON. What arrives as bytes is read as UTF-8. */

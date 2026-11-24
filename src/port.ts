@@ -2,6 +2,15 @@
 // `MessagePortMain`. None is imported.
 import { once, type Message, type Transport } from './transport.ts'
 
+/** A value as a `Uint8Array` of this realm when it is one, even if it crossed from another realm, or nothing. */
+const toBytes = (value: unknown): Uint8Array | undefined => {
+  if (value instanceof Uint8Array) return value
+  if (ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === '[object Uint8Array]') {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  return undefined
+}
+
 /** A port that takes listeners as an event target does: a browser's, and Node's. */
 interface TargetPort {
   addEventListener(type: 'message', listener: (event: { readonly data: unknown }) => void): void
@@ -25,8 +34,13 @@ export function port(of: MessagePortLike): Transport {
   const arrived = (data: unknown): void => {
     if (closes.fired) return
     // What says the other end closed.
-    if (data === null) { closes.fire(); return }
-    if (typeof data === 'string' || data instanceof Uint8Array) for (const heard of hears) heard(data)
+    if (data === null) {
+      closes.fire()
+      try { of.close() } catch { /* already closed */ }
+      return
+    }
+    const message = typeof data === 'string' ? data : toBytes(data)
+    if (message !== undefined) for (const heard of hears) heard(message)
   }
   if ('addEventListener' in of) {
     of.addEventListener('message', (event) => arrived(event.data))

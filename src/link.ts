@@ -8,7 +8,7 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, firstOf, isHello, isObject, LEAST, limits, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
+import { core, firstOf, isHello, isObject, LEAST, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
 import { json, type Codec } from './codec.ts'
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
@@ -33,12 +33,13 @@ export interface Link {
   /**
    * Called with each frame the other end sent, in the order it sent them, once each, with what caused it. One that
    * throws stops nothing: the others are called, the frames after it are taken, and what it threw goes to `thrown`.
+   * Returns what stops calling it.
    */
-  onFrame(heard: (frame: Frame, cause?: string) => void): void
-  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. */
-  onTraffic(seen: (traffic: Traffic) => void): void
-  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. */
-  onEnd(ended: (ending: Ending) => void): void
+  onFrame(heard: (frame: Frame, cause?: string) => void): () => void
+  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. Returns what stops calling it. */
+  onTraffic(seen: (traffic: Traffic) => void): () => void
+  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. Returns what stops calling it. */
+  onEnd(ended: (ending: Ending) => void): () => void
   /**
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not
@@ -177,41 +178,60 @@ export function listen(over?: Transport, options: Options = {}): Link | Listener
   return alone
 }
 
+/** Hands on what a listener threw: to `thrown`, or to a turn of its own, where nothing of the link's is under it. */
+const reportError = (options: Options, error: unknown): void => {
+  let thrown = error
+  if (options.thrown) try { options.thrown(error); return } catch (again) { thrown = again }
+  queueMicrotask(() => { throw thrown })
+}
+
+/** Translates a link's `Options` into what `core`'s `setup` takes: one place for both `end` and `accept`. */
+const setupOf = (role: 'dials' | 'listens', connections: 'one' | 'opened' | 'handed', session: string, options: Options) => setup({
+  role,
+  connections,
+  session,
+  ...(options.codec ? { codec: options.codec } : {}),
+  ...(options.part === undefined ? {} : { part: options.part }),
+  ...(options.bound ? { bound: options.bound } : {}),
+  ...(options.there ? { window: options.there.window } : {}),
+  ...(options.reopen?.first === undefined ? {} : { first: options.reopen.first }),
+  ...(options.reopen?.most === undefined ? {} : { most: options.reopen.most }),
+})
+
 /** One end of a link, on what it is handed. */
 function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | undefined, options: Options): { readonly made: Listener; readonly hand: (transport: Transport) => void } {
   const pace = options.reopen
   const later = options.later ?? queueMicrotask
-  const set = setup({
-    role,
-    connections: typeof over === 'object' ? 'one' : typeof over === 'function' ? 'opened' : 'handed',
-    session: crypto.randomUUID(),
-    ...(options.codec ? { codec: options.codec } : {}),
-    ...(options.part === undefined ? {} : { part: options.part }),
-    ...(options.bound ? { bound: options.bound } : {}),
-    ...(options.there ? { window: options.there.window } : {}),
-    ...(pace?.first === undefined ? {} : { first: pace.first }),
-    ...(pace?.most === undefined ? {} : { most: pace.most }),
-  })
+  const set = setupOf(role, typeof over === 'object' ? 'one' : typeof over === 'function' ? 'opened' : 'handed', crypto.randomUUID(), options)
   const step = core(set)
   const state = start()
   /** What this link prepared and has not sent. */
   const prepared = new WeakMap<Prepared, Ready>()
-  const hears: Array<(frame: Frame, cause?: string) => void> = []
-  const taps: Array<(traffic: Traffic) => void> = []
-  const ends: Array<(ending: Ending) => void> = []
+  type Registered<Fn> = { readonly fn: Fn; active: boolean }
+  const register = <Fn>(list: Array<Registered<Fn>>, fn: Fn, after?: () => void): (() => void) => {
+    const entry: Registered<Fn> = { fn, active: true }
+    list.push(entry)
+    return () => {
+      if (!entry.active) return
+      entry.active = false
+      const at = list.indexOf(entry)
+      if (at >= 0) list.splice(at, 1)
+      after?.()
+    }
+  }
+  const hears: Array<Registered<(frame: Frame, cause?: string) => void>> = []
+  const taps: Array<Registered<(traffic: Traffic) => void>> = []
+  const ends: Array<Registered<(ending: Ending) => void>> = []
   /** Each connection the end may still say something of, by the number it was told to the end with. */
   const transports = new Map<number, Transport>()
   let connections = 0
   /** What calls off each thing on a clock, by its number. */
   const calledOff = new Map<number, () => void>()
   /** Tells each tap. A tap that throws is not this link's to report, and does not stop it. */
-  const tap = (traffic: Traffic): void => { for (const seen of taps) try { seen(traffic) } catch { /* the tap's */ } }
-  /** Hands on what a listener threw: to `thrown`, or to a turn of its own, where nothing of the link's is under it. */
-  const report = (error: unknown): void => {
-    let thrown = error
-    if (options.thrown) try { options.thrown(error); return } catch (again) { thrown = again }
-    queueMicrotask(() => { throw thrown })
+  const tap = (traffic: Traffic): void => {
+    for (const entry of [...taps]) if (entry.active) try { entry.fn(traffic) } catch { /* the tap's */ }
   }
+  const report = (error: unknown): void => { reportError(options, error) }
   /** How many bytes what carries a connection has not yet written, where it says. */
   const backlog = (on: number | undefined): number => (on === undefined ? 0 : transports.get(on)?.waiting?.() ?? 0)
 
@@ -273,13 +293,16 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         return
       case 'hand':
         if (effect.traffic) tap(effect.traffic)
-        for (const hear of hears) try { hear(effect.frame, effect.cause) } catch (error) { report(error) }
+        for (const entry of [...hears]) if (entry.active) try { entry.fn(effect.frame, effect.cause) } catch (error) { report(error) }
         return
       case 'traffic':
         tap(effect.traffic)
         return
+      case 'report':
+        report(effect.error)
+        return
       case 'ended':
-        for (const ended of ends) try { ended(effect.ending) } catch (error) { report(error) }
+        for (const entry of [...ends]) if (entry.active) try { entry.fn(effect.ending) } catch (error) { report(error) }
     }
   }
 
@@ -287,9 +310,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     if (state.ending) { transport.close(); return }
     const on = ++connections
     transports.set(on, transport)
-    tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
-    transport.onClose(() => tell({ is: 'closed', on }))
-    transport.onData((message) => {
+    const deliver = (message: Message): void => {
       // A frame handed over is the last thing a step asks for: once whoever it was handed to has been called,
       // the rest of the message is taken, as far as the next. Should doing any of it throw, none is left over.
       const taking = state.taking.length
@@ -297,7 +318,16 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         tell({ is: 'data', on, message, backlog: backlog(on) })
         while (state.taking.length > taking) tell({ is: 'more', backlog: backlog(on) })
       } finally { state.taking.length = Math.min(state.taking.length, taking) }
-    })
+    }
+    const queued: Message[] = []
+    let closed = false
+    let carried = false
+    transport.onClose(() => { if (carried) tell({ is: 'closed', on }); else closed = true })
+    transport.onData((message) => { if (carried) deliver(message); else queued.push(message) })
+    carried = true
+    tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
+    for (const message of queued) deliver(message)
+    if (closed) tell({ is: 'closed', on })
   }
   const carry = (transport: Transport): void => {
     if (state.ending) { transport.close(); return }
@@ -323,12 +353,17 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
       } else one = ready(set, what, how)
       tell({ is: 'send', one, backlog: backlog(state.now?.id) })
     },
-    onFrame: (hear) => { hears.push(hear) },
+    onFrame: (hear) => register(hears, hear),
     onTraffic: (seen) => {
-      taps.push(seen)
-      tell({ is: 'tapped' })
+      const was = taps.length
+      const off = register(taps, seen, () => { if (taps.length === 0) tell({ is: 'untapped' }) })
+      if (was === 0) tell({ is: 'tapped' })
+      return off
     },
-    onEnd: (ended) => { if (state.ending) ended(state.ending); else ends.push(ended) },
+    onEnd: (ended) => {
+      if (state.ending) { try { ended(state.ending) } catch (error) { report(error) } return () => {} }
+      return register(ends, ended)
+    },
     close: (bye) => { tell({ is: 'close', ...(bye ? { bye } : {}) }) },
     carry,
     kept: () => state.kept.length,
@@ -386,11 +421,15 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
   const sessions = new Map<Owner, Session>()
   /** What closes each connection taken as an owner's and still open, a session's or not yet anybody's. */
   const open = new Map<Owner, Set<() => void>>()
+  /** Owners whose current session is being closed for a reload, and owners currently being torn down by `gone`. */
+  const ending = new Set<Owner>()
+  const leaving = new Set<Owner>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
-  limits(options)
+  setupOf('listens', 'handed', '', options)
   const take = (transport: Transport, owner: Owner): void => {
     // Found when the connection arrives, not when a frame is too long for it.
     wideEnough(transport, LEAST)
+    if (leaving.has(owner)) { try { transport.close() } catch { /* it has gone already */ } return }
     const hears: Array<(message: Message) => void> = []
     const closes: Array<() => void> = []
     let first = true
@@ -400,13 +439,19 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       send: (message) => transport.send(message),
       onData: (heard) => { hears.push(heard) },
       onClose: (then) => { if (closed) then(); else closes.push(then) },
-      close: () => transport.close(),
+      close: () => { if (!closed) transport.close() },
       ...(transport.waiting ? { waiting: () => transport.waiting!() } : {}),
       ...(transport.most === undefined ? {} : { most: transport.most }),
     }
+    const untrack = (): void => {
+      const still = open.get(owner)
+      if (still?.delete(shut) && still.size === 0) open.delete(owner)
+    }
     /** Closes the connection for an owner that is gone: nothing it says after is heard. */
     const shut = (): void => {
+      if (closed) return
       closed = true
+      untrack()
       try { transport.close() } catch { /* it has gone already */ }
     }
     const mine = open.get(owner) ?? new Set()
@@ -416,6 +461,9 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
      * link's number, and with that the session is lost where it is.
      */
     const turnAway = (saying: 'nothing' | 'which link' | 'lost'): void => {
+      if (closed) return
+      closed = true
+      untrack()
       try {
         if (saying !== 'nothing') transport.send(codec.list([codec.encode({ link: LINK, session: crypto.randomUUID(), taken: 0 } satisfies Hello), ...(saying === 'lost' ? [codec.encode({ lost: true } satisfies Lost)] : [])]))
         transport.close()
@@ -423,8 +471,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
     }
     transport.onClose(() => {
       closed = true
-      const still = open.get(owner)
-      if (still?.delete(shut) && still.size === 0) open.delete(owner)
+      untrack()
       for (const then of closes.splice(0)) then()
     })
     transport.onData((message) => {
@@ -438,6 +485,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
         turnAway(isObject(said) && typeof said.link === 'number' && said.link !== LINK ? 'which link' : 'nothing')
         return
       }
+      if (ending.has(owner) || leaving.has(owner)) { turnAway('lost'); return }
       const had = sessions.get(owner)
       if (had?.id === said.session) had.hand(relay)
       // Going on with a session this owner does not have: another owner's, one from before this end began, or one
@@ -448,7 +496,8 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       else {
         // The owner began again: the session it had is over before the new one is anybody's.
         if (had) {
-          had.link.close('ended')
+          ending.add(owner)
+          try { had.link.close('ended') } finally { ending.delete(owner) }
           // Whoever heard that end may have said the owner is gone.
           if (closed) return
         }
@@ -459,17 +508,26 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
         sessions.set(owner, session)
         // A link has ended by the time closing it returns, so the session an owner has is never one that ended.
         made.onEnd(() => { sessions.delete(owner) })
-        onLink(link, owner)
+        try { onLink(link, owner) } catch (error) {
+          made.close()
+          turnAway('lost')
+          reportError(options, error)
+          return
+        }
         hand(relay)
       }
       for (const heard of hears) heard(message)
     })
   }
   const gone = (owner: Owner): void => {
-    sessions.get(owner)?.link.close('ended')
-    const mine = open.get(owner)
-    open.delete(owner)
-    for (const shut of [...(mine ?? [])]) shut()
+    if (leaving.has(owner)) return
+    leaving.add(owner)
+    try {
+      sessions.get(owner)?.link.close('ended')
+      const mine = open.get(owner)
+      open.delete(owner)
+      for (const shut of [...(mine ?? [])]) shut()
+    } finally { leaving.delete(owner) }
   }
   return { take, gone }
 }

@@ -1,6 +1,6 @@
 // A link carried on a WebSocket: a browser's, or Node's `ws`, or anything with the parts of one they share. Neither
 // is imported. The socket is opened by whoever holds it, with whatever it needs to be let in.
-import { bytesOf } from './frames.ts'
+import { sizeOf } from './codec.ts'
 import { once, type Message, type Transport } from './transport.ts'
 
 /** What a browser's `WebSocket` and Node's `ws` both have, and all a link uses of either. */
@@ -33,11 +33,24 @@ const OPEN = 1
  * Bytes arrive as a `Uint8Array`.
  */
 export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transport {
+  if (options.most !== undefined && (!Number.isSafeInteger(options.most) || options.most < 1)) {
+    throw new RangeError('socket most is a positive whole number of bytes')
+  }
   const hears: Array<(message: Message) => void> = []
   const closes = once()
   const waiting: Message[] = []
+  let waitingBytes = 0
+  closes.add(() => { waiting.length = 0; waitingBytes = 0 })
   ws.binaryType = 'arraybuffer'
-  ws.addEventListener('open', () => { for (const message of waiting.splice(0)) ws.send(message) })
+  ws.addEventListener('open', () => {
+    if (closes.fired || ws.readyState !== OPEN) { waiting.length = 0; waitingBytes = 0; return }
+    const queued = waiting.splice(0)
+    waitingBytes = 0
+    for (const message of queued) {
+      if (closes.fired || ws.readyState !== OPEN) break
+      ws.send(message)
+    }
+  })
   ws.addEventListener('message', ({ data }) => {
     if (closes.fired) return
     const message = typeof data === 'string' ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : undefined
@@ -51,13 +64,13 @@ export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transpor
   return {
     send: (message) => {
       if (closes.fired) return
-      if (ws.readyState === OPENING) waiting.push(message)
+      if (ws.readyState === OPENING) { waiting.push(message); waitingBytes += sizeOf(message) }
       else if (ws.readyState === OPEN) ws.send(message)
     },
     onData: (heard) => { hears.push(heard) },
     onClose: closes.add,
     ...(options.most === undefined ? {} : { most: options.most }),
-    waiting: () => ws.bufferedAmount + waiting.reduce((all, message) => all + (typeof message === 'string' ? bytesOf(message) : message.byteLength), 0),
+    waiting: () => ws.bufferedAmount + waitingBytes,
     close: () => {
       if (closes.fired) return
       ws.close()

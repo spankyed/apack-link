@@ -84,7 +84,7 @@ interface Clock { after(ms: number, run: () => void): () => void }
 ### `Codec`
 
 A list a codec makes is no longer than its parts, one byte between each two, and two more, as JSON's is: a link
-counts on it to cut a batch to what carries it.
+counts on it to cut a batch to what carries it. A codec encodes what it decodes.
 
 ```ts
 interface Codec {
@@ -258,12 +258,13 @@ interface Link {
   /**
    * Called with each frame the other end sent, in the order it sent them, once each, with what caused it. One that
    * throws stops nothing: the others are called, the frames after it are taken, and what it threw goes to `thrown`.
+   * Returns what stops calling it.
    */
-  onFrame(heard: (frame: Frame, cause?: string) => void): void
-  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. */
-  onTraffic(seen: (traffic: Traffic) => void): void
-  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. */
-  onEnd(ended: (ending: Ending) => void): void
+  onFrame(heard: (frame: Frame, cause?: string) => void): () => void
+  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. Returns what stops calling it. */
+  onTraffic(seen: (traffic: Traffic) => void): () => void
+  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. Returns what stops calling it. */
+  onEnd(ended: (ending: Ending) => void): () => void
   /**
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not

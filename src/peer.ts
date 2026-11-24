@@ -58,6 +58,8 @@ interface Work {
   spoiled?: boolean
   /** For a view: what it offers to say it has caught up. */
   caughtUp?: Following['caughtUp']
+  /** For a view: ends it `over` and stops it when its `caughtUp` throws, before anything held leaves. */
+  fail?: () => void
 }
 
 /** Something the system said, waiting in the hold. */
@@ -152,15 +154,25 @@ export function join(link: Link, mine: Port): Port {
     rounds.push(round)
     // Something is blocked on the views when an answer is among it: an asker is waiting.
     const soon = held.slice(from - let_out).some((waiting) => waiting.frame.kind === 'answer')
+    let thrown: { error: unknown } | undefined
     for (const work of views) {
+      if (!round.waiting.has(work)) continue
       let called = false
-      work.caughtUp!(() => {
-        if (called) return
-        called = true
-        if (round.waiting.delete(work)) release()
-      }, soon)
+      try {
+        work.caughtUp!(() => {
+          if (called) return
+          called = true
+          if (round.waiting.delete(work)) release()
+        }, soon)
+      } catch (error) {
+        // A view whose caughtUp throws cannot be trusted to have caught up: end it (`over` before anything held
+        // leaves) and stop it, then go on with the rest.
+        thrown ??= { error }
+        try { work.fail?.() } catch (again) { thrown ??= { error: again } }
+      }
     }
     release()
+    if (thrown) throw thrown.error
   }
 
   const halt = (work: Work): void => {
@@ -200,11 +212,16 @@ export function join(link: Link, mine: Port): Port {
     const work: Work = { halted: false }
     running.set(id, work)
     const live = (): boolean => running.get(id) === work
-    // A view's own words are what the hold waits for, so they go at once.
+    // A view's own words are what the hold waits for, so they go at once — ahead of anything held that waited on it.
     const end = (failure: Failure): void => {
       running.delete(id)
-      forget(work)
       link.send({ kind: 'over', id, failure })
+      forget(work)
+    }
+    work.fail = () => {
+      if (!live()) return
+      end(refused())
+      halt(work)
     }
     let following: Following
     try {

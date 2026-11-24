@@ -79,14 +79,15 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
 - An end that listens and is closed says a goodbye on the connection it is on. Where it is on none and one
   waits, it says its hello, what it had to send and its goodbye there only if it has met nobody: an end that
   has been in a session says nothing to a connection where nobody has said who they are.
-- Each numbered thing is one more than the one before it from that end; one that is not ends the link
-  `out of order`. A resume sends again everything after the `taken` the other end's hello names, and a frame in
-  parts picks up at the part it got to.
-- The parts of one frame add up to no more than a frame may be at the end they arrive at (64 MiB unless that end
-  was told otherwise). Past it, or for a part that holds nothing, the link ends `not a frame`, however many parts
-  were said to be coming.
-- Anything else, or a batch that is not a list, ends the link `not a frame`. What it carried is not kept: only its
-  length.
+- Each numbered thing has a whole `seq` from 1 (anything else is `not a frame`) that is one more than the one
+  before it from that end; one that is not ends the link `out of order`, whether or not a frame in parts is under
+  way. A resume sends again everything after the `taken` the other end's hello names, and a frame in parts picks
+  up at the part it got to.
+- The parts of one frame are all text or all bytes, and add up to no more than a frame may be at the end they
+  arrive at (64 MiB unless that end was told otherwise). Past it, for a part that holds nothing, or for mixed text
+  and bytes, the link ends `not a frame`, however many parts were said to be coming.
+- Anything else, a batch that is not a list, or bytes that are not valid UTF-8 on a JSON link, ends the link
+  `not a frame`. What it carried is not kept: only its length.
 
 ## A recorded exchange
 

@@ -18,9 +18,9 @@ const puppet = (refuses: (frame: Frame) => boolean = () => false) => {
     link: {
       send: (frame) => { if (!('prepared' in frame) && refuses(frame)) throw new RangeError('refused') },
       prepare: (frame) => ({ prepared: frame.kind }),
-      onFrame: (hear) => { hears.push(hear) },
-      onTraffic: () => {},
-      onEnd: (ended) => { ends.push(ended) },
+      onFrame: (hear) => { hears.push(hear); return () => {} },
+      onTraffic: () => () => {},
+      onEnd: (ended) => { ends.push(ended); return () => {} },
       close: (bye) => { closed.push(bye) },
       kept: () => 0,
       waiting: () => 0,

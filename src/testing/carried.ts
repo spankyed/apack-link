@@ -44,6 +44,8 @@ export function carried(schedule: Schedule, pair: readonly [Transport, Transport
       },
       onData: (heard) => { hears.push(heard) },
       onClose: (closed) => { closes.push(closed) },
+      ...(here.real.waiting ? { waiting: () => here.real.waiting!() } : {}),
+      ...(here.real.most === undefined ? {} : { most: here.real.most }),
       close: () => {
         if (here.closed) return
         // Closed at once here, as the ends in memory are: the real close is heard by the other side in its turn, and

@@ -1,9 +1,9 @@
 // The codec built in, and the pieces of the testing kit a spec of another end is written with: each does what its
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
-import { asFrame, join, json, dial, listen, memoryPair, type Port } from '../src/index.ts'
+import { asFrame, join, json, dial, listen, memoryPair, type Port, type Transport } from '../src/index.ts'
 import { everyOrder } from '@apackdev/orderings'
-import { asking, desk, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
+import { asking, carried, desk, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
   it('gives back what it was given, from text and from the same text as bytes', () => {
@@ -23,6 +23,7 @@ describe('json', () => {
     expect(() => json.encode(() => {})).toThrow()
     expect(() => json.encode(1n)).toThrow()
     expect(() => json.decode('{not json')).toThrow()
+    expect(() => json.decode(new Uint8Array([0xff, 0xfe]))).toThrow()
   })
 })
 
@@ -146,6 +147,25 @@ describe('made', () => {
       const things = made(schedule, { offers: false })
       const offered = things.follow({ feature: 'f', view: 'count', args: null, shown: () => {}, over: () => {}, stopped: 0 })
       return () => { holds(!offered?.caughtUp, 'no caughtUp is offered') }
+    })
+  })
+})
+
+describe('carried', () => {
+  it('forwards most and waiting from the wrapped transports', async () => {
+    await everyOrder((schedule) => {
+      const [left, right] = memoryPair()
+      let backlog = 42
+      const a: Transport = { ...left, most: 4096, waiting: () => backlog }
+      const b: Transport = { ...right }
+      const [wrappedA, wrappedB] = carried(schedule, [a, b])
+      return () => {
+        same(wrappedA.most, 4096, 'most forwarded')
+        same(wrappedA.waiting?.(), 42, 'waiting forwarded')
+        backlog = 7
+        same(wrappedA.waiting?.(), 7, 'waiting stays live')
+        holds(!('most' in wrappedB) && !('waiting' in wrappedB), 'absent fields stay absent')
+      }
     })
   })
 })
