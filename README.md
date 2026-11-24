@@ -66,7 +66,7 @@ one of the two is chosen to dial: two that both listen never say anything.
 | `dial(open, { reopen })` | Dials, opens its own connections, and opens another after each one closes. Numbers nothing until the other end has said hello |
 | `listen(transport)` | Listens on one connection, and ends when it closes |
 | `listen()` | Listens, and is handed each connection with `carry`: a `Listener` |
-| `accept(onLink)` | A backend's: takes connections as they arrive, makes a link that listens for each new session, and hands a known session's connection back to its link |
+| `accept(onLink)` | A backend's: takes each connection with whose it is, makes a link that listens for an owner's new session, and hands a connection that says the session its owner has back to that session's link |
 
 The end that dials says hello first, and ends for what it meets there. The end that listens says nothing on a
 connection until a hello that fits has arrived on it, and ends for nothing said before one: what does not fit
@@ -78,9 +78,12 @@ import { accept, dial, socket, timers } from '@apackdev/link'
 // A window: opens a socket now, and another after each one closes, on the clock it is handed.
 const toBackend = dial(() => socket(new WebSocket(url, [token])), { reopen: { clock: timers } })
 
-// A backend: a new session is a new link; a known one is handed back to the link it was.
-const take = accept((link) => { /* join(link, backendPort) */ })
-server.on('connection', (ws) => take(socket(ws)))
+// A backend: each connection is taken with whose it is. An owner's new session is a new link, and a
+// connection that says the session its owner has is handed back to that session's link.
+const backend = accept((link, owner) => { /* join(link, backendPort) */ })
+server.on('connection', (ws, request) => backend.take(socket(ws), windowOf(request)))
+// When the host learns a window will not be back:
+backend.gone(window)
 ```
 
 ### A link by itself
@@ -104,15 +107,20 @@ server.on('connection', (ws) => take(socket(ws)))
 
 ### What a backend has to do itself
 
-- **Say who may connect.** A link authenticates nobody. A connection that says a session's id and a hello that
-  fits is that session, as far as a link can tell. Who may connect is settled by whatever takes the connections,
-  before one is handed to `accept`: a token on the socket, a socket path only the user can open.
-- **Close the link of a window that is gone.** A link outlives its connections, so a connection closing does not
-  say the window is gone, and nothing ends a link by a clock. `accept` keeps each link, with what it holds for
-  its window, until it ends: whoever takes the links calls `close()` on one when it knows its window is gone for
-  good. A design in which a link holds whose each session is, so that a host does not keep that itself, is
-  [proposed and not built](docs/proposed/sessions-have-owners.md). What a window on another machine would need
-  beyond it is [left out, with why](docs/deferred/remote-windows.md).
+- **Say who may connect, and whose each connection is.** A link authenticates nobody. Who may connect is settled
+  by whatever takes the connections, before one is handed to `accept`: a token on the socket, a socket path only
+  the user can open. The same place says whose it is, the owner it is taken with: whatever the host knows a
+  dialler by, a window's id for one. It never crosses the link.
+- **Say when an owner is gone.** A link outlives its connections, so a connection closing does not say the window
+  is gone, and nothing ends a link by a clock. A session is held to its owner:
+  - it is gone on with only by its owner, and a connection of anybody else's that says it is told it is lost;
+  - an owner has one, so a window that reloads ends the session it had as it begins another;
+  - `gone(owner)` ends an owner's session and closes its connections, when the host learns it will not be back.
+
+  So a backend keeps no more sessions than it has owners it has not said are gone. A host with nothing to call
+  an owner gives each connection its own, and says it is gone when the connection closes: a link that does not
+  go on across a drop. What a window on another machine would need beyond this is
+  [left out, with why](docs/deferred/remote-windows.md).
 
 ## What it carries
 

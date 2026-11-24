@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { accept, bytesOf, join, dial, LEAST, listen, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
+import { only } from './support/only.ts'
 import { asking, desk, everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -677,7 +678,7 @@ describe('what carries a link taking no message longer than it says', () => {
     expect(() => a.carry(handed.narrow)).toThrow(RangeError)
     expect(handed.noted.closed).toBe(1)
     const arriving = limited(LEAST - 1)
-    expect(() => accept(() => {}, { bound })(arriving.narrow)).toThrow(RangeError)
+    expect(() => only(accept(() => {}, { bound }))(arriving.narrow)).toThrow(RangeError)
     expect(arriving.noted.closed).toBe(1)
     // The first of a link that opens its own.
     const opening = limited(LEAST - 1)
@@ -703,7 +704,7 @@ describe('what carries a link taking no message longer than it says', () => {
 
   it('is asked through what accepts connections, as is how much it has not written', async () => {
     const made: Array<ReturnType<typeof dial>> = []
-    const take = accept((one) => { made.push(one) }, { bound: { ...bound, kept: { frames: 1000, size: 100_000 } } })
+    const take = only(accept((one) => { made.push(one) }, { bound: { ...bound, kept: { frames: 1000, size: 100_000 } } }))
     const { narrow, right, texts } = limited(1400)
     let unwritten = 0
     take({ ...narrow, waiting: () => unwritten })
@@ -827,7 +828,7 @@ describe('closing', () => {
   it('is taken whole by what accepts connections: a window that says something and closes at once is heard', async () => {
     const heard: Frame[] = []
     const ended: Ending[] = []
-    const take = accept((one) => { one.onFrame((frame) => { heard.push(frame) }); one.onEnd((ending) => { ended.push(ending) }) })
+    const take = only(accept((one) => { one.onFrame((frame) => { heard.push(frame) }); one.onEnd((ending) => { ended.push(ending) }) }))
     const [left, right] = memoryPair()
     take(right)
     const window = dial(left)

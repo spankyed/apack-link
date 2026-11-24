@@ -3,6 +3,7 @@
 // ends for nothing said before one.
 import { describe, expect, it } from 'vitest'
 import { accept, dial, LINK, listen, memoryPair, type Ending, type Frame, type Link, type Listener, type Message, type Transport } from '../src/index.ts'
+import { only } from './support/only.ts'
 import { setup } from '../src/core.ts'
 import { everyOrder, scheduledPair } from '../src/testing/index.ts'
 
@@ -193,7 +194,7 @@ describe('the end that listens', () => {
 describe('what accepts connections', () => {
   it('hands on links that are not handed connections by anybody else, and makes none for what it turns away', async () => {
     const made: Link[] = []
-    const take = accept((one) => { made.push(one) }, { bound: { frame: 4096 }, part: 2048 })
+    const take = only(accept((one) => { made.push(one) }, { bound: { frame: 4096 }, part: 2048 }))
     for (const first of [{ 0: hello }, 7, { ...hello, link: LINK + 1 }, { ...hello, most: 100 }, { ...hello, taken: 2 }]) {
       const stranger = bare()
       take(stranger.transport)

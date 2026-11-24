@@ -348,24 +348,47 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
   return { made, hand }
 }
 
+/** What `accept` returns: what takes each connection with whose it is, and what says an owner will not be back. */
+export interface Accepting<Owner> {
+  /**
+   * Takes a connection, and whose it is. Its first word finds it its link: its owner's session where it says that
+   * one, and a new session, handed to `onLink`, where it says one that is new. Throws a `RangeError`, having
+   * closed it, for a transport that takes no message of `LEAST` bytes.
+   */
+  take(transport: Transport, owner: Owner): void
+  /**
+   * Says an owner will not be back. Its session ends, told `ended` where it can be, and every connection taken as
+   * its that is still open is closed, whether or not it has said anything. Nothing is kept of the owner after: one
+   * taken again is an owner met for the first time.
+   */
+  gone(owner: Owner): void
+}
+
 /**
- * Takes connections as they arrive at a backend, and finds each its link: a new session is a new link, handed to
- * `onLink`, and a known one is handed back to the link it was. A connection that says it is going on with a session,
- * from one this end does not know, is told the session is lost, and closed.
+ * Takes connections as they arrive at a backend, each with its owner, and finds each its link. An owner is
+ * whatever the host knows a dialler by, compared as a `Map` compares keys: it is settled by whatever admitted the
+ * connection, and never crosses the link.
  *
- * A session's id is all a connection needs to say to be handed that session's link: who may connect at all is for
- * whatever takes the connections to have settled before one is handed here.
+ * - **A session is gone on with only by its owner.** A connection that says another owner's session is told what
+ *   one that says a session nobody has is told, that it is lost, and ends nothing.
+ * - **An owner has one session.** A new session from an owner ends the one it had, which is told `ended`, before
+ *   the new one is handed to `onLink`: a window that reloaded.
+ * - **The host says an owner is gone**, with `gone`, and nothing else ends a session for a dialler that stopped
+ *   coming back: nothing a link sees tells that from one that is slow to.
  *
- * A link is kept, with what it holds for its window, until it ends. Nothing here ends one for a window that has
- * stopped coming back, since nothing a link sees tells that from one that is slow to: whoever takes the links
- * closes each when it knows its window is gone for good.
+ * So no more sessions are kept than there are owners taken and not said to be gone. A link authenticates nobody:
+ * who may connect, and as whom, is settled before a connection is handed here.
  */
-export function accept(onLink: (link: Link) => void, options: Options = {}): (transport: Transport) => void {
+export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, options: Options = {}): Accepting<Owner> {
   const codec = options.codec ?? json
-  const links = new Map<string, (transport: Transport) => void>()
+  type Session = { readonly id: string; readonly link: Link; readonly hand: (transport: Transport) => void }
+  /** The one session each owner has. */
+  const sessions = new Map<Owner, Session>()
+  /** What closes each connection taken as an owner's and still open, a session's or not yet anybody's. */
+  const open = new Map<Owner, Set<() => void>>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
   limits(options)
-  return (transport) => {
+  const take = (transport: Transport, owner: Owner): void => {
     // Found when the connection arrives, not when a frame is too long for it.
     wideEnough(transport, LEAST)
     const hears: Array<(message: Message) => void> = []
@@ -381,6 +404,13 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
       ...(transport.waiting ? { waiting: () => transport.waiting!() } : {}),
       ...(transport.most === undefined ? {} : { most: transport.most }),
     }
+    /** Closes the connection for an owner that is gone: nothing it says after is heard. */
+    const shut = (): void => {
+      closed = true
+      try { transport.close() } catch { /* it has gone already */ }
+    }
+    const mine = open.get(owner) ?? new Set()
+    open.set(owner, mine.add(shut))
     /**
      * Closes a connection no link is made or found for. An end that would otherwise wait is told first: with this
      * link's number, and with that the session is lost where it is.
@@ -391,8 +421,14 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
         transport.close()
       } catch { /* it has gone already, which says as much */ }
     }
-    transport.onClose(() => { closed = true; for (const then of closes.splice(0)) then() })
+    transport.onClose(() => {
+      closed = true
+      const still = open.get(owner)
+      if (still?.delete(shut) && still.size === 0) open.delete(owner)
+      for (const then of closes.splice(0)) then()
+    })
     transport.onData((message) => {
+      if (closed) return
       if (!first) { for (const heard of hears) heard(message); return }
       first = false
       const said = firstOf(codec, message)
@@ -402,24 +438,38 @@ export function accept(onLink: (link: Link) => void, options: Options = {}): (tr
         turnAway(isObject(said) && typeof said.link === 'number' && said.link !== LINK ? 'which link' : 'nothing')
         return
       }
-      const known = links.get(said.session)
-      if (known) known(relay)
-      // Going on with a session from before this end began, or one that says it took what nobody here sent: a
-      // new session says so, and the other end finds it lost.
+      const had = sessions.get(owner)
+      if (had?.id === said.session) had.hand(relay)
+      // Going on with a session this owner does not have: another owner's, one from before this end began, or one
+      // that says it took what nobody here sent. Each is told the same, and the session the owner has goes on.
       else if (said.resumes !== undefined || said.taken !== 0) { turnAway('lost'); return }
       // One that takes no message as long as any link needs is not a session to begin: no link is made for it.
       else if (said.most !== undefined && said.most < LEAST) { turnAway('lost'); return }
       else {
-        const session = said.session
+        // The owner began again: the session it had is over before the new one is anybody's.
+        if (had) {
+          had.link.close('ended')
+          // Whoever heard that end may have said the owner is gone.
+          if (closed) return
+        }
         const { made, hand } = end('listens', undefined, options)
-        links.set(session, hand)
-        made.onEnd(() => { links.delete(session) })
         // Handing it its connections is this function's, and nobody else's.
         const { carry: _, ...link } = made
-        onLink(link)
+        const session: Session = { id: said.session, link, hand }
+        sessions.set(owner, session)
+        // A link has ended by the time closing it returns, so the session an owner has is never one that ended.
+        made.onEnd(() => { sessions.delete(owner) })
+        onLink(link, owner)
         hand(relay)
       }
       for (const heard of hears) heard(message)
     })
   }
+  const gone = (owner: Owner): void => {
+    sessions.get(owner)?.link.close('ended')
+    const mine = open.get(owner)
+    open.delete(owner)
+    for (const shut of [...(mine ?? [])]) shut()
+  }
+  return { take, gone }
 }

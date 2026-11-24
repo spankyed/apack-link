@@ -5,6 +5,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { expect, it } from 'vitest'
 import { accept, dial, memoryPair, type Clock, type Link, type Transport } from '../src/index.ts'
+import { only } from './support/only.ts'
 
 /** Everything that crossed, in order, as `A → B  text`: the window's end is A and the backend's B. */
 const crossed: string[] = []
@@ -40,7 +41,7 @@ const recording = (): string[] => {
 
 it('is what docs/wire.md records, text for text', async () => {
   let backend: Link | undefined
-  const take = accept((made) => { backend = made }, { bound: { frame: 2048 } })
+  const take = only(accept((made) => { backend = made }, { bound: { frame: 2048 } }))
   let connection: Transport | undefined
   const window = dial(() => {
     const [left, right] = memoryPair()
@@ -90,7 +91,7 @@ it('is what docs/wire.md records, text for text', async () => {
   await settle()
 
   // A backend that began after a session started does not know it, and says so.
-  const fresh = accept(() => {})
+  const fresh = only(accept(() => {}))
   const [left, right] = memoryPair()
   fresh(recorded(right, 'B', 'A'))
   recorded(left, 'A', 'B').send(JSON.stringify([{ link: 1, session: crypto.randomUUID(), taken: 0, resumes: crypto.randomUUID() }]))

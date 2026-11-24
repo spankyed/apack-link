@@ -234,9 +234,10 @@ A link outlives what carries it (`src/link.ts`).
   handed over waits. Without this, a connection that only said a session's id would close the connection the
   session was on.
 - **Who opens.** `dial(open)` opens a connection now, and another after each one closes. `listen()` waits to be
-  handed each connection with `carry`. `accept` takes connections as they arrive at a backend: a new session is a
-  new link, a known one goes back to its link, and one that says it `resumes` something, from a session it does
-  not know, is told `lost`: it is from before this backend began.
+  handed each connection with `carry`. `accept` takes connections as they arrive at a backend, each with its
+  owner: an owner's new session is a new link, a connection that says the session its owner has goes back to that
+  session's link, and one that says it `resumes` any other is told `lost`: it is another owner's, or from before
+  this backend began.
 - **Opening again is paced, on a clock handed in.** `dial(open)` is not made without one (`Options.reopen`): a
   link that opened again with nothing to pace it would spin for as long as its connections failed, and there is
   no way to pace without a clock that does not. `timers` is one on `setTimeout`, exported for a host to hand in;
@@ -257,12 +258,38 @@ A link outlives what carries it (`src/link.ts`).
   `accept`: apack's token on the socket, a socket path only the user can open.
 - **Goodbye.** `ended` ends the other end, which is not reached again. `restarting` does not end a link that comes
   back: it reconnects, and an end that restarted is a new session, which is lost.
-- **Gone for good** is the host's to say, with `close()`. Nothing a link sees tells a crashed window from a slow
-  one, and a link is given no time to wait. What is kept is bounded by step 6 and by nothing else. So a link
-  nobody closes keeps what it has for a window that is gone, for good, and `accept` keeps the link: a backend
-  whose windows come and go without their links being closed grows by one link's bound for each. The host is
-  expected to close a window's link when it learns the window is gone (Electron says when a window is
-  destroyed), or, where it cannot learn that, by a rule of its own, on its own clock. None is built in.
+- **Gone for good** is the host's to say. Nothing a link sees tells a crashed window from a slow one, and a link
+  is given no time to wait. What is kept is bounded by step 6 and by nothing else, so a link nobody closes keeps
+  what it has for a window that is gone, for good.
+- **A session has an owner.** Whoever knows how long the other end lives says whose each connection is, and
+  `accept` holds a session to its owner. An owner is a key the host gives, whatever it knows a dialler by,
+  compared as a `Map` compares keys. It never crosses the link, and `LINK` is as it was.
+  1. A connection is taken with its owner: `take(transport, owner)`. There is no way to hand `accept` one
+     without.
+  2. A session is gone on with only by its owner. A connection that says a session's id and is another owner's
+     is told what one that says a session nobody has is told, `lost`, and ends nothing.
+  3. An owner has one session. A new session from an owner ends the one it had, which is told `ended` so that
+     it is not dialled again, before the new one is handed over: a window that reloaded, or whose page crashed
+     and was loaded again.
+  4. The host says an owner is gone, `gone(owner)`: its session ends, told `ended`, and every connection taken
+     as its that is still open is closed, one that has said nothing included. Nothing is kept of the owner
+     after, so one taken again is an owner met for the first time: a host admits no connection as an owner it
+     has said is gone.
+
+  So a backend never keeps more sessions than it has owners it has not said are gone, and none ends that its
+  owner could still go on with: `tests/owners.spec.ts` holds a window dropping, reloading and being destroyed to
+  that, each at any moment. It is not a clock: where a host cannot learn that an owner is gone it says so by a
+  rule of its own, on its own clock ([a window on another machine](deferred/remote-windows.md)). It is not
+  authentication: an owner is what the host decided on admitting the connection. Two diallers given one owner
+  end each other's sessions, which is a mistake of the host's and is not caught. A host with nothing to call an
+  owner gives each connection its own and says it is gone when the connection closes.
+
+  Three smaller answers were weighed. Handing `onLink` the transport a session began on lets a host that already
+  knows whose each connection is close the right link; it does not end a reloaded window's old session, and a
+  host that forgets is told nothing. Taking a closed connection to mean the other end is gone gives up going on
+  across a drop ([won't do: resume outside the core](wont-do/resume-outside-the-core.md)). A time a session may
+  be quiet for is MQTT's Session Expiry Interval, and a wrong one is quiet both ways: too short ends a window
+  that was slow, too long keeps what will never be sent.
 
 An ask is delivered at most once, because a frame is: an answer lost on the way is one of the frames sent again.
 
