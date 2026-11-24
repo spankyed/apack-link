@@ -607,32 +607,35 @@ describe('what a link needs of what carries it, with frames in parts', () => {
     expect(aWatch.ended).toEqual([])
   })
 
-  it('is not sent what was numbered for more, where the other end says how little it takes in the turn that was numbered: it is told the session is lost, after a hello', () => {
-    const writes: Message[] = []
-    let deliver!: (message: Message) => void
-    const transport: Transport = {
-      send: (message) => { writes.push(message) },
-      onData: (heard) => { deliver = heard },
-      onClose: () => {},
-      close: () => {},
-    }
-    // Turns are held, so that the other end's hello arrives before this end's first batch has left.
-    const pending: Array<() => void> = []
-    const a = dial(transport, { ...options, later: (run) => { pending.push(run) } })
-    const { ended } = watched(a)
-    a.send(tell('x'.repeat(5000)))
-    expect(writes).toEqual([])
-    deliver(JSON.stringify([{ link: 1, session: 'bare', taken: 0, most: 3000 }]))
-    expect(ended).toHaveLength(1)
-    expect(ended[0]).toMatchObject({ why: 'too narrow', most: 3000 })
-    expect(writes.length).toBeGreaterThan(0)
-    expect(Math.max(...writes.map(bytes))).toBeLessThanOrEqual(3000)
-    const sent = writes.flatMap((message) => JSON.parse(message as string) as Array<Record<string, unknown>>)
-    expect(sent.some((one) => one.lost === true)).toBe(true)
-    expect(sent.some((one) => 'frame' in one)).toBe(false)
-    // Its hello is still said, and first: whoever is told the session is lost is told by which link.
-    expect(sent[0]).toMatchObject({ link: 1, taken: 0 })
-  })
+  for (const [name, codec] of [['JSON', undefined], ['msgpack', msgpack]] as const) {
+    it(`is not sent what was numbered for more, where the other end says how little it takes in the turn that was numbered: it is told the session is lost, after a hello, in ${name}`, () => {
+      const writes: Message[] = []
+      let deliver!: (message: Message) => void
+      const transport: Transport = {
+        send: (message) => { writes.push(message) },
+        onData: (heard) => { deliver = heard },
+        onClose: () => {},
+        close: () => {},
+      }
+      const read = (message: Message): Array<Record<string, unknown>> => (codec ? codec.decode(message) : JSON.parse(message as string)) as Array<Record<string, unknown>>
+      const hello = { link: 1, session: 'bare', taken: 0, most: 3000 }
+      // Turns are held, so that the other end's hello arrives before this end's first batch has left.
+      const pending: Array<() => void> = []
+      const a = dial(transport, { ...options, ...(codec ? { codec } : {}), later: (run) => { pending.push(run) } })
+      const { ended } = watched(a)
+      a.send(tell('x'.repeat(5000)))
+      expect(writes).toEqual([])
+      deliver(codec ? codec.list([codec.encode(hello)]) : JSON.stringify([hello]))
+      expect(ended).toHaveLength(1)
+      expect(ended[0]).toMatchObject({ why: 'too narrow', most: 3000 })
+      expect(writes.length).toBeGreaterThan(0)
+      expect(Math.max(...writes.map(bytes))).toBeLessThanOrEqual(3000)
+      const sent = writes.flatMap(read)
+      // Its hello is still said, and first: whoever is told the session is lost is told by which link. Nothing
+      // numbered is said, whole or in parts.
+      expect(sent.map((one) => Object.keys(one).sort().join())).toEqual(['link,session,taken', 'lost'])
+    })
+  }
 
   it('says its hello and that the session is lost in messages no longer than the other end said it takes, however short that is', () => {
     const writes: Message[] = []
