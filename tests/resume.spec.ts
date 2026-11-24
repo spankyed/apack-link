@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { accept, join, dial, listen, memoryPair, type Clock, type Ending, type Frame, type Link, type Message, type Outcome, type Transport } from '../src/index.ts'
 import { only } from './support/only.ts'
-import { asking, desk, droppingMemoryEnds, everyOrder, laneClock, resume, underModel, type Model, type Desk, type Schedule } from '../src/testing/index.ts'
+import { everyOrder, type Schedule } from '@apackdev/orderings'
+import { asking, desk, droppingMemoryEnds, laneClock, resume, underModel, type Model, type Desk } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 describe('resuming, over memory', () => {

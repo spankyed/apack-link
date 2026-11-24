@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { accept, dial, memoryPair, type Clock, type Ending, type Link, type Message, type Transport } from '../src/index.ts'
-import { everyOrder, holds, laneClock, same, sample, type Schedule } from '../src/testing/index.ts'
+import { everyOrder, sample, type Schedule } from '@apackdev/orderings'
+import { holds, laneClock, same } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 /** A clock that keeps no time: what is asked for runs a turn later, however long was asked for. */

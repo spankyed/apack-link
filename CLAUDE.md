@@ -18,9 +18,8 @@ know before changing it.
 - `src/transport.ts` is what a link is carried on, and two ends of one in memory. `src/socket.ts`, `src/port.ts`
   and `src/stream.ts` are a WebSocket, a message port and a stream of bytes, none of them imported.
 - `src/peer.ts` is `join`: what gives a link's ids their meaning, between a link and the `Port` a system offers.
-- `src/testing/` is what specs are written with, exported as `@apackdev/link/testing`: a schedule that runs a
-  scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios every end is
-  held to (`scenarios.ts`), written against what the package exports and nothing else. `model.ts` is what a link
+- `src/testing/` is what specs are written with, exported as `@apackdev/link/testing`: two ends in memory
+  whose directions are lanes of a schedule, and the scenarios every end is held to (`scenarios.ts`), written against what the package exports and nothing else. `model.ts` is what a link
   is with nothing about how, a queue each way, and what holds a run of real ends to it.
 - `tests/support/space.ts` runs the core from every state two ends can reach, each state once.
 - `docs/wire.md` is everything an end sends, ending in a recorded exchange that `tests/wire.spec.ts` holds the
@@ -51,7 +50,9 @@ know before changing it.
   takes a new number, and an end that says another is refused.
 - **The core does nothing.** Whatever sends, closes, waits or calls a listener is `link.ts`, doing what a step
   returned. A step asks for a frame to be handed over last, and what an end holds stays values that can be copied.
-- **No dependencies at run time.** It runs in a window and in Node from one source.
+- **No dependencies at run time.** It runs in a window and in Node from one source. The schedule specs are run
+  under is `@apackdev/orderings`, a package of its own that the kit names only in its types: installed here to run
+  the specs, and by whoever uses `@apackdev/link/testing`.
 - **A spec says what holds, not how.** A case every rewrite that keeps the behaviour would fail is a case about
   the code.
 

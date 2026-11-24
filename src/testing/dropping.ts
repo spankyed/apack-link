@@ -4,7 +4,7 @@ import { dial, listen, type Clock, type Link, type Listener, type Options } from
 import { memoryPair, type Message, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
-import type { Lane, Schedule } from './schedule.ts'
+import type { Lane, Schedule } from '@apackdev/orderings'
 
 /**
  * A clock that keeps no time, for a link on a schedule: what is asked for runs when the schedule gets to it in the

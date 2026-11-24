@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { accept, bytesOf, join, dial, LEAST, listen, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
 import { only } from './support/only.ts'
-import { asking, desk, everyOrder, scheduledPair, type Schedule } from '../src/testing/index.ts'
+import { everyOrder, type Schedule } from '@apackdev/orderings'
+import { asking, desk, scheduledPair } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })

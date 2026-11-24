@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { accept, dial, LINK, listen, memoryPair, type Ending, type Frame, type Link, type Listener, type Message, type Transport } from '../src/index.ts'
 import { only } from './support/only.ts'
 import { setup } from '../src/core.ts'
-import { everyOrder, scheduledPair } from '../src/testing/index.ts'
+import { everyOrder } from '@apackdev/orderings'
+import { scheduledPair } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })

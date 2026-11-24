@@ -24,7 +24,7 @@ try {
 import * as link from '@apackdev/link'
 import * as testing from '@apackdev/link/testing'
 for (const name of ['join', 'dial', 'listen', 'accept', 'socket', 'port', 'stream', 'memoryPair', 'json']) if (typeof link[name] === 'undefined') throw new Error('@apackdev/link has no ' + name)
-for (const name of ['everyOrder', 'explore', 'scheduledPair', 'memoryEnds', 'peers', 'hold']) if (typeof testing[name] === 'undefined') throw new Error('@apackdev/link/testing has no ' + name)
+for (const name of ['scheduledPair', 'memoryEnds', 'peers', 'hold', 'model']) if (typeof testing[name] === 'undefined') throw new Error('@apackdev/link/testing has no ' + name)
 `)
   execFileSync(process.execPath, ['entries.mjs'], { cwd: consumer, stdio: 'inherit' })
   // The README's first example, as it is written there, run with its types stripped: it logs how its ask ended.

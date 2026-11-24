@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
 import { dial, listen, port, socket, stream, type Frame, type Message, type Transport } from '../src/index.ts'
 import { msgpack } from './support/msgpack.ts'
-import { carried, everyOrder, hold, memoryEnds, peers, sample, underModel, type KitScenario } from '../src/testing/index.ts'
+import { everyOrder, sample } from '@apackdev/orderings'
+import { carried, hold, memoryEnds, peers, underModel, type KitScenario } from '../src/testing/index.ts'
 
 const scenarios: readonly KitScenario[] = [...peers, ...hold]
 /** How many orders each scenario is run under over something real. */

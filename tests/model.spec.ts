@@ -2,7 +2,8 @@
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
 import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
-import { droppingMemoryEnds, everyOrder, memoryEnds, model, sample, underModel, type Model, type Schedule } from '../src/testing/index.ts'
+import { everyOrder, sample, type Schedule } from '@apackdev/orderings'
+import { droppingMemoryEnds, memoryEnds, model, underModel, type Model } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 /** An end that does what it is told to, and nothing a link does: it hands over what the spec says, when it says. */
@@ -363,7 +364,7 @@ describe('what the model finds', () => {
 
 describe('real ends under the model', () => {
   /** A schedule that never gets to anything: whatever is sent is never handed over. */
-  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {} }
+  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {}, clock: { now: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) } }
 
   it("the kit's ends are under the model they are given", () => {
     const held = model()

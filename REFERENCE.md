@@ -704,37 +704,6 @@ Two ends of one link.
 interface Ends { readonly a: Link; readonly b: Link }
 ```
 
-### `everyOrder`
-
-Runs a scenario under every ordering and throws for the first that fails, naming the order that led to it and the
-choices to `replay` it with. Returns how many orderings there were. Past `limit` it throws too: a scenario too
-wide to run whole is one to `sample`, said where it is written.
-
-```ts
-everyOrder(scenario: Scenario, options?: { limit?: number; }): Promise<number>
-```
-
-### `explore`
-
-Runs a scenario under every ordering its lanes allow, stopping at the first that fails. The scenario builds what it
-checks from the schedule it is handed, and returns what must hold once everything has come to rest.
-
-```ts
-explore(scenario: Scenario, options?: { limit?: number; }): Promise<Explored>
-```
-
-### `Explored`
-
-```ts
-interface Explored {
-  /** How many orderings were run. */
-  readonly orderings: number
-  /** Whether that was every one. False when a failure stopped it, or the limit did. */
-  readonly complete: boolean
-  readonly failure?: { readonly choices: readonly number[]; readonly taken: readonly string[]; readonly error: unknown }
-}
-```
-
 ### `hold`
 
 Step 2's: what a system says waits until the views it runs for the other end have caught up.
@@ -758,16 +727,6 @@ interface KitScenario {
   readonly name: string
   play(schedule: Schedule, ends: Ends): () => void
 }
-```
-
-### `Lane`
-
-Things that happen one after another: what crosses a link in one direction. What is in one lane keeps its order,
-as messages on one socket do. What is in two lanes can come in either order, and that is the whole of what a
-schedule may choose.
-
-```ts
-interface Lane { readonly label: string }
 ```
 
 ### `laneClock`
@@ -869,14 +828,6 @@ Steps 1's: asks matched to their answers, views followed and let go, and everyth
 peers: readonly KitScenario[]
 ```
 
-### `replay`
-
-Runs a scenario under one ordering: the choices a failure came back with. Returns what it threw, if it did.
-
-```ts
-replay(scenario: Scenario, choices: readonly number[]): Promise<{ taken: readonly string[]; error?: unknown; }>
-```
-
 ### `resume`
 
 Step 5's: a link that outlives what carries it, with nothing taken twice. Each drops at a moment the schedule picks.
@@ -891,43 +842,6 @@ Throws unless the two are the same all the way down. `what` says what was being 
 
 ```ts
 same(actual: unknown, expected: unknown, what: string): void
-```
-
-### `sample`
-
-Runs a scenario under orderings chosen at random from a seed, for one with too many to run them all.
-
-```ts
-sample(scenario: Scenario, options: { seed: number; runs: number; }): Promise<Explored>
-```
-
-### `Scenario`
-
-What a scenario is: it builds what it checks from the schedule, and returns what must hold once all is at rest.
-
-```ts
-type Scenario = (schedule: Schedule) => () => void
-```
-
-### `Schedule`
-
-```ts
-interface Schedule {
-  /** Runs something after whatever is ahead of it in its lane. */
-  later(lane: Lane, run: () => void): void
-  /** A lane of the spec's own: things done one after another, such as what a user clicks. */
-  does(label: string, ...steps: ReadonlyArray<readonly [what: string, run: () => void]>): void
-  /** Outside work, in a lane of its own: it is done, with this value, when the schedule gets to it. */
-  work<T>(label: string, value: T): Promise<T>
-  /** The same, for work that fails. */
-  breaks(label: string, error: Error): Promise<never>
-  /**
-   * Something outside the schedule is under way, such as a message on a real socket: the run does not come to rest
-   * until what is returned is called. What it does when it lands, it puts into a lane, and the schedule chooses as
-   * ever. Nothing outside is chosen: it lands when it lands.
-   */
-  outside(): () => void
-}
 ```
 
 ### `scheduledPair`
