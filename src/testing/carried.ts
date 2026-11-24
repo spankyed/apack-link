@@ -2,7 +2,7 @@
 // its direction, so a scenario runs over a socket, a port or a stream as it does over memory, and the schedule
 // chooses among what has arrived. What is on its way is outside the schedule, and a run waits for it.
 import type { Message, Transport } from '../transport.ts'
-import type { Schedule } from './schedule.ts'
+import type { Schedule } from '@apackdev/orderings'
 
 /** Wraps two joined transports so that what crosses them is run in a lane of the schedule for each direction. */
 export function carried(schedule: Schedule, pair: readonly [Transport, Transport], names: readonly [string, string] = ['a', 'b']): [Transport, Transport] {

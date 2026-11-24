@@ -2,7 +2,8 @@
 // and what was thrown is handed on. A system at an end of a link is a listener, and is held to the same.
 import { describe, expect, it } from 'vitest'
 import { join, dial, listen, memoryPair, type Ending, type Frame, type Outcome } from '../src/index.ts'
-import { asking, desk, everyOrder, scheduledPair, watching } from '../src/testing/index.ts'
+import { everyOrder } from '@apackdev/orderings'
+import { asking, desk, scheduledPair, watching } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })

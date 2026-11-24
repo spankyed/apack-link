@@ -98,7 +98,7 @@ These are the repository's (`CLAUDE.md`), and each has broken a design like this
 
 ## Step 0. Groundwork
 
-Built. The schedule is `src/testing/schedule.ts`, with `scheduledPair` beside it for two ends in memory whose
+Built. The schedule is `@apackdev/orderings`, a package of its own, with `scheduledPair` here for two ends in memory whose
 directions are lanes. `memoryPair` takes what says when a text arrives for each direction, and hands an end's
 closing over after what that end sent before it. An end that says another number ends the link
 `{ why: 'version', mine, theirs }`; a goodbye is `link.close('restarting')` or `link.close('ended')`, and the
@@ -109,8 +109,7 @@ Small things every later step stands on.
 
 - **A reason never carries what was sent.** `Ending`'s `'not a frame'` gives the length of what arrived, not its
   text.
-- **A schedule, for specs.** Bring `schedule.mts` over from the prototype (same folder as `state.mts`, about 110
-  lines) as `src/testing/schedule.ts`, exported as `@apackdev/link/testing`. It stands in for the event loop:
+- **A schedule, for specs**, `@apackdev/orderings`. It stands in for the event loop:
   everything put off goes into a lane, a lane keeps its order, and `explore` runs a scenario under every choice
   between lanes, `sample` under a seed's worth, `replay` one again. `memoryPair` already takes what says when a
   text arrives: given a lane of the schedule for each direction, a link's two directions and anything else a spec

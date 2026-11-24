@@ -456,10 +456,11 @@ change while it lasts.
 
 ## How it is known to hold
 
-Where order matters, a spec is run under every order. `src/testing/schedule.ts` stands in for the event loop:
-everything put off goes into a lane, a lane keeps its order, and `explore` runs a scenario once for every way of
-choosing between lanes. Each direction of a link in memory is a lane, and a spec adds lanes for what it does
-itself. It is exported as `@apackdev/link/testing`, since from step 1 on the scenarios are a kit: written against
+Where order matters, a spec is run under every order. The schedule of `@apackdev/orderings` stands in for the
+event loop: everything put off goes into a lane, a lane keeps its order, and `explore` runs a scenario once for
+every way of choosing between lanes. Each direction of a link in memory is a lane, and a spec adds lanes for what
+it does itself. The schedule is a package of its own, since the state kernel's specs are run under the same one.
+What is written with it here is exported as `@apackdev/link/testing`, since from step 1 on the scenarios are a kit: written against
 what the package exports and nothing else, to be run over any pair of ends, so that another implementation of an
 end is held to the same file.
 

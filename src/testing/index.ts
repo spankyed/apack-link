@@ -1,11 +1,11 @@
-// What a spec of a link is written with, here and anywhere an end of a link is built: a schedule that runs a
-// scenario under every order, two ends in memory whose directions are lanes of it, and the scenarios themselves,
-// to be run over any pair of ends.
+// What a spec of a link is written with, here and anywhere an end of a link is built: two ends in memory whose
+// directions are lanes of a schedule, and the scenarios themselves, to be run over any pair of ends. The schedule
+// that runs a scenario under every order is `@apackdev/orderings`, which whoever uses this entry installs.
 import { dial, listen, type Options } from '../link.ts'
 import { memoryPair, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
-import type { Schedule } from './schedule.ts'
+import type { Schedule } from '@apackdev/orderings'
 
 export { carried } from './carried.ts'
 export { holds, same } from './check.ts'
@@ -14,8 +14,6 @@ export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.ts'
 export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.ts'
 export { model, underModel, type Model, type ModelOptions } from './model.ts'
 export { made, type Made } from './views.ts'
-
-export { everyOrder, explore, replay, sample, type Explored, type Lane, type Scenario, type Schedule } from './schedule.ts'
 
 /** What a pair of ends is made over: given a schedule, two links. */
 export type MakeEnds = (schedule: Schedule) => Ends

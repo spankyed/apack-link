@@ -2,7 +2,8 @@
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
 import { asFrame, join, json, dial, listen, memoryPair, type Port } from '../src/index.ts'
-import { asking, desk, everyOrder, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
+import { everyOrder } from '@apackdev/orderings'
+import { asking, desk, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
   it('gives back what it was given, from text and from the same text as bytes', () => {

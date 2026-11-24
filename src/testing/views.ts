@@ -5,7 +5,7 @@
 // runs once for every caller since it last ran does.
 import type { Following } from '../peer.ts'
 import type { Viewed } from './desk.ts'
-import type { Schedule } from './schedule.ts'
+import type { Schedule } from '@apackdev/orderings'
 
 export interface Made {
   /** How many things have been made. */

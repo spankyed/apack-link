@@ -282,13 +282,15 @@ Whoever holds the socket opens it, with whatever it needs to be let in.
 
 ## Specs under every order
 
-`@apackdev/link/testing` is what this package's own specs are written with. A schedule stands in for the event
-loop: each direction of a link is a lane, a lane keeps its order, and a scenario is run once for every way of
-choosing between lanes.
+`@apackdev/link/testing` is what this package's own specs are written with, over the schedule of
+[`@apackdev/orderings`](https://github.com/spankyed/apack-orderings), which whoever uses this entry installs beside
+it. A schedule stands in for the event loop: each direction of a link is a lane, a lane keeps its order, and a
+scenario is run once for every way of choosing between lanes.
 
 ```ts
 import { dial, listen } from '@apackdev/link'
-import { everyOrder, scheduledPair } from '@apackdev/link/testing'
+import { scheduledPair } from '@apackdev/link/testing'
+import { everyOrder } from '@apackdev/orderings'
 
 await everyOrder((schedule) => {
   const [left, right] = scheduledPair(schedule)
@@ -306,7 +308,8 @@ nothing else, and plays over whatever two ends it is handed, so an end built ano
 something else, is held to the same file:
 
 ```ts
-import { everyOrder, hold, memoryEnds, peers } from '@apackdev/link/testing'
+import { hold, memoryEnds, peers } from '@apackdev/link/testing'
+import { everyOrder } from '@apackdev/orderings'
 
 for (const scenario of [...peers, ...hold]) await everyOrder((schedule) => scenario.play(schedule, memoryEnds(schedule)))
 ```
@@ -324,7 +327,8 @@ a session lost with both ends still there, and at rest, what was sent and never 
 its check after a scenario's own:
 
 ```ts
-import { everyOrder, memoryEnds, peers, underModel } from '@apackdev/link/testing'
+import { memoryEnds, peers, underModel } from '@apackdev/link/testing'
+import { everyOrder } from '@apackdev/orderings'
 
 for (const scenario of peers) await everyOrder((schedule) => underModel((held) => scenario.play(schedule, memoryEnds(schedule, {}, held))))
 ```
