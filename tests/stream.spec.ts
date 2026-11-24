@@ -1,6 +1,8 @@
 // A stream of bytes, put back into messages: in work that grows with the bytes and not with how many pieces they
 // came in, within a bound on how long a message may claim to be, and letting go of the stream beneath when it
 // closes for what arrived. The stream beneath is one the spec feeds by hand.
+import { setFlagsFromString } from 'node:v8'
+import * as vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { stream, type DuplexLike, type Message } from '../src/index.ts'
 
@@ -68,17 +70,19 @@ describe('putting a message together', () => {
     ['bytes, four million in pieces of four thousand', 1, 4 << 20, 4096],
     ['text, four million in pieces of four thousand', 0, 4 << 20, 4096],
     ['bytes, a quarter of a million in pieces of sixteen', 1, 1 << 18, 16],
+    ['bytes, forty thousand in pieces of one', 1, 40_000, 1],
   ] as const) {
     it(`copies each byte a fixed number of times, however many pieces it came in: ${what}`, () => {
       const body = new Uint8Array(length).fill(0x61)
-      const chunks = pieces(framed(kind, body), size)
+      const message = framed(kind, body)
+      const chunks = pieces(message, size)
       const { duplex, feed } = fed()
       const { heard } = listening(duplex)
       const work = counting(() => { for (const chunk of chunks) feed(chunk) })
       expect(heard).toHaveLength(1)
       expect(heard[0]).toHaveLength(length)
       // Joined once. Copying everything pending for each piece would be hundreds of times this.
-      expect(work).toBeLessThanOrEqual(2 * length)
+      expect(work).toBeLessThanOrEqual(2 * message.length)
     })
   }
 
@@ -116,6 +120,30 @@ describe('putting a message together', () => {
     piece.fill(9)
     expect(heard).toEqual([new Uint8Array([1, 2, 3])])
   })
+
+  it('lets go of pieces already taken even when no piece ends on a message boundary', async () => {
+    setFlagsFromString('--expose_gc')
+    const gc = vm.runInNewContext('gc') as () => void
+    const { duplex, feed } = fed()
+    let count = 0
+    stream(duplex).onData(() => { count++ })
+    const one = framed(1, new Uint8Array(1024).fill(7))
+    const ref = (() => { const piece = one.slice(0, 3); feed(piece); return new WeakRef(piece) })()
+    for (let at = 0; at < 1000; at++) {
+      const chunk = new Uint8Array(one.length)
+      chunk.set(one.subarray(3), 0)
+      chunk.set(one.subarray(0, 3), one.length - 3)
+      feed(chunk)
+    }
+    expect(count).toBe(1000)
+    // WeakRef.deref() pins its target for the current job, so run gc() on a fresh turn before reading deref().
+    for (let tries = 0; tries < 20; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      gc()
+      if (ref.deref() === undefined) break
+    }
+    expect(ref.deref()).toBeUndefined()
+  })
 })
 
 describe('a message longer than a stream takes', () => {
@@ -152,6 +180,12 @@ describe('a message longer than a stream takes', () => {
     expect(noted.written).toHaveLength(1)
     transport.send('✓✓')
     expect([noted.written.length, closed(), noted.ended]).toEqual([1, 1, 1])
+  })
+
+  it('refuses a most that is not a positive whole number of bytes', () => {
+    for (const most of [0, -1, 1.5, NaN, Infinity]) {
+      expect(() => stream(fed().duplex, { most })).toThrow(RangeError)
+    }
   })
 })
 

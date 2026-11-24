@@ -196,7 +196,7 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
   numbering what is sent, and it waits.
 - **Only a view's overtaken result is let go.** One that a later result of the same view overtakes while it
   waits is dropped: only the last matters. Nothing else is.
-- **Past the bound on what waits (`bound.waiting`) the link ends `overrun`,** saying by how much.
+- **Past the bound on what waits (`bound.waiting`) the link ends `overrun`,** saying by how much (counting each waiting frame with its cause).
 
 ### Knowing the other end is there
 
@@ -205,13 +205,15 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 - **A connection that can go quiet without closing is watched** only where a clock is handed in (`there`), and
   only while this end is owed something, a `taken` or an answer. With nothing at all arriving for half the
   window it asks whether the other end is there, and after a whole window it lets the connection go and another
-  is opened.
+  is opened. Once nothing is owed, the watch stops at once and the connection is left alone.
 
 ### Listeners, closing and ending
 
 - **A listener that throws loses nothing.** Every frame of the batch is still taken, in order, every other
-  listener is still called, and the link goes on. What was thrown goes to `thrown`. A system joined to a link is
-  a listener.
+  listener is still called, and the link goes on. What was thrown goes to `thrown`—including what a late `onEnd`
+  listener or `accept`'s `onLink` throws (where the link is closed and the connection is turned away as `lost` so a
+  reopening dialler stops). A system joined to a link is a listener. `onFrame`, `onTraffic` and `onEnd` each return
+  an unsubscribe function.
 - **A transport that throws where it is handed something to send is a connection that has gone.** What it was
   handed is sent again on the next, and what it threw goes to `thrown`.
 - **Closing sends what was sent.** `close()` sends everything sent before it, what waited for room included,
@@ -255,14 +257,14 @@ end that sent it.
 
 | Option | What it sets | Unless given |
 |---|---|---|
-| `reopen: { clock, first, most }` | The clock an end that opens its connections paces them on, and the first wait and the longest, in milliseconds | No default clock: `dial(open)` throws without one. `first` 100, `most` 10 000 |
-| `there: { window, clock }` | How long a connection may be quiet while this end is owed something | Nothing is watched |
-| `bound.kept: { frames, size }` | How much sent and not yet taken there may be before nothing more is numbered | 1024 frames, 16 MiB |
-| `bound.waiting: { frames, size }` | How much may wait to be numbered before the link ends `overrun` | 16 384 frames, 64 MiB |
-| `bound.frame` | How many bytes one frame and its cause may be. 1024 at least. A larger one is refused where it is sent, and one arriving in parts that add up to more ends the link `not a frame` | 64 MiB |
-| `part` | The most a part, and a message of several things, may be, in bytes. 16 at least | 1 MiB |
+| `reopen: { clock, first, most }` | The clock an end that opens its connections paces them on, and the first wait and the longest, in milliseconds (finite, 0 at least) | No default clock: `dial(open)` throws without one. `first` 100, `most` 10 000 |
+| `there: { window, clock }` | How long a connection may be quiet while this end is owed something (finite, more than 0) | Nothing is watched |
+| `bound.kept: { frames, size }` | How much sent and not yet taken there may be before nothing more is numbered (1 at least; `Infinity` for no bound) | 1024 frames, 16 MiB |
+| `bound.waiting: { frames, size }` | How much may wait to be numbered before the link ends `overrun` (0 at least; `Infinity` for no bound) | 16 384 frames, 64 MiB |
+| `bound.frame` | How many bytes one frame and its cause may be. 1024 at least (`Infinity` for no bound). A larger one is refused where it is sent, and one arriving in parts that add up to more ends the link `not a frame` | 64 MiB |
+| `part` | The most a part, and a message of several things, may be, in bytes. 16 at least (`Infinity` for no part limit) | 1 MiB |
 | `codec` | What batches are encoded in. One that puts more around a frame than JSON does is refused | JSON |
-| `thrown(error)` | Handed what a listener, opening a connection, or a transport's `send` threw | Thrown again in a turn of its own |
+| `thrown(error)` | Handed what a listener (`onFrame`, `onEnd`, `onLink`), opening a connection, or a transport's `send` threw | Thrown again in a turn of its own |
 | `later(run)` | What puts a batch off until the end of the turn. A spec gives a schedule's lane | A microtask |
 
 ## What it is carried on
@@ -273,9 +275,9 @@ order, until it closes. It may say the longest message it carries (`most`) and h
 
 | | Carried on |
 |---|---|
-| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` is the longest message the server takes, where it has a limit. What is sent while it is opening waits for it to open |
+| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` (a positive whole number of bytes) is the longest message the server takes, where it has a limit. What is sent while it is opening waits for it to open |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
-| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed |
+| `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (a positive whole number, 128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed |
 | `memoryPair()` | Two ends in memory, for specs |
 
 Whoever holds the socket opens it, with whatever it needs to be let in.

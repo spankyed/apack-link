@@ -96,6 +96,11 @@ interface Codec {
   record(fields: ReadonlyArray<readonly [name: string, value: Message]>): Message
   /** What a message holds. Throws for one it did not make. */
   decode(message: Message): unknown
+  /**
+   * Optional: how many bytes each top-level entry of a list message was as it crossed, measured directly from the
+   * message without encoding it again. Used when a tap is listening.
+   */
+  sizes?(message: Message): readonly number[] | undefined
 }
 ```
 
@@ -258,12 +263,13 @@ interface Link {
   /**
    * Called with each frame the other end sent, in the order it sent them, once each, with what caused it. One that
    * throws stops nothing: the others are called, the frames after it are taken, and what it threw goes to `thrown`.
+   * Returns what stops calling it.
    */
-  onFrame(heard: (frame: Frame, cause?: string) => void): void
-  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. */
-  onTraffic(seen: (traffic: Traffic) => void): void
-  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. */
-  onEnd(ended: (ending: Ending) => void): void
+  onFrame(heard: (frame: Frame, cause?: string) => void): () => void
+  /** Called with each frame as it is numbered to go out and as it is taken in, as a tap sees it. Returns what stops calling it. */
+  onTraffic(seen: (traffic: Traffic) => void): () => void
+  /** Called once, when the link has closed, with why. One that throws does not keep the others from being called. Returns what stops calling it. */
+  onEnd(ended: (ending: Ending) => void): () => void
   /**
    * Closes the link. Everything sent before leaves first, what waited for room included, wherever it can arrive
    * no more than once: on a connection where the other end has been met, on the only one of a link that does not

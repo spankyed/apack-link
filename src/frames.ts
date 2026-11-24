@@ -48,7 +48,7 @@ const isText = (value: unknown): value is string => typeof value === 'string'
  * else on what arrived is left behind.
  */
 export function asFrame(arrived: unknown): Frame | undefined {
-  if (typeof arrived !== 'object' || arrived === null) return undefined
+  if (typeof arrived !== 'object' || arrived === null || Array.isArray(arrived)) return undefined
   const { kind, id, to, name, feature, view, failure } = arrived as Record<string, unknown>
   const carried = arrived as { readonly event?: unknown; readonly args?: unknown; readonly update?: unknown; readonly outcome?: unknown }
   if (kind === 'tell') return isText(to) ? { kind, to, event: carried.event } : undefined
@@ -62,7 +62,7 @@ export function asFrame(arrived: unknown): Frame | undefined {
     case 'shown': return { kind, id, update: carried.update }
     case 'unfollow': return { kind, id }
     case 'over': {
-      if (typeof failure !== 'object' || failure === null) return undefined
+      if (typeof failure !== 'object' || failure === null || Array.isArray(failure)) return undefined
       const { kind: why, message } = failure as Record<string, unknown>
       return isText(why) && isText(message) ? { kind, id, failure: { kind: why, message } } : undefined
     }

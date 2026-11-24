@@ -1,8 +1,9 @@
 // What caused a frame crosses with it; a tap is told of each frame and never of what it carries; a private frame is
 // told of as having crossed, and its size, and nothing else.
 import { describe, expect, it } from 'vitest'
-import { join, dial, listen, memoryPair, type Ending, type Frame, type Traffic } from '../src/index.ts'
+import { join, dial, json, listen, memoryPair, type Codec, type Ending, type Frame, type Traffic } from '../src/index.ts'
 import { desk } from '../src/testing/index.ts'
+import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tapped = (end: ReturnType<typeof dial>): Traffic[] => {
@@ -53,6 +54,133 @@ describe('a tap', () => {
     await turn()
     await turn()
     expect(out.map((traffic) => traffic.seq)).toEqual([1, 2])
+  })
+
+  it('omits an incoming tap event rather than inventing a size when measurement is unavailable', async () => {
+    // A tap added partway through a frame in parts cannot know the earlier parts' size: the frame is handed over,
+    // and the tap hears nothing for it rather than a partial or zero size.
+    const [bare, right] = memoryPair()
+    const b = listen(right)
+    const heard: Frame[] = []
+    b.onFrame((frame) => { heard.push(frame) })
+    bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }]))
+    bare.send(JSON.stringify([{ seq: 1, part: 0, of: 2, data: '{"kind":"tell","to":"x",' }]))
+    await turn()
+    const seen = tapped(b)
+    bare.send(JSON.stringify([{ seq: 2, part: 1, of: 2, data: '"event":"whole"}' }]))
+    bare.send(JSON.stringify([{ seq: 3, frame: { kind: 'tell', to: 'x', event: 'next' } }]))
+    await turn()
+    expect(heard).toEqual([{ kind: 'tell', to: 'x', event: 'whole' }, { kind: 'tell', to: 'x', event: 'next' }])
+    expect(seen.map((traffic) => traffic.seq)).toEqual([3])
+
+    // And for a custom codec without `sizes` whose fallback `encode` throws on a received entry: the frame is still
+    // handed over and the unmeasurable tap event is omitted rather than throwing or inventing size 0.
+    const [bare2, right2] = memoryPair()
+    const custom: Codec = {
+      encode: (value) => {
+        if (typeof value === 'object' && value !== null && 'seq' in value) throw new TypeError('cannot re-encode')
+        return json.encode(value)
+      },
+      list: json.list,
+      record: json.record,
+      decode: json.decode,
+    }
+    const b2 = listen(right2, { codec: custom })
+    const heard2: Frame[] = []
+    b2.onFrame((frame) => { heard2.push(frame) })
+    const seen2 = tapped(b2)
+    bare2.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }, { seq: 1, frame: { kind: 'tell', to: 'x', event: 'ok' } }]))
+    await turn()
+    expect(heard2).toEqual([{ kind: 'tell', to: 'x', event: 'ok' }])
+    expect(seen2).toEqual([])
+  })
+
+  it('can be removed, stopping notifications and turning tapping off until another tap is added', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const b = listen(right)
+    const out: Traffic[] = []
+    const in_: Traffic[] = []
+    const offA = a.onTraffic((traffic) => { out.push(traffic) })
+    const offB = b.onTraffic((traffic) => { in_.push(traffic) })
+    a.send({ kind: 'tell', to: 'x', event: 1 })
+    await turn()
+    expect(out.map((t) => t.seq)).toEqual([1])
+    expect(in_.map((t) => t.seq)).toEqual([1])
+    offA()
+    offA() // idempotent
+    offB()
+    a.send({ kind: 'tell', to: 'x', event: 2 })
+    await turn()
+    expect(out.map((t) => t.seq)).toEqual([1])
+    expect(in_.map((t) => t.seq)).toEqual([1])
+    // Adding a tap again resumes reporting.
+    const in2: Traffic[] = []
+    const offB2 = b.onTraffic((traffic) => { in2.push(traffic) })
+    a.send({ kind: 'tell', to: 'x', event: 3 })
+    await turn()
+    expect(in2.map((t) => t.seq)).toEqual([3])
+    offB2()
+  })
+
+  it('measures incoming frame sizes directly from arrived bytes without re-encoding, for JSON text, JSON bytes and msgpack', async () => {
+    const counting = (base: Codec): { codec: Codec; encodes: () => number; reset: () => void } => {
+      let count = 0
+      return {
+        codec: {
+          encode: (value) => { count++; return base.encode(value) },
+          list: (parts) => base.list(parts),
+          record: (fields) => base.record(fields),
+          decode: (message) => base.decode(message),
+          ...(base.sizes ? { sizes: (message) => base.sizes!(message) } : {}),
+        },
+        encodes: () => count,
+        reset: () => { count = 0 },
+      }
+    }
+    const frames: Frame[] = [
+      { kind: 'tell', to: 'panel', event: { text: 'café 😀 "quoted" \\ slash', nums: [1, 2, 3] } },
+      { kind: 'ask', id: 1, to: 'threads', name: 'CREATE', args: { nested: { a: true, b: null } } },
+    ]
+    for (const [label, base, asBytes] of [
+      ['json text', json, false],
+      ['json bytes', json, true],
+      ['msgpack', msgpack, false],
+    ] as const) {
+      const [left, right] = memoryPair()
+      const wire = asBytes
+        ? { ...left, send: (message: string | Uint8Array) => left.send(typeof message === 'string' ? new TextEncoder().encode(message) : message) }
+        : left
+      const a = dial(wire, { codec: base })
+      const recv = counting(base)
+      const b = listen(right, { codec: recv.codec })
+      const outA = tapped(a)
+      const inB = tapped(b)
+      // Let handshake finish before counting encodes on the receiver (receiver encodes only its own hello + taken).
+      a.send(frames[0]!, { cause: 'step 1' })
+      await turn()
+      await turn()
+      recv.reset()
+      a.send(frames[1]!, { cause: 'step 2' })
+      // Only `taken` is encoded by the receiver when flushing — NEVER the arriving frame itself.
+      await turn()
+      expect(inB.map((t) => t.size), label).toEqual(outA.map((t) => t.size))
+      // Receiver encoded at most the `{ taken }` control word (1 encode), never the arriving frame.
+      expect(recv.encodes(), label).toBeLessThanOrEqual(1)
+    }
+    // Verify JSON byte sizes match actual arrived bytes even with extra whitespace on the wire.
+    const [bare, right] = memoryPair()
+    const recv = counting(json)
+    const b = listen(right, { codec: recv.codec })
+    const seen = tapped(b)
+    bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }]))
+    await turn()
+    recv.reset()
+    const rawUnit = '{ "seq" : 1 , "frame" : { "kind" : "tell" , "to" : "x" , "event" : "café 😀" } }'
+    bare.send(`[  ${rawUnit}  ]`)
+    await turn()
+    expect(seen).toEqual([{ direction: 'in', seq: 1, kind: 'tell', name: 'x', size: new TextEncoder().encode(rawUnit).byteLength }])
+    expect(recv.encodes()).toBeLessThanOrEqual(1)
   })
 })
 

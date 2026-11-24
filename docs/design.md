@@ -80,7 +80,9 @@ end until the views it runs for that end have caught up.
   round before it has. What is put in after waits for a round of its own.
 - **`soon`** is true when an `answer` is among what a round lets out: an asker is blocked on it. A `tell` or
   `progress` alone waits at the views' own pace.
-- A view that stops, or is ended by whoever runs it, while it is waited on counts as caught up. A view with no
+- A view that stops, or is ended by whoever runs it, while it is waited on counts as caught up; its `over` leaves
+  ahead of anything held that waited on it. A view whose `caughtUp` throws is ended `over` (`failed`) and stopped
+  before anything held leaves, so nothing held passes a live view's update. A view with no
   `caughtUp` is not waited on. An end that runs no views for the other holds nothing. A view followed after
   something was held is not waited on for it.
 - **Refused where it was said.** A held frame is put into text as it is held (`Link.prepare`), which is how it is
@@ -312,8 +314,9 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 - **An end says what it took** with its next batch, and sends a batch for that alone when it has none of its own
   to send: an end that only listens still says.
 - **Past the bound on what waits** (`bound.waiting`), with nothing left to let go, the link ends
-  `{ why: 'overrun', waiting, bound }`, each in frames and bytes. A link that grew without end would end the
-  process instead. One frame is bounded apart from this (`bound.frame`), and refused, not ended for.
+  `{ why: 'overrun', waiting, bound }`, each in frames and bytes (counting each waiting frame together with its
+  cause). A link that grew without end would end the process instead. One frame is bounded apart from this
+  (`bound.frame`), and refused, not ended for.
 - **What is kept is never let go before it is taken.** Numbering stops at its mark, so it does not pass its
   bound, and a resume never finds what it needs gone.
 
@@ -326,7 +329,9 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   it waits on) and nothing at all has arrived for half the window, it sends `{ there: n }`. The other end answers
   `{ here: n }` at once. After a whole window in which nothing of any kind arrived, it closes the connection, and
   step 5 opens another. Anything arriving starts the window over; what this end sends does not.
-- **Owed nothing, it sends nothing**, however long it is quiet.
+- **Owed nothing, it sends nothing**, however long it is quiet. When the last thing owed is taken or settled, the
+  watch is called off at once—even after `{ there }` has been sent, so a connection with nothing owed is never
+  closed.
 - **Nothing is given a time to answer in.** An ask that takes an hour, with the other end there, is left alone.
 
 ## What caused a frame, and what may be seen of it
@@ -337,7 +342,11 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   crosses whole beside a frame or its first part, so what a link needs of what carries it counts it in. A result that overtook another while waiting carries its own cause.
 - **Tap.** `onTraffic(seen)` is told of each frame as it is numbered to go out, and as it is taken in: direction,
   number, kind, id, name (a tell's `to`, an ask's name, a view's name), bytes of its text, and cause. Never what it
-  carries. A tap that throws is the tap's to answer for; the link goes on.
+  carries. `onTraffic`, `onFrame` and `onEnd` each return an unsubscribe function; when the last tap is removed,
+  tapping stops until another is added. Incoming sizes are measured directly from the arrived message (`Codec.sizes`)
+  without encoding it again, falling back to encoding only for custom codecs that omit `sizes`. A tap that throws is
+  the tap's to answer for; the link goes on. Where an incoming frame's size cannot be measured (such as a tap added
+  partway through a frame in parts), the tap event is omitted rather than invented.
 - **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
   told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
   in. The frame itself reaches the other end as any other does.
@@ -394,7 +403,8 @@ arrive. A link sends text today and takes either: bytes are read as UTF-8.
   sends to it. Without it, what keeps a link under a server's limit is only that a part is shorter.
 - **`port`**, over a message port that takes listeners as an event target (a browser's, Node's) or as an emitter
   handing over an event (Electron's). A port closing is not heard at the other end everywhere, so closing posts
-  `null` first, after what was sent before it; a port's own `close` event is heard as well.
+  `null` first, after what was sent before it; receiving `null` closes the port at this end too, and a port's own
+  `close` event is heard as well. Cross-realm `Uint8Array` values are accepted as bytes.
 - **`stream`**, over a byte stream with no edges between messages. Each message crosses as one byte for its kind
   (0 text, 1 bytes), four for its length, most significant first, and the message. What arrives in pieces is put
   together and what arrives together taken apart: what arrives is kept as the pieces it came in and a message

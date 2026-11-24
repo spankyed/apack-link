@@ -20,10 +20,112 @@ export interface Codec {
   record(fields: ReadonlyArray<readonly [name: string, value: Message]>): Message
   /** What a message holds. Throws for one it did not make. */
   decode(message: Message): unknown
+  /**
+   * Optional: how many bytes each top-level entry of a list message was as it crossed, measured directly from the
+   * message without encoding it again. Used when a tap is listening.
+   */
+  sizes?(message: Message): readonly number[] | undefined
 }
 
-const decoder = new TextDecoder()
+const decoder = new TextDecoder('utf-8', { fatal: true })
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
+const isJsonSpace = (code: number): boolean => code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d
+
+/** Exact UTF-8 byte length of each top-level entry in a JSON array message, measured without re-encoding. */
+const jsonSizes = (message: Message): number[] | undefined => {
+  if (typeof message !== 'string') {
+    const len = message.byteLength
+    let at = 0
+    while (at < len && isJsonSpace(message[at]!)) at++
+    if (at >= len || message[at] !== 0x5b) return undefined
+    at++
+    const out: number[] = []
+    while (at < len) {
+      while (at < len && isJsonSpace(message[at]!)) at++
+      if (at >= len || message[at] === 0x5d) break
+      const start = at
+      let last = at
+      let depth = 0
+      let inString = false
+      let escaped = false
+      while (at < len) {
+        const b = message[at]!
+        if (inString) {
+          if (escaped) escaped = false
+          else if (b === 0x5c) escaped = true
+          else if (b === 0x22) inString = false
+          at++
+          last = at
+          continue
+        }
+        if (b === 0x22) { inString = true; at++; last = at; continue }
+        if (b === 0x7b || b === 0x5b) { depth++; at++; last = at; continue }
+        if (b === 0x7d || b === 0x5d) {
+          if (depth === 0) break
+          depth--
+          at++
+          last = at
+          continue
+        }
+        if (b === 0x2c && depth === 0) break
+        if (isJsonSpace(b)) { at++; continue }
+        at++
+        last = at
+      }
+      out.push(last - start)
+      if (at < len && message[at] === 0x2c) at++
+      else break
+    }
+    return out
+  }
+  const len = message.length
+  let at = 0
+  while (at < len && isJsonSpace(message.charCodeAt(at))) at++
+  if (at >= len || message.charCodeAt(at) !== 0x5b) return undefined
+  at++
+  const out: number[] = []
+  while (at < len) {
+    while (at < len && isJsonSpace(message.charCodeAt(at))) at++
+    if (at >= len || message.charCodeAt(at) === 0x5d) break
+    let bytes = 0
+    let trailing = 0
+    let depth = 0
+    let inString = false
+    let escaped = false
+    while (at < len) {
+      const c = message.charCodeAt(at)
+      if (inString) {
+        if (escaped) escaped = false
+        else if (c === 0x5c) escaped = true
+        else if (c === 0x22) inString = false
+        if (c < 0x80) { bytes++; at++ }
+        else if (c < 0x800) { bytes += 2; at++ }
+        else if (c >= 0xd800 && c <= 0xdbff && (message.charCodeAt(at + 1) & 0xfc00) === 0xdc00) { bytes += 4; at += 2 }
+        else { bytes += 3; at++ }
+        continue
+      }
+      if (c === 0x22) { bytes += trailing + 1; trailing = 0; inString = true; at++; continue }
+      if (c === 0x7b || c === 0x5b) { bytes += trailing + 1; trailing = 0; depth++; at++; continue }
+      if (c === 0x7d || c === 0x5d) {
+        if (depth === 0) break
+        bytes += trailing + 1
+        trailing = 0
+        depth--
+        at++
+        continue
+      }
+      if (c === 0x2c && depth === 0) break
+      if (isJsonSpace(c)) { trailing++; at++; continue }
+      bytes += trailing + 1
+      trailing = 0
+      at++
+    }
+    out.push(bytes)
+    if (at < len && message.charCodeAt(at) === 0x2c) at++
+    else break
+  }
+  return out
+}
 
 /** Text, as JSON. What arrives as bytes is read as UTF-8. */
 export const json: Codec = {
@@ -35,6 +137,7 @@ export const json: Codec = {
   list: (parts) => `[${parts.join(',')}]`,
   record: (fields) => `{${fields.map(([name, value]) => `${JSON.stringify(name)}:${value as string}`).join(',')}}`,
   decode: (message) => JSON.parse(textOf(message)) as unknown,
+  sizes: jsonSizes,
 }
 
 /** How many bytes a message is: text as UTF-8, which is how it crosses. */

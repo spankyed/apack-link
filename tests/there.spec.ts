@@ -20,6 +20,7 @@ const handClock = () => {
   }
   return {
     clock,
+    waiting: () => timers.size,
     /** Moves the clock on, running what falls due, in order, and lets what that sends cross. */
     advance: async (ms: number): Promise<void> => {
       const until = at + ms
@@ -196,17 +197,33 @@ describe('an ask outstanding for many windows', () => {
 })
 
 describe('an ask that is owed and then is not, with nothing arriving', () => {
-  it('has nothing asked for it', async () => {
-    const { clock, advance } = handClock()
+  it('has nothing asked for it and leaves nothing on the clock', async () => {
+    const { clock, advance, waiting } = handClock()
     const end = watched(clock)
     end.hello()
     await turn()
     // Refused where it was made: owed for a moment, and then not, and nothing crosses.
+    const before = waiting()
     const ended: Outcome[] = []
     join(end.window, desk().port).ask('x', 'ASK', { big: 1n }, () => {}, (outcome) => { ended.push(outcome) })
     expect(ended).toHaveLength(1)
+    expect(waiting()).toBe(before)
     await advance(100 * WINDOW)
     expect(asks(end.said())).toEqual([])
+  })
+
+  it('does not close the connection when settled after asking whether the other end is there', async () => {
+    const { clock, advance, waiting } = handClock()
+    const end = watched(clock)
+    end.hello()
+    await turn()
+    const settle = end.window.awaiting()
+    await advance(WINDOW / 2)
+    expect(asks(end.said())).toEqual([{ there: 1 }])
+    settle()
+    expect(waiting()).toBe(0)
+    await advance(WINDOW)
+    expect(end.sides).toHaveLength(1)
   })
 })
 

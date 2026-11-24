@@ -65,6 +65,9 @@ describe('a listener that throws', () => {
     expect(() => a.close()).not.toThrow()
     expect(ended).toEqual([{ why: 'closed' }])
     expect(thrown).toEqual([new Error('at the end')])
+    // A listener added after the link has already ended goes to `thrown` as well.
+    expect(() => a.onEnd(() => { throw new Error('after the end') })).not.toThrow()
+    expect(thrown).toEqual([new Error('at the end'), new Error('after the end')])
   })
 
   it('hands on what the place it is handed to throws as well', async () => {
@@ -166,5 +169,122 @@ describe('a system that throws', () => {
         expect(thrown.a).toEqual([new Error('ended')])
       }
     })
+  })
+
+  it('whose view throws in caughtUp ends that view over ahead of held frames, stops it, and skips views stopped mid-round', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const b = listen(right)
+    const order: string[] = []
+    const received = desk({ tell: (_, event) => { order.push(`tell:${String(event)}`) } })
+    const toBackend = join(a, received.port)
+    let secondCalled = 0
+    let secondCaughtUp: (() => void) | undefined
+    let throwingView: { stopped: number } | undefined
+    const toWindow = join(b, desk({
+      follow: (viewed) => {
+        if (viewed.view === 'throws') {
+          throwingView = viewed
+          return { caughtUp: () => { throw new Error('caughtUp broke') } }
+        }
+        return { caughtUp: (then) => { secondCalled++; secondCaughtUp = then } }
+      },
+    }).port)
+    const overFailures: Array<{ kind: string; message: string }> = []
+    const v1 = toBackend.follow('f', 'throws', {}, () => {}, (failure) => { overFailures.push(failure); order.push(`over:${failure.kind}`) })
+    const v2 = watching(toBackend, 'f', 'ok', {})
+    await turn()
+    expect(() => toWindow.tell('x', 'first')).toThrow('caughtUp broke')
+    // The broken view was stopped and told over; the second view was still asked and holds the tell until it catches up.
+    expect([throwingView?.stopped, secondCalled]).toEqual([1, 1])
+    await turn()
+    expect(overFailures).toEqual([{ kind: 'failed', message: 'It could not be taken' }])
+    expect(received.told).toEqual([])
+    secondCaughtUp!()
+    await turn()
+    // The follower heard `over` for the broken view strictly before the held tell arrived.
+    expect(order).toEqual(['over:failed', 'tell:first'])
+    v1.stop()
+    v2.stop()
+    await turn()
+    // Even when the throwing view is the only view, `over` still arrives before the held frame.
+    const [leftSolo, rightSolo] = memoryPair()
+    const soloOrder: string[] = []
+    const soloToBackend = join(dial(leftSolo), desk({ tell: (_, event) => { soloOrder.push(`tell:${String(event)}`) } }).port)
+    const soloToWindow = join(listen(rightSolo), desk({
+      follow: () => ({ caughtUp: () => { throw new Error('solo broke') } }),
+    }).port)
+    soloToBackend.follow('f', 'throws', {}, () => {}, (failure) => { soloOrder.push(`over:${failure.kind}`) })
+    await turn()
+    expect(() => soloToWindow.tell('x', 'solo')).toThrow('solo broke')
+    await turn()
+    expect(soloOrder).toEqual(['over:failed', 'tell:solo'])
+    // A view whose caughtUp synchronously ends another view stops that second view from being asked.
+    let laterAsked = 0
+    let secondView: { over: (failure: { kind: string; message: string }) => void } | undefined
+    const [left2, right2] = memoryPair()
+    const a2 = dial(left2)
+    const b2 = listen(right2)
+    const received2 = desk()
+    const toBackend2 = join(a2, received2.port)
+    const toWindowSync = join(b2, desk({
+      follow: (viewed) => {
+        if (viewed.view === 'stops-other') return { caughtUp: (then) => { secondView?.over({ kind: 'gone', message: 'gone' }); then() } }
+        secondView = viewed
+        return { caughtUp: (then) => { laterAsked++; then() } }
+      },
+    }).port)
+    watching(toBackend2, 'f', 'stops-other', {})
+    watching(toBackend2, 'f', 'stopped-by-first', {})
+    await turn()
+    toWindowSync.tell('x', 'released')
+    await turn()
+    expect(laterAsked).toBe(0)
+    expect(received2.told.map((one) => one.event)).toEqual(['released'])
+  })
+})
+
+describe('removing listeners', () => {
+  it('onFrame and onEnd return idempotent unsubscribes that work even during dispatch and with duplicate callbacks', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const b = listen(right)
+    const log: string[] = []
+    const shared = (frame: Frame): void => { log.push(`shared:${frame.kind === 'tell' ? String(frame.event) : frame.kind}`) }
+    const offShared1 = b.onFrame(shared)
+    const offShared2 = b.onFrame(shared)
+    let offLater: (() => void) | undefined
+    const offSelf = b.onFrame((frame) => {
+      log.push(`self:${frame.kind === 'tell' ? String(frame.event) : frame.kind}`)
+      offSelf()
+      offLater?.()
+    })
+    offLater = b.onFrame(() => { log.push('later') })
+    a.send(tell(1))
+    await turn()
+    // `offLater` was unsubscribed during the same dispatch, so it did not run; both `shared` registrations ran.
+    expect(log).toEqual(['shared:1', 'shared:1', 'self:1'])
+    log.length = 0
+    offShared1()
+    offShared1() // idempotent: must not remove the second `shared` registration
+    a.send(tell(2))
+    await turn()
+    expect(log).toEqual(['shared:2'])
+    offShared2()
+    log.length = 0
+    a.send(tell(3))
+    await turn()
+    expect(log).toEqual([])
+
+    const ended: string[] = []
+    const offEnd1 = b.onEnd(() => { ended.push('first') })
+    b.onEnd(() => { ended.push('second') })
+    offEnd1()
+    b.close()
+    expect(ended).toEqual(['second'])
+    // Late onEnd fires immediately and returns a safe no-op unsubscribe.
+    const lateOff = b.onEnd(() => { ended.push('late') })
+    expect(ended).toEqual(['second', 'late'])
+    expect(() => lateOff()).not.toThrow()
   })
 })

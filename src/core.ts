@@ -230,12 +230,21 @@ export interface Given {
  * What an end's sizes come to, or a `RangeError` for ones no end is set with: how large a frame may be, and how
  * long a part at most.
  */
-export function limits(given: Pick<Given, 'bound' | 'part'>): { readonly largest: number; readonly part: number } {
+export function limits(given: Pick<Given, 'bound' | 'part' | 'window' | 'first' | 'most'>): { readonly largest: number; readonly part: number } {
   const part = given.part ?? PART
   if (!(part >= SHORTEST)) throw new RangeError(`part is ${SHORTEST} bytes at least`)
   const largest = given.bound?.frame ?? FRAME
   // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
   if (!(largest >= SMALLEST)) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
+  const kept = given.bound?.kept
+  if (kept?.frames !== undefined && !(kept.frames >= 1)) throw new RangeError('bound.kept.frames is 1 at least')
+  if (kept?.size !== undefined && !(kept.size >= 1)) throw new RangeError('bound.kept.size is 1 byte at least')
+  const waiting = given.bound?.waiting
+  if (waiting?.frames !== undefined && !(waiting.frames >= 0)) throw new RangeError('bound.waiting.frames is 0 at least')
+  if (waiting?.size !== undefined && !(waiting.size >= 0)) throw new RangeError('bound.waiting.size is 0 bytes at least')
+  if (given.window !== undefined && (!(given.window > 0) || !Number.isFinite(given.window))) throw new RangeError('there.window is a finite number more than 0')
+  if (given.first !== undefined && (!(given.first >= 0) || !Number.isFinite(given.first))) throw new RangeError('reopen.first is a finite number, 0 at least')
+  if (given.most !== undefined && (!(given.most >= 0) || !Number.isFinite(given.most))) throw new RangeError('reopen.most is a finite number, 0 at least')
   return { largest, part }
 }
 
@@ -294,22 +303,23 @@ const seen = (direction: 'out' | 'in', seq: number, size: number, about: About):
   ? { direction, seq, private: true, size }
   : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), size, ...(about.cause === undefined ? {} : { cause: about.cause }) }
 
-/** A frame encoded, with what is told of it and, for a view's result, which view. */
-export interface Ready { encoded: Message; size: number; about: About; readonly view?: number }
+/** A frame encoded, with what is told of it and, for a view's result, which view. `size` includes its cause. */
+export interface Ready { encoded: Message; size: number; causeSize: number; about: About; readonly view?: number }
 
 /**
- * A frame encoded, and how many bytes that is. Throws for one that cannot be sent: a `TypeError` for one that
- * cannot be encoded, and a `RangeError` for one larger, with its cause, than a frame may be. Nothing thrown says
- * what the frame holds: what a codec says of a value names its keys.
+ * A frame encoded, and how many bytes that is with its cause. Throws for one that cannot be sent: a `TypeError` for
+ * one that cannot be encoded, and a `RangeError` for one larger, with its cause, than a frame may be. Nothing thrown
+ * says what the frame holds: what a codec says of a value names its keys.
  */
 export function ready(set: Setup, frame: Frame, how: Sending): Ready {
   let encoded: Message
   try { encoded = set.codec.encode(frame) } catch { throw new TypeError('A frame could not be put into text') }
-  const size = sizeOf(encoded)
-  const whole = size + (how.cause === undefined ? 0 : sizeOf(set.codec.encode(how.cause)))
-  if (whole - size > CAUSE) throw new RangeError('What caused a frame is longer than may be said')
-  if (whole > set.largest) throw new RangeError('A frame is larger than may be sent')
-  return { encoded, size, about: aboutOf(frame, how), ...(frame.kind === 'shown' ? { view: frame.id } : {}) }
+  const frameSize = sizeOf(encoded)
+  const causeSize = how.cause === undefined ? 0 : sizeOf(set.codec.encode(how.cause))
+  if (causeSize > CAUSE) throw new RangeError('What caused a frame is longer than may be said')
+  const size = frameSize + causeSize
+  if (size > set.largest) throw new RangeError('A frame is larger than may be sent')
+  return { encoded, size, causeSize, about: aboutOf(frame, how), ...(frame.kind === 'shown' ? { view: frame.id } : {}) }
 }
 
 /** The connection an end is on, with what is said on it this turn. */
@@ -351,7 +361,7 @@ export interface State {
   /** For each view with a result waiting, that result: a later one takes its place. */
   showing: Map<number, Ready>
   /** The parts of a frame arriving in parts, so far, and how many bytes they were as they crossed. */
-  parting?: { readonly first: number; readonly of: number; readonly pieces: Message[]; bytes: number; size: number; readonly cause?: string; readonly private: boolean }
+  parting?: { readonly first: number; readonly of: number; readonly pieces: Message[]; bytes: number; size?: number; readonly cause?: string; readonly private: boolean }
   ending?: Ending
   /** How many connections in a row have gone without having held. */
   failed: number
@@ -372,8 +382,8 @@ export interface State {
   watching?: { readonly timer: number; readonly on: number; readonly asked: boolean }
   /** The last number given to something put on a clock. */
   timers: number
-  /** Each message being taken, the last begun last: what it held, how far it has been taken, and the message. */
-  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message }>
+  /** Each message being taken, the last begun last: what it held, how far it has been taken, the message, and cached entry sizes when tapped. */
+  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message; sizes?: readonly number[] }>
 }
 
 /** What an end holds before anything has happened. */
@@ -409,8 +419,9 @@ export type Event =
   /** The end is owed something by the other, and is owed it no longer. */
   | { readonly is: 'owed' }
   | { readonly is: 'settled' }
-  /** Somebody is to be told of frames crossing. */
+  /** Somebody is to be told of frames crossing, and nobody is any longer. */
   | { readonly is: 'tapped' }
+  | { readonly is: 'untapped' }
 
 /** One thing to be done about what happened. */
 export type Effect =
@@ -554,6 +565,12 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (was) out.push({ do: 'close', on: was.id, thrown: 'reported' })
     out.push({ do: 'ended', ending: why })
   }
+  /** Stops watching a quiet connection once this end is owed nothing. */
+  const unwatch = (): void => {
+    if (s.kept.length || s.owed) return
+    off(s.watching?.timer)
+    delete s.watching
+  }
   /**
    * Lets go of what the other end says it took. A number past what was sent is not one it could have taken, and one
    * before what it said last asks for what is no longer kept.
@@ -637,15 +654,15 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
    * room is what the transport and the other end take, less what is put around a thing numbered and the batch's
    * two; what caused the frame crosses beside it, or beside its first part, and has its share of that.
    */
-  const number = (encoded: Message, size: number, about: About): void => {
+  const number = (encoded: Message, size: number, causeSize: number, about: About): void => {
     const first = s.sent + 1
     const on = s.now!
     const room = Math.min(on.most ?? Infinity, on.takes) - AROUND - 2
-    const beside = about.cause === undefined ? 0 : sizeOf(codec.encode(about.cause))
+    const frameSize = size - causeSize
     let crossing = 0
-    if (size <= Math.min(part, room - beside)) crossing = unit([['frame', encoded]], about, true)
+    if (frameSize <= Math.min(part, room - causeSize)) crossing = unit([['frame', encoded]], about, true)
     else {
-      const pieces = partsOf(encoded, Math.min(part, room - beside), Math.min(part, room))
+      const pieces = partsOf(encoded, Math.min(part, room - causeSize), Math.min(part, room))
       pieces.forEach((data, at) => { crossing += unit([['part', codec.encode(at)], ['of', codec.encode(pieces.length)], ['data', data]], about, at === 0) })
     }
     if (s.tapped) out.push({ do: 'traffic', traffic: seen('out', first, crossing, about) })
@@ -676,22 +693,24 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       out.push({ do: 'close', on, thrown: 'reported' })
       return
     }
-    // Owed nothing now: nothing to ask.
-    if (!s.kept.length && !s.owed) return
     s.asked++
     say(now, word({ there: s.asked }))
     const half = set.window! / 2
     s.watching = { timer: after(set.window! - half, 'there'), on, asked: true }
   }
-  /** Numbers the oldest of what waits. */
-  const next = (): void => {
-    const one = s.waiting.shift()!
-    s.waitingSize -= one.size
-    if (one.view !== undefined && s.showing.get(one.view) === one) s.showing.delete(one.view)
-    number(one.encoded, one.size, one.about)
+  /** Numbers what waits, oldest first, for as long as `keep()` holds. Drains in one pass so large backlogs stay linear. */
+  const drain = (keep: () => boolean): void => {
+    let taken = 0
+    while (taken < s.waiting.length && keep()) {
+      const one = s.waiting[taken++]!
+      s.waitingSize -= one.size
+      if (one.view !== undefined && s.showing.get(one.view) === one) s.showing.delete(one.view)
+      number(one.encoded, one.size, one.causeSize, one.about)
+    }
+    if (taken) s.waiting = taken === s.waiting.length ? [] : s.waiting.slice(taken)
   }
   /** Numbers what waits, oldest first, for as long as there is room. */
-  const pump = (): void => { while (s.waiting.length && !s.ending && roomy()) next() }
+  const pump = (): void => { drain(() => !s.ending && roomy()) }
 
   /**
    * What the first thing said on a connection is, to this end as it stands: a hello that fits, or why not. What
@@ -749,7 +768,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const unknown = (): void => { end({ why: 'not a frame', size: sizeOf(arriving) }) }
 
   /** Takes one thing said on the connection this end is on. Whether a frame was handed over for it. */
-  const take = (on: Connection, arrived: unknown): boolean => {
+  const take = (on: Connection, arrived: unknown, measure: () => number | undefined): boolean => {
     if (!on.met) {
       const fits = greeting(arrived, on.most)
       if ('no' in fits) { refuse(on, fits); return false }
@@ -782,32 +801,38 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       return false
     }
     const { seq, cause } = arrived
-    if (typeof seq !== 'number') { unknown(); return false }
+    if (!isCount(seq) || seq === 0) { unknown(); return false }
     if ((cause !== undefined && typeof cause !== 'string') || (arrived.private !== undefined && arrived.private !== true)) { unknown(); return false }
     if ('frame' in arrived) {
       const frame = asFrame(arrived.frame)
-      // Not a frame, or a whole frame where a frame in parts was arriving: its parts were not all sent.
-      if (!frame || s.parting) { unknown(); return false }
+      if (!frame) { unknown(); return false }
       if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
+      // A whole frame where a frame in parts was arriving: its parts were not all sent.
+      if (s.parting) { unknown(); return false }
       s.heard = seq
       // This end says it took it with its next batch, and has one leave for that alone if none is to.
       turn(on)
-      handOver(frame, seq, s.tapped ? sizeOf(codec.encode(arrived)) : 0, cause, arrived.private === true)
+      handOver(frame, seq, s.tapped ? measure() : undefined, cause, arrived.private === true)
       return true
     }
     const { part: at, of, data } = arrived
-    if (!isCount(at) || !isCount(of) || of < 2 || at >= of || !(typeof data === 'string' || data instanceof Uint8Array)) { unknown(); return false }
+    if (!isCount(at) || !isCount(of) || of < 2 || at >= of || (typeof data !== 'string' && !(data instanceof Uint8Array))) { unknown(); return false }
     if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
-    if (at === 0 ? s.parting !== undefined : s.parting?.of !== of || s.parting.pieces.length !== at) { unknown(); return false }
-    if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: 0, size: 0, ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
+    if (at === 0 ? s.parting !== undefined : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
+    if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: 0, ...(s.tapped ? { size: 0 } : {}), ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = s.parting!
     // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is
     // bounded, however many parts it is said to be in. A part holds something, so they are no more than that many.
-    whole.bytes += sizeOf(data)
-    if (sizeOf(data) === 0 || whole.bytes > largest) { unknown(); return false }
+    const pieceSize = sizeOf(data)
+    whole.bytes += pieceSize
+    if (pieceSize === 0 || whole.bytes > largest) { unknown(); return false }
     whole.pieces.push(data)
-    if (s.tapped) whole.size += sizeOf(codec.encode(arrived))
+    if (whole.size !== undefined) {
+      const partSize = measure()
+      if (partSize === undefined) delete whole.size
+      else whole.size += partSize
+    }
     s.heard = seq
     // Said to be taken part by part, so that a resume picks up where it got to.
     turn(on)
@@ -816,15 +841,15 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     let frame: Frame | undefined
     try { frame = asFrame(codec.decode(joined(whole.pieces))) } catch { /* not a frame */ }
     if (!frame) { unknown(); return false }
-    handOver(frame, whole.first, whole.size, whole.cause, whole.private)
+    handOver(frame, whole.first, s.tapped ? whole.size : undefined, whole.cause, whole.private)
     return true
   }
   /** Hands over a whole frame that arrived, numbered `first`, with what caused it. */
-  const handOver = (frame: Frame, first: number, size: number, cause: string | undefined, private_: boolean): void => {
+  const handOver = (frame: Frame, first: number, size: number | undefined, cause: string | undefined, private_: boolean): void => {
     out.push({
       do: 'hand', frame,
       ...(cause === undefined ? {} : { cause }),
-      ...(s.tapped ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
+      ...(s.tapped && size !== undefined ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
     })
   }
 
@@ -849,7 +874,16 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     while (taking.at < taking.said.length) {
       // Something taken may end the link, or put it on another connection: then the rest is not this one's.
       if (s.ending || s.now?.id !== taking.on) { s.taking.pop(); return }
-      if (take(s.now, taking.said[taking.at++])) return
+      const index = taking.at++
+      const entry = taking.said[index]
+      const measure = (): number | undefined => {
+        if (codec.sizes) {
+          taking.sizes ??= codec.sizes(taking.message)
+          return taking.sizes?.[index]
+        }
+        try { return sizeOf(codec.encode(entry)) } catch { return undefined }
+      }
+      if (take(s.now, entry, measure)) return
     }
     s.taking.pop()
     // Whoever was handed its last frame may have ended the link, or put it on another connection.
@@ -881,14 +915,15 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
 
   const send = (one: Ready): void => {
     if (s.ending) return
-    const { encoded, size, about, view } = one
-    if (!s.waiting.length && roomy()) { number(encoded, size, about); return }
+    const { encoded, size, causeSize, about, view } = one
+    if (!s.waiting.length && roomy()) { number(encoded, size, causeSize, about); return }
     // A view's result waiting to be numbered is overtaken by a later one, which takes its place in the order.
     const overtaken = view === undefined ? undefined : s.showing.get(view)
     if (overtaken) {
       s.waitingSize += size - overtaken.size
       overtaken.encoded = encoded
       overtaken.size = size
+      overtaken.causeSize = causeSize
       overtaken.about = about
     } else {
       s.waiting.push(one)
@@ -915,7 +950,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (on) {
       // An end that has met nobody has numbered nothing: what it numbers now arrives once or not at all, since
       // it sends nothing again.
-      if (on.live || s.theirs === undefined) while (s.waiting.length) next()
+      if (on.live || s.theirs === undefined) drain(() => true)
       if (bye) put(on, word({ bye }))
       flush(on)
     }
@@ -986,8 +1021,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       // What cannot be opened, or carried, is a connection that did not hold.
       case 'unopened': if (!s.ending) { s.failed++; reopen() } break
       case 'owed': s.owed++; watch(false); break
-      case 'settled': s.owed--; break
+      case 'settled': s.owed--; unwatch(); break
       case 'tapped': s.tapped = true; break
+      case 'untapped': s.tapped = false; if (s.parting) delete s.parting.size; break
     }
     // Nothing is held between steps but what was handed in: not the end, the message, or what was asked for.
     const asked = out

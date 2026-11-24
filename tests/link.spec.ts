@@ -1,8 +1,10 @@
+import * as vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { accept, bytesOf, join, dial, LEAST, listen, LINK, memoryPair, socket, type Ending, type Frame, type Transport } from '../src/index.ts'
+import { accept, bytesOf, join, dial, json, LEAST, listen, LINK, memoryPair, port, socket, type Ending, type Frame, type Message, type Transport } from '../src/index.ts'
 import { only } from './support/only.ts'
 import { everyOrder, type Schedule } from '@apackdev/orderings'
 import { asking, desk, scheduledPair } from '../src/testing/index.ts'
+import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 const tell = (event: unknown): Frame => ({ kind: 'tell', to: 'x', event })
@@ -921,11 +923,228 @@ describe('how many bytes a text is', () => {
 })
 
 describe('a WebSocket that is still opening', () => {
-  it('says what waits for it to open in bytes', () => {
-    const ws = { readyState: 0, bufferedAmount: 3, binaryType: '', send: () => {}, close: () => {}, addEventListener: () => {} }
+  it('says what waits for it to open in bytes, clears it on close, and does not send on a late open', () => {
+    let onOpen: (() => void) | undefined
+    const sent: Array<string | Uint8Array> = []
+    const ws = {
+      readyState: 0,
+      bufferedAmount: 3,
+      binaryType: '',
+      send: (data: string | Uint8Array) => { sent.push(data) },
+      close: () => { ws.readyState = 3 },
+      addEventListener: (type: string, listener: (...args: never[]) => void) => { if (type === 'open') onOpen = listener as () => void },
+    }
     const carried = socket(ws)
     carried.send('✓✓')
     carried.send(new Uint8Array(4))
     expect(carried.waiting!()).toBe(3 + 6 + 4)
+    carried.close()
+    expect(carried.waiting!()).toBe(3)
+    onOpen?.()
+    expect(sent).toEqual([])
+  })
+
+  it('refuses a most that is not a positive whole number of bytes', () => {
+    const ws = { readyState: 1, bufferedAmount: 0, binaryType: '', send: () => {}, close: () => {}, addEventListener: () => {} }
+    for (const most of [0, -1, 1.5, NaN, Infinity]) {
+      expect(() => socket(ws, { most })).toThrow(RangeError)
+    }
+  })
+})
+
+describe('a message port', () => {
+  it('takes cross-realm bytes and closes its port when the other end sends null', () => {
+    let onMessage: ((event: { data: unknown }) => void) | undefined
+    let closed = 0
+    const fakePort = {
+      postMessage: () => {},
+      close: () => { closed++ },
+      addEventListener: (type: string, listener: (event: { data: unknown }) => void) => { if (type === 'message') onMessage = listener },
+    }
+    const transport = port(fakePort as never)
+    const heard: Message[] = []
+    let transportClosed = 0
+    transport.onData((message) => { heard.push(message) })
+    transport.onClose(() => { transportClosed++ })
+    const foreign = vm.runInNewContext('new Uint8Array([1, 2, 3])') as Uint8Array
+    expect(foreign instanceof Uint8Array).toBe(false)
+    onMessage!({ data: foreign })
+    expect(heard).toHaveLength(1)
+    expect(heard[0]).toBeInstanceOf(Uint8Array)
+    expect(Array.from(heard[0] as Uint8Array)).toEqual([1, 2, 3])
+    onMessage!({ data: null })
+    expect([transportClosed, closed]).toEqual([1, 1])
+  })
+})
+
+describe('what is not a frame on the wire', () => {
+  it('ends the link as not a frame when seq is zero, negative, fractional or NaN', async () => {
+    for (const seq of [0, -1, 1.5]) {
+      const { bare, heard, ended } = facing()
+      const text = wire({ seq, frame: tell('bad seq') })
+      bare.send(hello)
+      bare.send(text)
+      await turn()
+      expect([seq, heard, ended]).toEqual([seq, [], [{ why: 'not a frame', size: text.length }]])
+    }
+    // NaN cannot be represented in JSON, so test it through msgpack.
+    const [bare, right] = memoryPair()
+    const ended: Ending[] = []
+    listen(right, { codec: msgpack }).onEnd((ending) => { ended.push(ending) })
+    bare.send(msgpack.list([msgpack.encode(HELLO)]))
+    const bad = msgpack.list([msgpack.encode({ seq: NaN, frame: tell('nan') })])
+    bare.send(bad)
+    await turn()
+    expect(ended).toEqual([{ why: 'not a frame', size: (bad as Uint8Array).byteLength }])
+  })
+
+  it('ends the link as not a frame when a frame or a failure is an array carrying those fields', async () => {
+    const arrayFrame = Object.assign([], { kind: 'tell', to: 'x', event: 1 })
+    const arrayFailure = { kind: 'over', id: 1, failure: Object.assign([], { kind: 'gone', message: 'no' }) }
+    for (const frame of [arrayFrame, arrayFailure]) {
+      const [bare, right] = memoryPair()
+      const heard: Frame[] = []
+      const ended: Ending[] = []
+      const codec = {
+        ...json,
+        decode: (message: Message) => (message === 'BAD' ? [{ seq: 1, frame }] : json.decode(message)),
+      }
+      const b = listen(right, { codec })
+      b.onFrame((one) => { heard.push(one) })
+      b.onEnd((ending) => { ended.push(ending) })
+      bare.send(hello)
+      bare.send('BAD')
+      await turn()
+      expect([heard, ended]).toEqual([[], [{ why: 'not a frame', size: 3 }]])
+    }
+  })
+
+  it('ends out of order when an out-of-order whole frame arrives while parts are arriving', async () => {
+    const { bare, ended } = facing()
+    bare.send(hello)
+    bare.send(wire({ seq: 1, part: 0, of: 2, data: '{"kind":' }))
+    bare.send(wire({ seq: 5, frame: tell('out of order') }))
+    await turn()
+    expect(ended).toEqual([{ why: 'out of order', expected: 2, got: 5 }])
+  })
+
+  it('ends as not a frame when a frame mixes text and byte parts', async () => {
+    const [bare, right] = memoryPair()
+    const ended: Ending[] = []
+    listen(right, { codec: msgpack }).onEnd((ending) => { ended.push(ending) })
+    bare.send(msgpack.list([msgpack.encode(HELLO)]))
+    bare.send(msgpack.list([msgpack.encode({ seq: 1, part: 0, of: 3, data: new Uint8Array([1, 2]) })]))
+    const mixed = msgpack.list([msgpack.encode({ seq: 2, part: 1, of: 3, data: 'text' })])
+    bare.send(mixed)
+    await turn()
+    expect(ended).toEqual([{ why: 'not a frame', size: (mixed as Uint8Array).byteLength }])
+  })
+
+  it('ends as not a frame when bytes on a JSON link hold invalid UTF-8 inside a string', async () => {
+    const { bare, heard, ended } = facing()
+    bare.send(hello)
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const invalid = new Uint8Array([...enc('[{"seq":1,"frame":{"kind":"tell","to":"x","event":"'), 0xff, ...enc('"}}]')])
+    bare.send(invalid)
+    await turn()
+    expect(heard).toEqual([])
+    expect(ended).toEqual([{ why: 'not a frame', size: invalid.byteLength }])
+  })
+})
+
+describe('options a link is set with', () => {
+  it('refuses invalid bounds, non-finite timings, and oversized codecs upfront in dial and accept, while allowing Infinity for bounds', () => {
+    const clock = { after: () => () => {} }
+    for (const options of [
+      { part: NaN },
+      { bound: { frame: NaN } },
+      { bound: { kept: { frames: 0, size: 1024 } } },
+      { bound: { kept: { frames: 1, size: 0 } } },
+      { bound: { waiting: { frames: -1, size: 1024 } } },
+      { bound: { waiting: { frames: 1, size: NaN } } },
+      { there: { window: 0, clock } },
+      { there: { window: NaN, clock } },
+      { there: { window: Infinity, clock } },
+      { reopen: { clock, first: -1 } },
+      { reopen: { clock, first: Infinity } },
+      { reopen: { clock, most: NaN } },
+      { reopen: { clock, most: Infinity } },
+    ]) {
+      expect(() => dial(memoryPair()[0], options)).toThrow(RangeError)
+      expect(() => accept(() => {}, options)).toThrow(RangeError)
+    }
+    // Infinity is accepted for size and frame bounds as no bound.
+    for (const options of [
+      { part: Infinity },
+      { bound: { frame: Infinity } },
+      { bound: { kept: { frames: Infinity, size: Infinity } } },
+      { bound: { waiting: { frames: Infinity, size: Infinity } } },
+    ]) {
+      expect(() => dial(memoryPair()[0], options)).not.toThrow()
+      expect(() => accept(() => {}, options)).not.toThrow()
+    }
+    const wordy = { ...json, record: (fields: ReadonlyArray<readonly [string, Message]>) => json.record(fields.map(([name, value]) => [name === 'seq' ? 'sequence' : name, value])) }
+    expect(() => accept(() => {}, { codec: wordy })).toThrow(TypeError)
+  })
+})
+
+describe('what arrives as a connection is carried', () => {
+  it('takes buffered data before a close that fired during registration', () => {
+    const b = listen()
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    // A transport that already closed before carry, while still holding buffered data to hand over on onData.
+    const alreadyClosed: Transport = {
+      send: () => {},
+      onClose: (then) => { then() },
+      onData: (hear) => { hear(wire(HELLO, { seq: 1, frame: tell('before close') })) },
+      close: () => {},
+    }
+    b.carry(alreadyClosed)
+    expect(heard).toEqual([tell('before close')])
+    expect(ended).toEqual([])
+    // The buffered close was delivered after the buffered data, so the connection is no longer active.
+    b.send(tell('after'))
+    expect(b.waiting()).toBe(1)
+  })
+
+  it('hears data and close delivered synchronously when later flushes inside carry', () => {
+    let onData: ((message: Message) => void) | undefined
+    let onClose: (() => void) | undefined
+    let repliedSync = false
+    const ended: Ending[] = []
+    const syncTransport: Transport = {
+      send: () => {
+        if (repliedSync) return
+        repliedSync = true
+        onData?.(wire(HELLO, { seq: 1, frame: tell('sync reply') }))
+        onClose?.()
+      },
+      onData: (h) => { onData = h },
+      onClose: (c) => { onClose = c },
+      close: () => {},
+    }
+    const a = dial(syncTransport, { later: (run) => run() })
+    a.onEnd((ending) => { ended.push(ending) })
+    const b = listen(undefined, { later: (run) => run() })
+    const bHeard: Frame[] = []
+    const bEnded: Ending[] = []
+    b.onFrame((frame) => { bHeard.push(frame) })
+    b.onEnd((ending) => { bEnded.push(ending) })
+    let d: ((message: Message) => void) | undefined
+    let replied = false
+    const syncReply: Transport = {
+      send: () => { if (!replied) { replied = true; d?.(wire({ seq: 1, frame: tell('after hello') })) } },
+      onData: (h) => { d = h },
+      onClose: () => {},
+      close: () => {},
+    }
+    b.carry(syncReply)
+    d!(hello)
+    expect(bHeard).toEqual([tell('after hello')])
+    expect(bEnded).toEqual([])
+    expect(ended).toEqual([{ why: 'closed' }])
   })
 })

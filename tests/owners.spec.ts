@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { accept, dial, memoryPair, type Clock, type Ending, type Link, type Message, type Transport } from '../src/index.ts'
+import { once as eventOnce } from 'node:events'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { WebSocket, WebSocketServer } from 'ws'
+import { accept, dial, memoryPair, socket, timers, type Clock, type Ending, type Frame, type Link, type Message, type Transport } from '../src/index.ts'
 import { everyOrder, sample, type Schedule } from '@apackdev/orderings'
 import { holds, laneClock, same } from '../src/testing/index.ts'
 
@@ -214,6 +216,134 @@ describe('a session has an owner', () => {
     at.gone('a')
     expect(closes).toBe(1)
   })
+
+  it('keeps nothing of a connection turned away even when its close does not fire onClose', () => {
+    const at = backend()
+    let onData: ((message: Message) => void) | undefined
+    let closes = 0
+    at.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => { closes++; throw new Error('already shut') } }, 'a')
+    onData!(JSON.stringify([7]))
+    expect(closes).toBe(1)
+    // Nothing more is heard on it, and gone does not close it again.
+    onData!(JSON.stringify([{ link: 1, session: 'late', taken: 0 }]))
+    at.gone('a')
+    expect([closes, at.told]).toEqual([1, []])
+  })
+
+  it('turns the connection away as lost and hands the error to thrown when onLink throws, and closes once if gone was called first', async () => {
+    let calls = 0
+    const ended: Ending[] = []
+    const thrown: unknown[] = []
+    const taking = accept<string>((link, owner) => {
+      link.onEnd((ending) => { ended.push(ending) })
+      calls++
+      if (calls === 1) throw new Error('onLink broke')
+      if (calls === 2) { taking.gone(owner); throw new Error('threw after gone') }
+      if (calls === 3) taking.gone(owner)
+    }, { thrown: (error) => { thrown.push(error) } })
+
+    // A reopening dialler whose onLink throws is told lost and stops reopening instead of spinning.
+    let opens = 0
+    const dialEnded: Ending[] = []
+    const dialler = dial(() => {
+      opens++
+      const [left, right] = memoryPair()
+      taking.take(right, 'a')
+      return left
+    }, { reopen: { clock: turns } })
+    dialler.onEnd((ending) => { dialEnded.push(ending) })
+    await until(() => dialEnded.length === 1)
+    await rest()
+    expect([opens, dialEnded, thrown]).toEqual([1, [{ why: 'lost' }], [new Error('onLink broke')]])
+
+    // When onLink calls gone(owner) and then throws, the transport is closed once and nothing is sent after gone.
+    let onData2: ((message: Message) => void) | undefined
+    let closes2 = 0
+    let sends2 = 0
+    taking.take({ send: () => { sends2++ }, onData: (h) => { onData2 = h }, onClose: () => {}, close: () => { closes2++ } }, 'a')
+    expect(() => onData2!(JSON.stringify([{ link: 1, session: 's2', taken: 0 }]))).not.toThrow()
+    expect([closes2, sends2, thrown]).toEqual([1, 0, [new Error('onLink broke'), new Error('threw after gone')]])
+
+    let onData3: ((message: Message) => void) | undefined
+    let closes3 = 0
+    taking.take({ send: () => {}, onData: (h) => { onData3 = h }, onClose: () => {}, close: () => { closes3++ } }, 'a')
+    onData3!(JSON.stringify([{ link: 1, session: 's3', taken: 0 }]))
+    expect([calls, closes3, ended]).toEqual([3, 1, [{ why: 'closed' }, { why: 'closed' }, { why: 'closed' }]])
+  })
+
+  it('ends every intervening session an owner\'s onEnd begins before handing over the new one', () => {
+    const began: string[] = []
+    const ended: string[] = []
+    let count = 0
+    const taking = accept<string>((link) => {
+      const id = `s${++count}`
+      began.push(id)
+      link.onEnd(() => {
+        ended.push(id)
+        if (id === 's1') {
+          let onData: ((message: Message) => void) | undefined
+          taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
+          onData!(JSON.stringify([{ link: 1, session: 'intervening', taken: 0 }]))
+        }
+      })
+    })
+    const connect = (session: string) => {
+      let onData: ((message: Message) => void) | undefined
+      taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
+      onData!(JSON.stringify([{ link: 1, session, taken: 0 }]))
+    }
+    connect('first')
+    connect('second')
+    // Both 's1' and the intervening 's2' ended before 's3' (the new session) was handed over.
+    expect(began).toEqual(['s1', 's2', 's3'])
+    expect(ended).toEqual(['s1', 's2'])
+  })
+
+  it('leaves no session for an owner said to be gone even if onEnd triggers a hello on another open connection', () => {
+    let onData2: ((message: Message) => void) | undefined
+    let closes2 = 0
+    const began: string[] = []
+    const ended: string[] = []
+    let count = 0
+    const taking = accept<string>((link) => {
+      const id = `s${++count}`
+      began.push(id)
+      link.onEnd(() => {
+        ended.push(id)
+        if (id === 's1') onData2?.(JSON.stringify([{ link: 1, session: 'reentrant', taken: 0 }]))
+      })
+    })
+    let onData1: ((message: Message) => void) | undefined
+    taking.take({ send: () => {}, onData: (h) => { onData1 = h }, onClose: () => {}, close: () => {} }, 'a')
+    taking.take({ send: () => {}, onData: (h) => { onData2 = h }, onClose: () => {}, close: () => { closes2++ } }, 'a')
+    onData1!(JSON.stringify([{ link: 1, session: 'first', taken: 0 }]))
+    taking.gone('a')
+    // Every session begun for 'a' has ended, and the second connection is closed.
+    expect(ended).toEqual(began)
+    expect(closes2).toBeGreaterThanOrEqual(1)
+  })
+
+  it('throws instead of spinning forever when onEnd keeps taking new sessions for an owner being ended or replaced', () => {
+    let seq = 0
+    const spin = (trigger: (taking: ReturnType<typeof accept<string>>, feed: (session: string) => void) => void) => {
+      const taking = accept<string>((link) => {
+        link.onEnd(() => {
+          let onData: ((message: Message) => void) | undefined
+          taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
+          onData!(JSON.stringify([{ link: 1, session: `loop-${++seq}`, taken: 0 }]))
+        })
+      })
+      const feed = (session: string) => {
+        let onData: ((message: Message) => void) | undefined
+        taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
+        onData!(JSON.stringify([{ link: 1, session, taken: 0 }]))
+      }
+      feed('first')
+      trigger(taking, feed)
+    }
+    expect(() => spin((taking) => taking.gone('a'))).toThrow(/kept taking connections/)
+    expect(() => spin((_, feed) => feed('second'))).toThrow(/kept beginning a new session/)
+  })
 })
 
 /**
@@ -285,4 +415,171 @@ describe('an owner coming and going, under orders drawn from a seed', () => {
       expect(ran.failure).toBeUndefined()
     }, 600_000)
   }
+})
+
+describe('owners over real WebSockets', () => {
+  let server: WebSocketServer
+  let portNumber: number
+  let currentHandler: ((ws: WebSocket, owner: string) => void) | undefined
+  const tracked = new Set<WebSocket>()
+
+  beforeAll(async () => {
+    server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+    await eventOnce(server, 'listening')
+    portNumber = (server.address() as { port: number }).port
+    server.on('connection', (ws, req) => {
+      tracked.add(ws)
+      ws.on('close', () => { tracked.delete(ws) })
+      const owner = new URL(req.url ?? '/', 'ws://127.0.0.1').searchParams.get('owner') ?? ''
+      currentHandler?.(ws, owner)
+    })
+  })
+
+  afterAll(async () => {
+    for (const ws of tracked) ws.terminate()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+
+  const openSocket = (owner: string, atPort = portNumber): WebSocket => {
+    const ws = new WebSocket(`ws://127.0.0.1:${atPort}/?owner=${encodeURIComponent(owner)}`)
+    tracked.add(ws)
+    ws.on('close', () => { tracked.delete(ws) })
+    return ws
+  }
+
+  it('resumes the same session after a forced socket drop with no lost or duplicated frames', async () => {
+    const serverSockets: WebSocket[] = []
+    const sessions: Array<{ owner: string; link: Link; heard: Frame[] }> = []
+    const taking = accept<string>((link, owner) => {
+      const entry = { owner, link, heard: [] as Frame[] }
+      sessions.push(entry)
+      link.onFrame((frame) => { entry.heard.push(frame) })
+    })
+    currentHandler = (ws, owner) => {
+      serverSockets.push(ws)
+      taking.take(socket(ws as never), owner)
+    }
+    const clientEnded: Ending[] = []
+    const clientHeard: Frame[] = []
+    let opens = 0
+    const client = dial(() => {
+      opens++
+      return socket(openSocket('win-1') as never)
+    }, { reopen: { clock: timers, first: 15, most: 50 } })
+    client.onEnd((ending) => { clientEnded.push(ending) })
+    client.onFrame((frame) => { clientHeard.push(frame) })
+
+    client.send({ kind: 'tell', to: 'x', event: 'before-drop' })
+    await until(() => sessions.length === 1 && sessions[0]!.heard.length === 1)
+    sessions[0]!.link.send({ kind: 'tell', to: 'y', event: 'from-server-1' })
+    await until(() => clientHeard.length === 1)
+
+    // Forcefully drop the underlying TCP/WebSocket connection without a clean close handshake.
+    serverSockets[0]!.terminate()
+    client.send({ kind: 'tell', to: 'x', event: 'during-drop' })
+    sessions[0]!.link.send({ kind: 'tell', to: 'y', event: 'from-server-2' })
+
+    await until(() => sessions[0]!.heard.length === 2 && clientHeard.length === 2)
+    expect(opens).toBeGreaterThanOrEqual(2)
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]!.heard.map((f) => f.kind === 'tell' && f.event)).toEqual(['before-drop', 'during-drop'])
+    expect(clientHeard.map((f) => f.kind === 'tell' && f.event)).toEqual(['from-server-1', 'from-server-2'])
+    expect(clientEnded).toEqual([])
+
+    taking.gone('win-1')
+    await until(() => clientEnded.length === 1)
+    expect(clientEnded).toEqual([{ why: 'goodbye', bye: 'ended' }])
+  })
+
+  it('handles owner reload, wrong-owner resume rejection, and gone() on both live and silent sockets', async () => {
+    const events: string[] = []
+    const taking = accept<string>((link, owner) => {
+      const n = events.filter((e) => e.startsWith(`began ${owner}`)).length + 1
+      events.push(`began ${owner}#${n}`)
+      link.onEnd((ending) => { events.push(`ended ${owner}#${n}:${ending.why}`) })
+    })
+    currentHandler = (ws, owner) => { taking.take(socket(ws as never), owner) }
+
+    const firstEnded: Ending[] = []
+    let firstOpens = 0
+    const first = dial(() => { firstOpens++; return socket(openSocket('reload-owner') as never) }, { reopen: { clock: timers, first: 15, most: 50 } })
+    first.onEnd((ending) => { firstEnded.push(ending) })
+    await until(() => events.includes('began reload-owner#1'))
+
+    // Reload: a second link connects as the same owner, ending the first session cleanly before handing over the second.
+    const secondEnded: Ending[] = []
+    const second = dial(() => socket(openSocket('reload-owner') as never), { reopen: { clock: timers, first: 15, most: 50 } })
+    second.onEnd((ending) => { secondEnded.push(ending) })
+    await until(() => firstEnded.length === 1 && events.includes('began reload-owner#2'))
+    expect(firstEnded).toEqual([{ why: 'goodbye', bye: 'ended' }])
+    expect(events).toEqual(['began reload-owner#1', 'ended reload-owner#1:closed', 'began reload-owner#2'])
+
+    // Another owner (bystander) stays unaffected when reload-owner is declared gone, AND a silent socket of reload-owner closes too.
+    const otherEnded: Ending[] = []
+    const other = dial(() => socket(openSocket('other-owner') as never), { reopen: { clock: timers, first: 15, most: 50 } })
+    other.onEnd((ending) => { otherEnded.push(ending) })
+    await until(() => events.includes('began other-owner#1'))
+
+    const silent = openSocket('reload-owner')
+    await eventOnce(silent, 'open')
+    let silentClosed = false
+    silent.on('close', () => { silentClosed = true })
+
+    taking.gone('reload-owner')
+    await until(() => secondEnded.length === 1 && silentClosed)
+    expect(secondEnded).toEqual([{ why: 'goodbye', bye: 'ended' }])
+    expect(otherEnded).toEqual([])
+    // First client did not reopen after goodbye: ended.
+    expect(firstOpens).toBe(1)
+
+    taking.gone('other-owner')
+    await until(() => otherEnded.length === 1)
+  })
+
+  it('handles close-while-opening and error-then-close ordering when dialling an unavailable port and later connecting', async () => {
+    // Grab an ephemeral port and immediately close it so connections initially fail with ECONNREFUSED (error-then-close).
+    const probe = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+    await eventOnce(probe, 'listening')
+    const closedPort = (probe.address() as { port: number }).port
+    await new Promise<void>((resolve) => probe.close(() => resolve()))
+
+    const taking = accept<string>((link) => {
+      link.onFrame((frame) => { link.send(frame) })
+    })
+    currentHandler = (ws, owner) => { taking.take(socket(ws as never), owner) }
+
+    let attempts = 0
+    const heard: Frame[] = []
+    const thrown: unknown[] = []
+    const client = dial(() => {
+      attempts++
+      // First two attempts hit the refused port (error-then-close); third hits the live server.
+      const target = attempts <= 2 ? closedPort : portNumber
+      return socket(openSocket('reopen-owner', target) as never)
+    }, {
+      reopen: { clock: timers, first: 15, most: 30 },
+      thrown: (error) => { thrown.push(error) },
+    })
+    client.onFrame((frame) => { heard.push(frame) })
+    client.send({ kind: 'tell', to: 'x', event: 'after-refused' })
+
+    await until(() => heard.length === 1)
+    expect(attempts).toBeGreaterThanOrEqual(3)
+    expect(heard).toEqual([{ kind: 'tell', to: 'x', event: 'after-refused' }])
+    expect(thrown).toEqual([])
+
+    // Closing a dialled link while its WebSocket is still CONNECTING closes cleanly without throwing.
+    const aborted = dial(() => socket(openSocket('abort-owner', closedPort) as never), {
+      reopen: { clock: timers, first: 50, most: 100 },
+      thrown: (error) => { thrown.push(error) },
+    })
+    const abortedEnded: Ending[] = []
+    aborted.onEnd((ending) => { abortedEnded.push(ending) })
+    aborted.close('ended')
+    expect(abortedEnded).toEqual([{ why: 'closed' }])
+    expect(thrown).toEqual([])
+
+    taking.gone('reopen-owner')
+    await rest()
+  })
 })

@@ -110,6 +110,22 @@ describe('past the bound', () => {
     a.send(tell('x'.repeat(100)))
     expect(ended).toEqual([{ why: 'overrun', waiting: { frames: 2, size: expect.any(Number) }, bound: { frames: 1000, size: 100 } }])
   })
+
+  it('counts cause bytes toward bound.waiting.size, including when an overtaken shown changes cause length', () => {
+    const { left } = held()
+    // Each short frame is ~35 bytes; a 120-byte cause pushes the waiting size past 100 even though the frame alone is under 100.
+    const a = dial(left, { bound: { kept: { frames: 1, size: 1 << 20 }, waiting: { frames: 1000, size: 100 } } })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.send(tell('numbered'))
+    a.send(shown(1, 'a'), { cause: 'c'.repeat(20) })
+    expect(ended).toEqual([])
+    // Replacing the waiting shown with a longer cause updates waitingSize accurately and triggers overrun.
+    a.send(shown(1, 'b'), { cause: 'c'.repeat(120) })
+    expect(ended).toHaveLength(1)
+    expect(ended[0]).toMatchObject({ why: 'overrun', waiting: { frames: 1 }, bound: { frames: 1000, size: 100 } })
+    if (ended[0]?.why === 'overrun') expect(ended[0].waiting.size).toBeGreaterThan(100)
+  })
 })
 
 describe('an end that only listens', () => {

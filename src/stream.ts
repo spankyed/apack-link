@@ -44,46 +44,55 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
  * stream beneath it is let go.
  */
 export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transport {
+  if (options.most !== undefined && (!Number.isSafeInteger(options.most) || options.most < 1)) {
+    throw new RangeError('stream most is a positive whole number of bytes')
+  }
   const most = Math.min(options.most ?? MOST, LONGEST)
   const hears: Array<(message: Message) => void> = []
   const closes = once()
-  /** What has arrived and is not yet a whole message, as it came; how much of the first piece is used; how much is left. */
-  let pieces: Uint8Array[] = []
+  type Piece = { readonly bytes: Uint8Array; next?: Piece }
+  /** What has arrived and is not yet a whole message, as a linked queue of pieces; how much of the first is used; how much is left. */
+  let first: Piece | undefined
+  let last: Piece | undefined
   let used = 0
   let pending = 0
   /** The message being waited for, once its head is here: what it is and how long. */
   let head: { readonly kind: number; readonly length: number } | undefined
+  closes.add(() => { first = last = undefined; used = 0; pending = 0 })
 
+  const advance = (): void => {
+    first = first!.next
+    if (!first) last = undefined
+    used = 0
+  }
   /**
    * Takes the next `length` bytes of what has arrived: joined once where they lie in more than one piece. Where
    * they lie in one, they are read where they are, or copied once if they are to be `own`: bytes of nobody else's.
    */
   const pull = (length: number, own: boolean): Uint8Array => {
     pending -= length
-    const first = pieces[0]
-    if (first && first.length - used >= length) {
-      const part = first.subarray(used, used + length)
+    const front = first?.bytes
+    if (front && front.length - used >= length) {
+      const part = front.subarray(used, used + length)
       used += length
-      if (used === first.length) { pieces.shift(); used = 0 }
+      if (used === front.length) advance()
       return own ? new Uint8Array(part) : part
     }
     const joined = new Uint8Array(length)
     let at = 0
     while (at < length) {
-      const piece = pieces[0]!
+      const piece = first!.bytes
       const part = piece.subarray(used, used + Math.min(piece.length - used, length - at))
       joined.set(part, at)
       at += part.length
       used += part.length
-      if (used === piece.length) { pieces.shift(); used = 0 }
+      if (used === piece.length) advance()
     }
     return joined
   }
   /** Closes because of what the other end handed over, and lets go of the stream beneath: nothing more of it is wanted. */
   const refuse = (): void => {
     if (closes.fired) return
-    pieces = []
-    pending = 0
     closes.fire()
     if (duplex.destroy) duplex.destroy()
     else duplex.end()
@@ -112,7 +121,9 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
   }
   duplex.on('data', (chunk) => {
     if (closes.fired || !chunk.length) return
-    pieces.push(chunk)
+    const piece: Piece = { bytes: chunk }
+    if (last) last = last.next = piece
+    else first = last = piece
     pending += chunk.length
     take()
   })

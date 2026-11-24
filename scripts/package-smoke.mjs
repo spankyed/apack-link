@@ -8,7 +8,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-const run = (args, cwd) => execFileSync(npm, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32' })
+const run = (args, cwd) => execFileSync(npm, process.platform === 'win32' ? args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)) : args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32' })
 const consumer = fs.mkdtempSync(path.join(os.tmpdir(), 'apack-link-consumer-'))
 try {
   let tarball = process.argv[2] && path.resolve(process.argv[2])
