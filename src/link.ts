@@ -198,9 +198,6 @@ const setupOf = (role: 'dials' | 'listens', connections: 'one' | 'opened' | 'han
   ...(options.reopen?.most === undefined ? {} : { most: options.reopen.most }),
 })
 
-/** More passes than this while ending an owner's sessions is a listener that keeps starting new ones as each ends. */
-const RUNAWAY = 1000
-
 /** One end of a link, on what it is handed. */
 function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | undefined, options: Options): { readonly made: Listener; readonly hand: (transport: Transport) => void } {
   const pace = options.reopen
@@ -300,6 +297,9 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         return
       case 'traffic':
         tap(effect.traffic)
+        return
+      case 'report':
+        report(effect.error)
         return
       case 'ended':
         for (const entry of [...ends]) if (entry.active) try { entry.fn(effect.ending) } catch (error) { report(error) }
@@ -421,11 +421,15 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
   const sessions = new Map<Owner, Session>()
   /** What closes each connection taken as an owner's and still open, a session's or not yet anybody's. */
   const open = new Map<Owner, Set<() => void>>()
+  /** Owners whose current session is being closed for a reload, and owners currently being torn down by `gone`. */
+  const ending = new Set<Owner>()
+  const leaving = new Set<Owner>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
   setupOf('listens', 'handed', '', options)
   const take = (transport: Transport, owner: Owner): void => {
     // Found when the connection arrives, not when a frame is too long for it.
     wideEnough(transport, LEAST)
+    if (leaving.has(owner)) { try { transport.close() } catch { /* it has gone already */ } return }
     const hears: Array<(message: Message) => void> = []
     const closes: Array<() => void> = []
     let first = true
@@ -481,6 +485,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
         turnAway(isObject(said) && typeof said.link === 'number' && said.link !== LINK ? 'which link' : 'nothing')
         return
       }
+      if (ending.has(owner) || leaving.has(owner)) { turnAway('lost'); return }
       const had = sessions.get(owner)
       if (had?.id === said.session) had.hand(relay)
       // Going on with a session this owner does not have: another owner's, one from before this end began, or one
@@ -490,10 +495,9 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       else if (said.most !== undefined && said.most < LEAST) { turnAway('lost'); return }
       else {
         // The owner began again: the session it had is over before the new one is anybody's.
-        let passes = 0
-        while (sessions.has(owner)) {
-          if (++passes > RUNAWAY) throw new Error('An owner kept beginning a new session as the last one ended')
-          sessions.get(owner)!.link.close('ended')
+        if (had) {
+          ending.add(owner)
+          try { had.link.close('ended') } finally { ending.delete(owner) }
           // Whoever heard that end may have said the owner is gone.
           if (closed) return
         }
@@ -516,14 +520,14 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
     })
   }
   const gone = (owner: Owner): void => {
-    let passes = 0
-    while (sessions.has(owner) || open.has(owner)) {
-      if (++passes > RUNAWAY) throw new Error('An owner kept taking connections as it was said to be gone')
+    if (leaving.has(owner)) return
+    leaving.add(owner)
+    try {
       sessions.get(owner)?.link.close('ended')
       const mine = open.get(owner)
       open.delete(owner)
       for (const shut of [...(mine ?? [])]) shut()
-    }
+    } finally { leaving.delete(owner) }
   }
   return { take, gone }
 }

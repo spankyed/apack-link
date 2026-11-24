@@ -225,9 +225,9 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 ### What may be seen
 
 - **What caused a frame crosses with it.** `send(frame, { cause })`, and `onFrame` hears the cause.
-- **A tap never sees what a frame carries.** `onTraffic` is told of each frame out and in: its direction,
-  number, kind, id, name, size and cause. Of one sent `{ private: true }`, only that it crossed, its number and
-  its size.
+- **A tap never sees what a frame carries.** `onTraffic` is told of each frame that begins after it is added, out
+  and in: its direction, number, kind, id, name, size and cause. Of one sent `{ private: true }`, only that it
+  crossed, its number and its size. Removing the last tap turns tapping off until another is added.
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and what is
   thrown for a frame that cannot be encoded is the link's own.
 

@@ -343,10 +343,10 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 - **Tap.** `onTraffic(seen)` is told of each frame as it is numbered to go out, and as it is taken in: direction,
   number, kind, id, name (a tell's `to`, an ask's name, a view's name), bytes of its text, and cause. Never what it
   carries. `onTraffic`, `onFrame` and `onEnd` each return an unsubscribe function; when the last tap is removed,
-  tapping stops until another is added. Incoming sizes are measured directly from the arrived message (`Codec.sizes`)
-  without encoding it again, falling back to encoding only for custom codecs that omit `sizes`. A tap that throws is
-  the tap's to answer for; the link goes on. Where an incoming frame's size cannot be measured (such as a tap added
-  partway through a frame in parts), the tap still sees the frame with `size` omitted rather than invented.
+  tapping stops until another is added. A tap is told of frames that begin after it is added, so a frame in parts
+  that had already begun before the tap was added is not half-counted. A codec encodes what it decodes; if
+  re-encoding an arriving entry throws, the error goes to `thrown`, that one tap event is skipped, and the frame is
+  still handed over as normal. A tap that throws is the tap's to answer for; the link goes on.
 - **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
   told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
   in. The frame itself reaches the other end as any other does.

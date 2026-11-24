@@ -106,11 +106,11 @@ export type Traffic =
     readonly kind: Frame['kind']
     readonly id?: number
     readonly name?: string
-    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. Absent if it could not be measured. */
-    readonly size?: number
+    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. */
+    readonly size: number
     readonly cause?: string
   }
-  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size?: number }
+  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size: number }
 
 /** What an end says of itself. None takes a number. */
 /**
@@ -299,9 +299,9 @@ const aboutOf = (frame: Frame, how: Sending): About => ({
   private: how.private === true,
 })
 /** A frame crossing, as a tap is told of it: of a private one, nothing but that it crossed. */
-const seen = (direction: 'out' | 'in', seq: number, size: number | undefined, about: About): Traffic => about.private
-  ? { direction, seq, private: true, ...(size === undefined ? {} : { size }) }
-  : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), ...(size === undefined ? {} : { size }), ...(about.cause === undefined ? {} : { cause: about.cause }) }
+const seen = (direction: 'out' | 'in', seq: number, size: number, about: About): Traffic => about.private
+  ? { direction, seq, private: true, size }
+  : { direction, seq, kind: about.kind, ...(about.id === undefined ? {} : { id: about.id }), ...(about.name === undefined ? {} : { name: about.name }), size, ...(about.cause === undefined ? {} : { cause: about.cause }) }
 
 /** A frame encoded, with what is told of it and, for a view's result, which view. `size` includes its cause. */
 export interface Ready { encoded: Message; size: number; causeSize: number; about: About; readonly view?: number }
@@ -382,8 +382,8 @@ export interface State {
   watching?: { readonly timer: number; readonly on: number; readonly asked: boolean }
   /** The last number given to something put on a clock. */
   timers: number
-  /** Each message being taken, the last begun last: what it held, how far it has been taken, the message, and cached entry sizes when tapped. */
-  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message; sizes?: readonly number[] }>
+  /** Each message being taken, the last begun last: what it held, how far it has been taken, and the message itself. */
+  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message }>
 }
 
 /** What an end holds before anything has happened. */
@@ -443,6 +443,8 @@ export type Effect =
   | { readonly do: 'hand'; readonly frame: Frame; readonly cause?: string; readonly traffic?: Traffic }
   /** Tell whoever is told of frames crossing. */
   | { readonly do: 'traffic'; readonly traffic: Traffic }
+  /** Report an error thrown by caller-supplied code (such as a codec that cannot re-encode what it decoded). */
+  | { readonly do: 'report'; readonly error: unknown }
   /** Say the link has closed, and why. */
   | { readonly do: 'ended'; readonly ending: Ending }
 
@@ -849,7 +851,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     out.push({
       do: 'hand', frame,
       ...(cause === undefined ? {} : { cause }),
-      ...(s.tapped ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
+      ...(s.tapped && size !== undefined ? { traffic: seen('in', first, size, aboutOf(frame, { ...(cause === undefined ? {} : { cause }), private: private_ })) } : {}),
     })
   }
 
@@ -874,14 +876,12 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     while (taking.at < taking.said.length) {
       // Something taken may end the link, or put it on another connection: then the rest is not this one's.
       if (s.ending || s.now?.id !== taking.on) { s.taking.pop(); return }
-      const index = taking.at++
-      const entry = taking.said[index]
+      const entry = taking.said[taking.at++]
       const measure = (): number | undefined => {
-        if (codec.sizes) {
-          taking.sizes ??= codec.sizes(taking.message)
-          return taking.sizes?.[index]
+        try { return sizeOf(codec.encode(entry)) } catch (error) {
+          out.push({ do: 'report', error })
+          return undefined
         }
-        try { return sizeOf(codec.encode(entry)) } catch { return undefined }
       }
       if (take(s.now, entry, measure)) return
     }

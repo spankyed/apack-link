@@ -271,9 +271,11 @@ describe('a session has an owner', () => {
     expect([calls, closes3, ended]).toEqual([3, 1, [{ why: 'closed' }, { why: 'closed' }, { why: 'closed' }]])
   })
 
-  it('ends every intervening session an owner\'s onEnd begins before handing over the new one', () => {
+  it('turns away a hello arriving while an owner\'s session is being ended on reload', () => {
     const began: string[] = []
     const ended: string[] = []
+    const interveningSent: Message[] = []
+    let interveningClosed = 0
     let count = 0
     const taking = accept<string>((link) => {
       const id = `s${++count}`
@@ -282,7 +284,7 @@ describe('a session has an owner', () => {
         ended.push(id)
         if (id === 's1') {
           let onData: ((message: Message) => void) | undefined
-          taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
+          taking.take({ send: (m) => { interveningSent.push(m) }, onData: (h) => { onData = h }, onClose: () => {}, close: () => { interveningClosed++ } }, 'a')
           onData!(JSON.stringify([{ link: 1, session: 'intervening', taken: 0 }]))
         }
       })
@@ -294,14 +296,17 @@ describe('a session has an owner', () => {
     }
     connect('first')
     connect('second')
-    // Both 's1' and the intervening 's2' ended before 's3' (the new session) was handed over.
-    expect(began).toEqual(['s1', 's2', 's3'])
-    expect(ended).toEqual(['s1', 's2'])
+    // The intervening hello was turned away as lost; 's1' ended and 'second' became 's2' cleanly in one pass.
+    expect(began).toEqual(['s1', 's2'])
+    expect(ended).toEqual(['s1'])
+    expect(interveningClosed).toBe(1)
+    expect(interveningSent.map((m) => JSON.parse(m as string))).toEqual([[expect.objectContaining({ link: 1 }), { lost: true }]])
   })
 
-  it('leaves no session for an owner said to be gone even if onEnd triggers a hello on another open connection', () => {
+  it('leaves no session for an owner said to be gone even if onEnd triggers a hello or re-entrant take', () => {
     let onData2: ((message: Message) => void) | undefined
     let closes2 = 0
+    let closes3 = 0
     const began: string[] = []
     const ended: string[] = []
     let count = 0
@@ -310,39 +315,36 @@ describe('a session has an owner', () => {
       began.push(id)
       link.onEnd(() => {
         ended.push(id)
-        if (id === 's1') onData2?.(JSON.stringify([{ link: 1, session: 'reentrant', taken: 0 }]))
+        if (id === 's1') {
+          // A nested `gone` does not clear the leaving guard early, so neither a subsequent `take`+hello nor a hello
+          // on an already-open connection can begin another session while `gone` is under way.
+          taking.gone('a')
+          let onData4: ((message: Message) => void) | undefined
+          taking.take({ send: () => {}, onData: (h) => { onData4 = h }, onClose: () => {}, close: () => {} }, 'a')
+          onData4?.(JSON.stringify([{ link: 1, session: 'after-nested-gone', taken: 0 }]))
+          onData2?.(JSON.stringify([{ link: 1, session: 'reentrant', taken: 0 }]))
+        }
       })
     })
     let onData1: ((message: Message) => void) | undefined
     taking.take({ send: () => {}, onData: (h) => { onData1 = h }, onClose: () => {}, close: () => {} }, 'a')
+    // Already-open connection that tries to say hello during `onEnd` AND whose close fires a re-entrant `take`.
     taking.take({ send: () => {}, onData: (h) => { onData2 = h }, onClose: () => {}, close: () => { closes2++ } }, 'a')
+    taking.take({
+      send: () => {},
+      onData: () => {},
+      onClose: () => {},
+      close: () => {
+        taking.take({ send: () => {}, onData: () => {}, onClose: () => {}, close: () => { closes3++ } }, 'a')
+      },
+    }, 'a')
     onData1!(JSON.stringify([{ link: 1, session: 'first', taken: 0 }]))
     taking.gone('a')
-    // Every session begun for 'a' has ended, and the second connection is closed.
-    expect(ended).toEqual(began)
-    expect(closes2).toBeGreaterThanOrEqual(1)
-  })
-
-  it('throws instead of spinning forever when onEnd keeps taking new sessions for an owner being ended or replaced', () => {
-    let seq = 0
-    const spin = (trigger: (taking: ReturnType<typeof accept<string>>, feed: (session: string) => void) => void) => {
-      const taking = accept<string>((link) => {
-        link.onEnd(() => {
-          let onData: ((message: Message) => void) | undefined
-          taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
-          onData!(JSON.stringify([{ link: 1, session: `loop-${++seq}`, taken: 0 }]))
-        })
-      })
-      const feed = (session: string) => {
-        let onData: ((message: Message) => void) | undefined
-        taking.take({ send: () => {}, onData: (h) => { onData = h }, onClose: () => {}, close: () => {} }, 'a')
-        onData!(JSON.stringify([{ link: 1, session, taken: 0 }]))
-      }
-      feed('first')
-      trigger(taking, feed)
-    }
-    expect(() => spin((taking) => taking.gone('a'))).toThrow(/kept taking connections/)
-    expect(() => spin((_, feed) => feed('second'))).toThrow(/kept beginning a new session/)
+    // No second session was begun, the open connection was turned away, and the re-entrant take was closed at once.
+    expect(began).toEqual(['s1'])
+    expect(ended).toEqual(['s1'])
+    expect(closes2).toBe(1)
+    expect(closes3).toBe(1)
   })
 })
 

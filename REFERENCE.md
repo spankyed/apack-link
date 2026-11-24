@@ -84,7 +84,7 @@ interface Clock { after(ms: number, run: () => void): () => void }
 ### `Codec`
 
 A list a codec makes is no longer than its parts, one byte between each two, and two more, as JSON's is: a link
-counts on it to cut a batch to what carries it.
+counts on it to cut a batch to what carries it. A codec encodes what it decodes.
 
 ```ts
 interface Codec {
@@ -96,11 +96,6 @@ interface Codec {
   record(fields: ReadonlyArray<readonly [name: string, value: Message]>): Message
   /** What a message holds. Throws for one it did not make. */
   decode(message: Message): unknown
-  /**
-   * Optional: how many bytes each top-level entry of a list message was as it crossed, measured directly from the
-   * message without encoding it again. Used when a tap is listening.
-   */
-  sizes?(message: Message): readonly number[] | undefined
 }
 ```
 
@@ -548,11 +543,11 @@ type Traffic =
     readonly kind: Frame['kind']
     readonly id?: number
     readonly name?: string
-    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. Absent if it could not be measured. */
-    readonly size?: number
+    /** How many bytes it is as it crosses, numbered, with its cause: for a frame in parts, all of its parts. */
+    readonly size: number
     readonly cause?: string
   }
-  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size?: number }
+  | { readonly direction: 'out' | 'in'; readonly seq: number; readonly private: true; readonly size: number }
 ```
 
 ### `Transport`
