@@ -2,7 +2,7 @@
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
 import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Prepared, type Transport } from '../src/index.ts'
-import { auditIndependence, everyOrder, type Schedule } from '@apackdev/orderings'
+import { auditIndependence, everyOrder, type Resource, type Schedule } from '@apackdev/orderings'
 import { droppingMemoryEnds, memoryEnds, model, underModel, type Model } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
@@ -370,7 +370,7 @@ describe('real ends under the model', () => {
     work: () => new Promise(() => {}),
     breaks: () => new Promise(() => {}),
     outside: () => () => {},
-    resource: () => ({}),
+    resource: () => ({}) as Resource,
     read: () => {},
     write: () => {},
     clock: { now: () => 0, monotonic: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) },
