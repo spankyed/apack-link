@@ -1,8 +1,9 @@
 // What a spec of a link is written with, here and anywhere an end of a link is built: two ends in memory whose
 // directions are lanes of a schedule, and the scenarios themselves, to be run over any pair of ends. The schedule
 // that runs a scenario under every order is `@apackdev/orderings`, which whoever uses this entry installs.
-import { dial, listen, type Link, type Listener, type Options } from '../link.ts'
-import { join, type Following, type Port } from '../peer.ts'
+import { dial, listen, type Link, type Listener, type Options, type Prepared, type Sending } from '../link.ts'
+import type { Frame } from '../frames.ts'
+import { join, type Following, type JoinOptions, type Port } from '../peer.ts'
 import { memoryPair, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
@@ -70,7 +71,11 @@ export function scheduledPair(
  */
 export function trackedLink<L extends Link>(link: L, schedule: Schedule, resource: Resource): L {
   const wrapped: Link = {
-    send: (frame, how) => { schedule.write(resource); link.send(frame, how) },
+    send: ((frame: Frame | Prepared, how?: Sending) => {
+      schedule.write(resource)
+      if ('prepared' in frame) link.send(frame)
+      else link.send(frame, how)
+    }) as Link['send'],
     prepare: (frame, how) => { schedule.write(resource); return link.prepare(frame, how) },
     onFrame: (heard) => {
       schedule.write(resource)
@@ -109,7 +114,7 @@ export function trackedLink<L extends Link>(link: L, schedule: Schedule, resourc
  * Joins `link` and `mine` while attributing every peer-hold, port-call, async answer/view callback, and `caughtUp`
  * callback mutation on this end to `resource` for wakeup-tree DPOR.
  */
-export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port {
+export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource, options?: JoinOptions): Port {
   const trackedMine: Port = {
     tell: (to, event, how) => { mine.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => mine.ask(
@@ -137,7 +142,7 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
       }
     },
   }
-  const remote = join(trackedLink(link, schedule, resource), trackedMine)
+  const remote = join(trackedLink(link, schedule, resource), trackedMine, options)
   return {
     tell: (to, event, how) => { schedule.write(resource); remote.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => {

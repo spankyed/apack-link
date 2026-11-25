@@ -23,7 +23,8 @@ export interface Link {
    * bytes. While there is no connection it waits,
    * and leaves on the next. After the link has closed it sends nothing.
    */
-  send(frame: Frame | Prepared, how?: Sending): void
+  send(frame: Frame, how?: Sending): void
+  send(prepared: Prepared): void
   /**
    * Encodes a frame now, to be sent later: throws what `send` would, sending nothing, so that what is held
    * is refused where it was said. What comes back is what the frame was when it was prepared, whatever becomes of
@@ -76,8 +77,14 @@ export interface Listener extends Link {
   carry(transport: Transport): void
 }
 
-/** A frame encoded by a link, to be sent by it later: what `prepare` returns. It says the frame's kind and nothing else. */
-export interface Prepared { readonly prepared: Frame['kind'] }
+declare const PREPARED: unique symbol
+
+/** A frame encoded by a link, to be sent by it later: what `prepare` returns. It says the frame's kind and encoded byte size (including cause), and nothing else. */
+export interface Prepared {
+  readonly [PREPARED]: true
+  readonly prepared: Frame['kind']
+  readonly size: number
+}
 
 export interface Options {
   /** What puts the batch off until the end of the turn. A microtask unless given; a spec gives a schedule's lane. */
@@ -88,7 +95,7 @@ export interface Options {
    * before the link ends `overrun`. `frame`: how many bytes one frame and its cause may be, past which it is
    * refused where it is sent; 64 MiB unless given, and 1024 at least.
    */
-  bound?: { readonly kept?: Size; readonly waiting?: Size; readonly frame?: number }
+  bound?: { readonly kept?: Partial<Size>; readonly waiting?: Partial<Size>; readonly frame?: number }
   /**
    * For a connection that can go quiet without closing: how long a connection may be quiet while this end is owed
    * something, and the clock that says when that long has passed. Without it, only a connection closing says the
@@ -338,11 +345,12 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
 
   const made: Listener = {
     prepare: (frame, how = {}) => {
-      const token: Prepared = { prepared: frame.kind }
-      prepared.set(token, ready(set, frame, how))
+      const one = ready(set, frame, how)
+      const token = { prepared: frame.kind, size: one.size } as Prepared
+      prepared.set(token, one)
       return token
     },
-    send: (what, how = {}) => {
+    send: ((what: Frame | Prepared, how: Sending = {}) => {
       // Put into text and measured before it is numbered, here or where it was prepared: a frame that cannot be
       // sent is refused alone, and leaves no gap behind it.
       let one: Ready
@@ -353,7 +361,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         one = was
       } else one = ready(set, what, how)
       tell({ is: 'send', one, backlog: backlog(state.now?.id) })
-    },
+    }) as Link['send'],
     onFrame: (hear) => register(hears, hear),
     onTraffic: (seen) => {
       const was = taps.length

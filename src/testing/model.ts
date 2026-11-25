@@ -15,7 +15,7 @@
 // what it is sent, what it hands over and how it ends, and finds the first of those the model could not have done.
 import { json, type Codec } from '../codec.ts'
 import type { Frame } from '../frames.ts'
-import type { Bye, Ending, Link, Prepared } from '../link.ts'
+import type { Bye, Ending, Link, Prepared, Sending } from '../link.ts'
 
 export interface Model {
   /** Puts a link under the model, before anything is sent on it or listens to it. What comes back is the link to use. */
@@ -205,7 +205,7 @@ export function model(options: ModelOptions = {}): Model {
           prepared.set(token, noted(frame, how?.cause))
           return token
         },
-        send: (what, how) => {
+        send: ((what: Frame | Prepared, how?: Sending) => {
           // Noted as it was when it was sent, and only once the link has taken it: one refused was never sent, and
           // is refused by the link, as it refuses it. One the link ended on was not sent either.
           let one: { readonly frame: Frame; readonly cause?: string } | undefined
@@ -214,9 +214,10 @@ export function model(options: ModelOptions = {}): Model {
             prepared.delete(what)
           } else try { one = noted(what, how?.cause) } catch { /* the link's to refuse */ }
           const was = end.ended
-          link.send(what, how)
+          if ('prepared' in what) link.send(what)
+          else link.send(what, how)
           if (one && !was && !end.ended) sent(end, one.frame, one.cause)
-        },
+        }) as Link['send'],
         close: (bye) => {
           if (bye && !end.ended) end.byes.push(bye)
           link.close(bye)

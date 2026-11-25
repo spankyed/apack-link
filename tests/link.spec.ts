@@ -485,7 +485,7 @@ describe('a frame larger than a frame may be', () => {
     expect(() => a.prepare(tell('x'.repeat(1024 - around + 1)))).toThrow(RangeError)
     expect(() => a.prepare(tell('small'), { cause: 'x'.repeat(1024) })).toThrow(RangeError)
     expect(() => a.prepare(tell({ big: 1n }))).toThrow(TypeError)
-    expect(a.prepare(tell('x'.repeat(1024 - around)))).toEqual({ prepared: 'tell' })
+    expect(a.prepare(tell('x'.repeat(1024 - around)))).toEqual({ prepared: 'tell', size: 1024 })
     await turn()
     expect(heard).toEqual([])
   })
@@ -536,9 +536,14 @@ describe('a frame prepared', () => {
     listen(right).onFrame((frame, cause) => { heard.push({ frame, cause }) })
     const event = { said: 'first' }
     const ready = a.prepare(tell(event), { cause: 'when prepared' })
+    expect(ready.size).toBeGreaterThan(0)
     event.said = 'changed'
     a.send(tell('before'))
-    a.send(ready, { cause: 'when sent' })
+    // @ts-expect-error Sending options are rejected at compile time when sending a Prepared frame.
+    void (() => { a.send(ready, { cause: 'when sent' }) })
+    // @ts-expect-error Prepared is branded and cannot be forged as a plain object literal.
+    void (() => { a.send({ prepared: 'tell', size: 1 }) })
+    a.send(ready)
     a.send(tell('after'))
     await turn()
     expect(heard).toEqual([{ frame: tell('before'), cause: undefined }, { frame: tell({ said: 'first' }), cause: 'when prepared' }, { frame: tell('after'), cause: undefined }])

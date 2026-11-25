@@ -1,7 +1,7 @@
 export { json, type Codec } from './codec.ts'
 export { asFrame, bytesOf, type Failure, type Frame, type Id, type Sent } from './frames.ts'
 export { accept, type Accepting, dial, LEAST, LINK, listen, timers, type Bye, type Clock, type Ending, type Link, type Listener, type Options, type Prepared, type Reopen, type Sending, type Size, type Traffic } from './link.ts'
-export { join, type Following, type Outcome, type Port } from './peer.ts'
+export { join, type Following, type HoldStall, type JoinOptions, type Outcome, type Port } from './peer.ts'
 export { port, type MessagePortLike } from './port.ts'
 export { socket, type SocketOptions, type WebSocketLike } from './socket.ts'
 export { stream, type DuplexLike, type StreamOptions } from './stream.ts'
