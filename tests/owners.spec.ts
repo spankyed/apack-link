@@ -596,4 +596,67 @@ describe('owners over real WebSockets', () => {
     taking.gone('reopen-owner')
     await rest()
   })
+
+  it('accept.close() closes all sessions and silent sockets with restarting or ended, and rejects subsequent take()', async () => {
+    const backendLinks: Array<{ owner: string; ended: Ending[] }> = []
+    const taking = accept<string>((link, owner) => {
+      const entry = { owner, ended: [] as Ending[] }
+      backendLinks.push(entry)
+      link.onEnd((e) => { entry.ended.push(e) })
+    })
+    currentHandler = (ws, owner) => { taking.take(socket(ws), owner) }
+
+    const win1Ended: Ending[] = []
+    let win1Opens = 0
+    const win1 = dial(() => { win1Opens++; return socket(openSocket('w1')) }, { reopen: { clock: timers, first: 15, most: 50 } })
+    win1.onEnd((e) => { win1Ended.push(e) })
+
+    const win2Ended: Ending[] = []
+    const win2 = dial(socket(openSocket('w2')))
+    win2.onEnd((e) => { win2Ended.push(e) })
+
+    // Silent socket that never sends hello
+    const silent = openSocket('silent')
+    await eventOnce(silent, 'open')
+    let silentClosed = false
+    silent.on('close', () => { silentClosed = true })
+
+    await until(() => backendLinks.length === 2)
+
+    // Planned restart: sends `bye: 'restarting'` to every active session and closes silent sockets too.
+    // A reopening dialler (`win1`) stays alive to reconnect (until a new backend answers with a new session -> lost),
+    // while a single-connection dialler (`win2`) ends with `{ why: 'goodbye', bye: 'restarting' }`.
+    taking.close('restarting')
+    await until(() => win2Ended.length === 1 && silentClosed && backendLinks.every((b) => b.ended.length === 1))
+    expect(win2Ended).toEqual([{ why: 'goodbye', bye: 'restarting' }])
+    expect(backendLinks.map((b) => b.ended)).toEqual([[{ why: 'closed' }], [{ why: 'closed' }]])
+    // Reopening dialler does NOT end on `restarting` and attempts to reopen.
+    await until(() => win1Opens >= 2)
+    expect(win1Ended).toEqual([])
+    win1.close('ended')
+
+    // Subsequent `take()` after `close()` closes the incoming transport immediately without invoking `onLink`.
+    const afterClose = openSocket('after')
+    let afterClosed = false
+    afterClose.on('close', () => { afterClosed = true })
+    await until(() => afterClosed)
+    expect(backendLinks).toHaveLength(2)
+
+    // Calling `close()` again is a safe idempotent no-op.
+    expect(() => taking.close('ended')).not.toThrow()
+
+    // Separate accept instance with `close('ended')` ends reopening diallers permanently.
+    const endedTaking = accept<string>(() => {})
+    currentHandler = (ws, owner) => { endedTaking.take(socket(ws), owner) }
+    const win3Ended: Ending[] = []
+    let win3Opens = 0
+    const win3 = dial(() => { win3Opens++; return socket(openSocket('w3')) }, { reopen: { clock: timers, first: 15, most: 50 } })
+    win3.onEnd((e) => { win3Ended.push(e) })
+    await until(() => win3Opens === 1)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    endedTaking.close('ended')
+    await until(() => win3Ended.length === 1)
+    expect(win3Ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
+    expect(win3Opens).toBe(1)
+  })
 })

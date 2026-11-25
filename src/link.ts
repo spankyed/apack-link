@@ -392,7 +392,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
   return { made, hand }
 }
 
-/** What `accept` returns: what takes each connection with whose it is, and what says an owner will not be back. */
+/** What `accept` returns: what takes each connection with whose it is, says an owner will not be back, and closes all sessions. */
 export interface Accepting<Owner> {
   /**
    * Takes a connection, and whose it is. Its first word finds it its link: its owner's session where it says that
@@ -406,6 +406,12 @@ export interface Accepting<Owner> {
    * taken again is an owner met for the first time.
    */
   gone(owner: Owner): void
+  /**
+   * Closes every active session with `bye` (`'restarting'` so diallers reconnect, `'ended'` when shutting down for
+   * good, or omitted for no goodbye), closes every open connection held by `accept`, and closes any transport passed
+   * to `take` after.
+   */
+  close(bye?: Bye): void
 }
 
 /**
@@ -430,12 +436,14 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
   const sessions = new Map<Owner, Session>()
   /** What closes each connection taken as an owner's and still open, a session's or not yet anybody's. */
   const open = new Map<Owner, Set<() => void>>()
-  /** Owners whose current session is being closed for a reload, and owners currently being torn down by `gone`. */
+  /** Owners whose current session is being closed for a reload, and owners currently being torn down by `gone`/`close`. */
   const ending = new Set<Owner>()
   const leaving = new Set<Owner>()
+  let closedAll = false
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
   const rawLimit = rawLimitOf(setupOf('listens', 'handed', '', options))
   const take = (transport: Transport, owner: Owner): void => {
+    if (closedAll) { try { transport.close() } catch { /* it has gone already */ } return }
     // Found when the connection arrives, not when a frame is too long for it.
     wideEnough(transport, LEAST)
     if (leaving.has(owner)) { try { transport.close() } catch { /* it has gone already */ } return }
@@ -494,7 +502,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
         turnAway(isObject(said) && typeof said.link === 'number' && Number.isSafeInteger(said.link) && said.link >= 1 && said.link !== LINK ? 'which link' : 'nothing')
         return
       }
-      if (ending.has(owner) || leaving.has(owner)) { turnAway('lost'); return }
+      if (closedAll || ending.has(owner) || leaving.has(owner)) { turnAway('lost'); return }
       const had = sessions.get(owner)
       if (had?.id === said.session) had.hand(relay)
       // Going on with a session this owner does not have: another owner's, one from before this end began, or one
@@ -523,20 +531,26 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
           reportError(options, error)
           return
         }
-        hand(relay)
+        if (!closed) hand(relay)
       }
       for (const heard of hears) heard(message)
     })
   }
-  const gone = (owner: Owner): void => {
+  const dropOwner = (owner: Owner, bye?: Bye): void => {
     if (leaving.has(owner)) return
     leaving.add(owner)
     try {
-      sessions.get(owner)?.link.close('ended')
+      sessions.get(owner)?.link.close(bye)
       const mine = open.get(owner)
       open.delete(owner)
       for (const shut of [...(mine ?? [])]) shut()
     } finally { leaving.delete(owner) }
   }
-  return { take, gone }
+  const gone = (owner: Owner): void => { dropOwner(owner, 'ended') }
+  const close = (bye?: Bye): void => {
+    if (closedAll) return
+    closedAll = true
+    for (const owner of new Set<Owner>([...sessions.keys(), ...open.keys()])) dropOwner(owner, bye)
+  }
+  return { take, gone, close }
 }

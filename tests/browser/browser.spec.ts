@@ -1,6 +1,7 @@
 // Real Chromium browser + Web Worker tests for MessagePort (`port()`) and WebSocket (`socket()`).
 import { describe, expect, it } from 'vitest'
 import { dial, join, port, socket, timers, type Ending, type Outcome } from '../../src/index.js'
+import { msgpack } from '../support/msgpack.js'
 
 const until = async (check: () => boolean, ms = 5000): Promise<void> => {
   const end = Date.now() + ms
@@ -135,6 +136,35 @@ describe('real browser environment', () => {
     expect(missingOver).toEqual([{ kind: 'gone', message: 'No such view' }])
 
     sub.stop()
+    link.close('ended')
+  })
+
+  it('carries binary Uint8Array frames (msgpack) over a real browser WebSocket using arraybuffer binaryType', async () => {
+    const info = await (await fetch('/__apack_link_ws')).json() as { url: string }
+    const owner = `browser-bin-${Math.random().toString(36).slice(2)}`
+    const ws = new WebSocket(`${info.url}/?owner=${owner}&codec=msgpack`)
+    const transport = socket(ws)
+    expect(ws.binaryType).toBe('arraybuffer')
+
+    const link = dial(transport, { codec: msgpack })
+    const toServer = join(link, {
+      tell: () => {},
+      ask: () => () => {},
+      follow: () => ({ stop: () => {} }),
+    })
+
+    const progress: unknown[] = []
+    const outcomes: Outcome[] = []
+    const input = new Uint8Array([0, 1, 42, 128, 255])
+    toServer.ask('bin', 'INVERT', input, (u) => { progress.push(u) }, (o) => { outcomes.push(o) })
+
+    await until(() => outcomes.length === 1)
+    expect(progress).toEqual([{ gotBytes: true, len: 5 }])
+    expect(outcomes[0]?.ok).toBe(true)
+    if (outcomes[0]?.ok) {
+      expect(outcomes[0].value).toBeInstanceOf(Uint8Array)
+      expect([...(outcomes[0].value as Uint8Array)]).toEqual([255, 254, 213, 127, 0])
+    }
     link.close('ended')
   })
 })

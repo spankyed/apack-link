@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config'
 import { playwright } from '@vitest/browser-playwright'
 import { WebSocketServer } from 'ws'
 import { accept, join, socket } from './src/index.js'
+import { msgpack } from './tests/support/msgpack.js'
 
 /** Starts an ephemeral Node WebSocketServer running `accept` + `join` for real browser WebSocket tests. */
 const linkWsServerPlugin = () => {
@@ -57,9 +58,25 @@ const linkWsServerPlugin = () => {
         })
       })
 
+      const takingBinary = accept<string>((link) => {
+        join(link, {
+          tell: () => {},
+          ask: (_to, _name, args, heard, ended) => {
+            heard({ gotBytes: args instanceof Uint8Array, len: args instanceof Uint8Array ? args.byteLength : -1 })
+            ended({ ok: true, value: args instanceof Uint8Array ? Uint8Array.from(args, (b) => b ^ 0xff) : args })
+            return () => {}
+          },
+          follow: () => ({ stop: () => {} }),
+        })
+      }, { codec: msgpack })
+
       wss.on('connection', (ws, req) => {
         const parsed = new URL(req.url ?? '/', `http://127.0.0.1:${wsPort}`)
         const owner = parsed.searchParams.get('owner') ?? `anon-${Math.random()}`
+        if (parsed.searchParams.get('codec') === 'msgpack') {
+          takingBinary.take(socket(ws), owner)
+          return
+        }
         socketsByOwner.set(owner, ws)
         taking.take(socket(ws), owner)
       })

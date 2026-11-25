@@ -26,7 +26,7 @@ accept<Owner>(onLink: (link: Link, owner: Owner) => void, options?: Options): Ac
 
 ### `Accepting`
 
-What `accept` returns: what takes each connection with whose it is, and what says an owner will not be back.
+What `accept` returns: what takes each connection with whose it is, says an owner will not be back, and closes all sessions.
 
 ```ts
 interface Accepting<Owner> {
@@ -42,6 +42,12 @@ interface Accepting<Owner> {
    * taken again is an owner met for the first time.
    */
   gone(owner: Owner): void
+  /**
+   * Closes every active session with `bye` (`'restarting'` so diallers reconnect, `'ended'` when shutting down for
+   * good, or omitted for no goodbye), closes every open connection held by `accept`, and closes any transport passed
+   * to `take` after.
+   */
+  close(bye?: Bye): void
 }
 ```
 

@@ -89,6 +89,8 @@ const backend = accept((link, owner) => { /* join(link, backendPort) */ })
 server.on('connection', (ws, request) => backend.take(socket(ws), windowOf(request)))
 // When the host learns a window will not be back:
 backend.gone(window)
+// When the backend itself restarts or shuts down:
+backend.close('restarting') // or 'ended'
 ```
 
 ### A link by itself
