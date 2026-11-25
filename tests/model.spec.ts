@@ -1,7 +1,7 @@
 // The model every scenario's ends are held to, shown able to fail: ends that are not a link's, each wrong in one
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
-import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
+import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Prepared, type Transport } from '../src/index.ts'
 import { auditIndependence, everyOrder, type Schedule } from '@apackdev/orderings'
 import { droppingMemoryEnds, memoryEnds, model, underModel, type Model } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
@@ -16,8 +16,8 @@ const puppet = (refuses: (frame: Frame) => boolean = () => false) => {
     hand: (frame: Frame, cause?: string) => { for (const hear of hears) hear(frame, cause) },
     end: (ending: Ending) => { for (const ended of ends) ended(ending) },
     link: {
-      send: (frame) => { if (!('prepared' in frame) && refuses(frame)) throw new RangeError('refused') },
-      prepare: (frame) => ({ prepared: frame.kind }),
+      send: ((frame: Frame | Prepared) => { if (!('prepared' in frame) && refuses(frame)) throw new RangeError('refused') }) as Link['send'],
+      prepare: (frame) => ({ prepared: frame.kind, size: 1 }) as Prepared,
       onFrame: (hear) => { hears.push(hear); return () => {} },
       onTraffic: () => () => {},
       onEnd: (ended) => { ends.push(ended); return () => {} },

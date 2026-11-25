@@ -203,6 +203,24 @@ type Frame =
   | { readonly kind: 'over'; readonly id: Id; readonly failure: Failure }
 ```
 
+### `HoldStall`
+
+Payload-free diagnostic snapshot reported when the peer hold exceeds `bound` because one or more views did not
+catch up. Never carries frame payloads, arguments, or causes.
+
+```ts
+interface HoldStall {
+  /** Ids of the stalled view(s) still blocking the oldest held round, which were ended `over` and stopped. */
+  readonly views: readonly Id[]
+  /** Frames and encoded bytes waiting in the hold when the bound was exceeded. */
+  readonly held: Size
+  /** Number of held rounds waiting when the bound was exceeded. */
+  readonly rounds: number
+  /** The configured hold bound that was exceeded. */
+  readonly bound: Size
+}
+```
+
 ### `Id`
 
 A number one end chose, which names an ask or a view for as long as it lasts. Each end numbers its own.
@@ -216,7 +234,31 @@ type Id = number
 Joins a system to the other end of a link: `mine` is what this system offers, and what is returned is what the other does.
 
 ```ts
-join(link: Link, mine: Port): Port
+join(link: Link, mine: Port, options?: JoinOptions): Port
+```
+
+### `JoinOptions`
+
+Optional controls for `join`: hold bounds, payload-free stall diagnostics, and unexpected `caughtUp` error handling.
+
+```ts
+interface JoinOptions {
+  /**
+   * Maximum frames and encoded bytes that may wait in the hold for views to catch up. Defaults to 16 384 frames and
+   * 64 MiB. When exceeded, the stalled view(s) still blocking the oldest round are ended `over` and stopped so the
+   * link and all healthy views continue without ever releasing a frame ahead of a live view. Set a field to
+   * `Infinity` to leave that dimension unbounded.
+   */
+  readonly bound?: Partial<Size>
+  /** Called with payload-free diagnostics whenever stalled view(s) are ended to keep the hold within `bound`. */
+  readonly onStall?: (stall: HoldStall) => void
+  /**
+   * Handed what a view's `caughtUp` threw (or what a stalled view's `stop` or `onStall` threw). Without it,
+   * synchronous `tell` propagates what `caughtUp` threw to its caller, and throws during `ask`, `follow`, or
+   * incoming-ask callbacks are thrown again in a turn of their own.
+   */
+  readonly thrown?: (error: unknown) => void
+}
 ```
 
 ### `json`
@@ -248,7 +290,8 @@ interface Link {
    * bytes. While there is no connection it waits,
    * and leaves on the next. After the link has closed it sends nothing.
    */
-  send(frame: Frame | Prepared, how?: Sending): void
+  send(frame: Frame, how?: Sending): void
+  send(prepared: Prepared): void
   /**
    * Encodes a frame now, to be sent later: throws what `send` would, sending nothing, so that what is held
    * is refused where it was said. What comes back is what the frame was when it was prepared, whatever becomes of
@@ -364,7 +407,7 @@ interface Options {
    * before the link ends `overrun`. `frame`: how many bytes one frame and its cause may be, past which it is
    * refused where it is sent; 64 MiB unless given, and 1024 at least.
    */
-  bound?: { readonly kept?: Size; readonly waiting?: Size; readonly frame?: number }
+  bound?: { readonly kept?: Partial<Size>; readonly waiting?: Partial<Size>; readonly frame?: number }
   /**
    * For a connection that can go quiet without closing: how long a connection may be quiet while this end is owed
    * something, and the clock that says when that long has passed. Without it, only a connection closing says the
@@ -438,10 +481,14 @@ interface Port {
 
 ### `Prepared`
 
-A frame encoded by a link, to be sent by it later: what `prepare` returns. It says the frame's kind and nothing else.
+A frame encoded by a link, to be sent by it later: what `prepare` returns. It says the frame's kind and encoded byte size (including cause), and nothing else.
 
 ```ts
-interface Prepared { readonly prepared: Frame['kind'] }
+interface Prepared {
+  readonly [PREPARED]: true
+  readonly prepared: Frame['kind']
+  readonly size: number
+}
 ```
 
 ### `Reopen`
@@ -895,7 +942,7 @@ Joins `link` and `mine` while attributing every peer-hold, port-call, async answ
 callback mutation on this end to `resource` for wakeup-tree DPOR.
 
 ```ts
-trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port
+trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource, options?: JoinOptions): Port
 ```
 
 ### `trackedLink`
