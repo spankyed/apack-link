@@ -8,7 +8,7 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, firstOf, isHello, isObject, LEAST, LINK, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
+import { core, firstOf, isHello, isObject, LEAST, LINK, rawLimitOf, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
 import { json, type Codec } from './codec.ts'
 import type { Frame } from './frames.ts'
 import type { Message, Transport } from './transport.ts'
@@ -324,9 +324,10 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     let carried = false
     transport.onClose(() => { if (carried) tell({ is: 'closed', on }); else closed = true })
     transport.onData((message) => { if (carried) deliver(message); else queued.push(message) })
-    carried = true
     tell({ is: 'carry', on, ...(transport.most === undefined ? {} : { most: transport.most }) })
-    for (const message of queued) deliver(message)
+    let at = 0
+    while (at < queued.length) deliver(queued[at++]!)
+    carried = true
     if (closed) tell({ is: 'closed', on })
   }
   const carry = (transport: Transport): void => {
@@ -366,7 +367,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     },
     close: (bye) => { tell({ is: 'close', ...(bye ? { bye } : {}) }) },
     carry,
-    kept: () => state.kept.length,
+    kept: () => state.kept.length - state.keptHead,
     awaiting: () => {
       tell({ is: 'owed' })
       let settled = false
@@ -376,7 +377,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         tell({ is: 'settled' })
       }
     },
-    waiting: () => state.waiting.length,
+    waiting: () => state.waiting.length - state.waitingHead,
   }
   if (typeof over === 'object') carry(over)
   else if (typeof over === 'function') carry(over())
@@ -425,7 +426,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
   const ending = new Set<Owner>()
   const leaving = new Set<Owner>()
   // What a link would refuse to be made with is refused here, and not where the first connection says hello.
-  setupOf('listens', 'handed', '', options)
+  const rawLimit = rawLimitOf(setupOf('listens', 'handed', '', options))
   const take = (transport: Transport, owner: Owner): void => {
     // Found when the connection arrives, not when a frame is too long for it.
     wideEnough(transport, LEAST)
@@ -465,7 +466,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       closed = true
       untrack()
       try {
-        if (saying !== 'nothing') transport.send(codec.list([codec.encode({ link: LINK, session: crypto.randomUUID(), taken: 0 } satisfies Hello), ...(saying === 'lost' ? [codec.encode({ lost: true } satisfies Lost)] : [])]))
+        if (saying !== 'nothing') transport.send(codec.list([codec.encode({ link: LINK, session: '', taken: 0 } satisfies Hello), ...(saying === 'lost' ? [codec.encode({ lost: true } satisfies Lost)] : [])]))
         transport.close()
       } catch { /* it has gone already, which says as much */ }
     }
@@ -478,11 +479,11 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       if (closed) return
       if (!first) { for (const heard of hears) heard(message); return }
       first = false
-      const said = firstOf(codec, message)
+      const said = firstOf(codec, message, rawLimit)
       if (!isHello(said)) {
         // Another link's number is answered with this one's, so that the end that opened it ends saying both.
         // Anything else is not a link's, and nothing is said to it.
-        turnAway(isObject(said) && typeof said.link === 'number' && said.link !== LINK ? 'which link' : 'nothing')
+        turnAway(isObject(said) && typeof said.link === 'number' && Number.isSafeInteger(said.link) && said.link >= 1 && said.link !== LINK ? 'which link' : 'nothing')
         return
       }
       if (ending.has(owner) || leaving.has(owner)) { turnAway('lost'); return }
@@ -507,7 +508,7 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
         const session: Session = { id: said.session, link, hand }
         sessions.set(owner, session)
         // A link has ended by the time closing it returns, so the session an owner has is never one that ended.
-        made.onEnd(() => { sessions.delete(owner) })
+        made.onEnd(() => { if (sessions.get(owner) === session) sessions.delete(owner) })
         try { onLink(link, owner) } catch (error) {
           made.close()
           turnAway('lost')

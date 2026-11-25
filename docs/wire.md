@@ -133,5 +133,5 @@ A → B  [{"seq":11,"frame":{"kind":"tell","to":"threads","event":"after"}}]
 B → A  [{"taken":11}]
 A → B  [{"bye":"ended"}]
 A → B  [{"link":1,"session":"session-3","taken":0,"resumes":"session-4"}]
-B → A  [{"link":1,"session":"session-5","taken":0},{"lost":true}]
+B → A  [{"link":1,"session":"","taken":0},{"lost":true}]
 ```

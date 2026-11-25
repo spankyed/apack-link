@@ -1050,6 +1050,92 @@ describe('what is not a frame on the wire', () => {
     expect(heard).toEqual([])
     expect(ended).toEqual([{ why: 'not a frame', size: invalid.byteLength }])
   })
+
+  it('enforces inbound bound.frame and cause limit on whole frames while allowing multi-frame batches whose total exceeds bound.frame', async () => {
+    const [bare, right] = memoryPair()
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const b = listen(right, { bound: { frame: 1024 } })
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    bare.send(hello)
+    // A multi-frame batch of 10 valid 200-byte frames exceeds 1024 bytes total, and must be accepted.
+    const batch = Array.from({ length: 10 }, (_, i) => ({ seq: i + 1, frame: tell('x'.repeat(200)) }))
+    const batchText = JSON.stringify(batch)
+    expect(batchText.length).toBeGreaterThan(2000)
+    bare.send(batchText)
+    await turn()
+    expect(heard).toHaveLength(10)
+    expect(ended).toEqual([])
+    // A single whole frame exceeding bound.frame is rejected as not a frame.
+    const oversized = wire({ seq: 11, frame: tell('y'.repeat(1500)) })
+    bare.send(oversized)
+    await turn()
+    expect(heard).toHaveLength(10)
+    expect(ended).toEqual([{ why: 'not a frame', size: oversized.length }])
+
+    // An inbound cause > 1024 bytes is rejected as not a frame.
+    const { bare: bareCause, ended: endedCause } = facing()
+    bareCause.send(hello)
+    const badCause = wire({ seq: 1, frame: tell('ok'), cause: 'c'.repeat(1025) })
+    bareCause.send(badCause)
+    await turn()
+    expect(endedCause).toEqual([{ why: 'not a frame', size: badCause.length }])
+  })
+
+  it('rejects duplicate hellos mid-stream, mixed-key envelopes, and non-integer link versions as not a frame', async () => {
+    for (const bad of [
+      wire(HELLO),
+      wire({ seq: 1, frame: tell('ok'), here: 0 }),
+      wire({ there: 1, extra: true }),
+      wire({ taken: 0, extra: true }),
+    ]) {
+      const { bare, heard, ended } = facing()
+      bare.send(hello)
+      bare.send(bad)
+      await turn()
+      expect([bad, heard, ended]).toEqual([bad, [], [{ why: 'not a frame', size: bad.length }]])
+    }
+    // Non-positive or non-integer link versions are not a frame (not a version mismatch).
+    for (const badVersion of [0, -1, 1.5]) {
+      const { bare, ended } = facing()
+      const text = wire({ link: badVersion, session: 'x', taken: 0 })
+      bare.send(text)
+      await turn()
+      expect([badVersion, ended]).toEqual([badVersion, [{ why: 'not a frame', size: text.length }]])
+    }
+    // Refuses oversized raw blobs before codec.decode runs.
+    let decoded = 0
+    const countingCodec = { ...json, decode: (m: Message) => { decoded++; return json.decode(m) } }
+    const [bareRaw, rightRaw] = memoryPair()
+    const endedRaw: Ending[] = []
+    listen(rightRaw, { codec: countingCodec, bound: { frame: 1024 } }).onEnd((ending) => { endedRaw.push(ending) })
+    bareRaw.send(hello)
+    await turn()
+    decoded = 0
+    const huge = 'x'.repeat(17 * 1024 * 1024)
+    bareRaw.send(huge)
+    await turn()
+    expect(decoded).toBe(0)
+    expect(endedRaw).toEqual([{ why: 'not a frame', size: huge.length }])
+  })
+
+  it('validates outbound frame shape and cause type locally so bad calls never poison the wire', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const heard: Frame[] = []
+    const ended: Ending[] = []
+    const b = listen(right)
+    b.onFrame((frame) => { heard.push(frame) })
+    b.onEnd((ending) => { ended.push(ending) })
+    expect(() => a.send({ kind: 'ask', id: 0, to: 'x', name: 'A', args: null })).toThrow(TypeError)
+    expect(() => a.send({ kind: 'tell', to: 123 as never, event: 1 })).toThrow(TypeError)
+    expect(() => a.send(tell(1), { cause: 123 as never })).toThrow(TypeError)
+    a.send(tell('clean'))
+    await turn()
+    expect(heard).toEqual([tell('clean')])
+    expect(ended).toEqual([])
+  })
 })
 
 describe('options a link is set with', () => {
@@ -1153,5 +1239,22 @@ describe('what arrives as a connection is carried', () => {
     expect(bHeard).toEqual([tell('after hello')])
     expect(bEnded).toEqual([])
     expect(ended).toEqual([{ why: 'closed' }])
+
+    // Buffered data delivered during onData registration is delivered strictly before data triggered synchronously during carry flush.
+    const b2 = listen(undefined, { later: (run) => run() })
+    const b2Order: unknown[] = []
+    const b2Ended: Ending[] = []
+    b2.onFrame((f) => { if (f.kind === 'tell') b2Order.push(f.event) })
+    b2.onEnd((e) => { b2Ended.push(e) })
+    let onData2: ((message: Message) => void) | undefined
+    let sent2 = false
+    b2.carry({
+      send: () => { if (!sent2) { sent2 = true; onData2?.(wire({ seq: 2, frame: tell('second') })) } },
+      onData: (h) => { onData2 = h; h(wire(HELLO, { seq: 1, frame: tell('first') })) },
+      onClose: () => {},
+      close: () => {},
+    })
+    expect(b2Order).toEqual(['first', 'second'])
+    expect(b2Ended).toEqual([])
   })
 })

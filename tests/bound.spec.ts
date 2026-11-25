@@ -183,4 +183,48 @@ describe('a transport that says how much it has not written', () => {
     await until(() => b.heard.length === 4)
     expect(b.heard.map((frame) => frame.kind === 'tell' && frame.event)).toEqual([1, 2, 3, 4])
   })
+
+  it('does not falsely overrun when taken arrives earlier in the same batch before onFrame sends, nor deadlock when backlog lags past the last taken', async () => {
+    // Mid-batch taken frees room before onFrame runs, so sending from onFrame does not trigger overrun.
+    const [bare, right] = memoryPair()
+    const a = dial(right, { bound: { kept: { frames: 1, size: 1024 }, waiting: { frames: 1, size: 1024 } } })
+    const ended: Ending[] = []
+    a.onEnd((ending) => { ended.push(ending) })
+    a.onFrame(() => { a.send(tell('from-onFrame')) })
+    a.send(tell('kept'))
+    a.send(tell('waiting'))
+    expect([a.kept(), a.waiting()]).toEqual([1, 1])
+    bare.send(JSON.stringify([{ link: 1, session: 'peer', taken: 0 }, { taken: 1 }, { seq: 1, frame: tell('trigger') }]))
+    await turn()
+    expect(ended).toEqual([])
+    expect([a.kept(), a.waiting()]).toEqual([1, 1])
+
+    // Backlog momentarily high when the last taken arrives still probes waiting frames once kept empties, preventing deadlock.
+    const [left2, right2] = memoryPair()
+    let unwritten = 0
+    const a2 = dial({ ...left2, waiting: () => unwritten }, { bound: { kept: { frames: 10, size: 1000 } } })
+    const b2 = listening(right2)
+    a2.send(tell('first'))
+    unwritten = 5000
+    a2.send(tell('second'))
+    a2.send(tell('third'))
+    expect([a2.kept(), a2.waiting()]).toEqual([1, 2])
+    // Even while unwritten stays high, probing 1 frame whenever kept drains to 0 keeps progress moving without deadlock.
+    await until(() => b2.heard.length === 3)
+    expect(b2.heard.map((f) => f.kind === 'tell' && f.event)).toEqual(['first', 'second', 'third'])
+    unwritten = 0
+    await turn()
+    expect([a2.kept(), a2.waiting()]).toEqual([0, 0])
+  })
+
+  it('handles thousands of trickle acks and partial drains without drift', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left, { bound: { kept: { frames: 8, size: 1 << 20 }, waiting: { frames: 5000, size: 1 << 20 } } })
+    const b = listening(right)
+    for (let i = 1; i <= 1200; i++) a.send(tell(i))
+    await until(() => b.heard.length === 1200)
+    await turn()
+    expect([a.kept(), a.waiting()]).toEqual([0, 0])
+    expect(b.heard.map((f) => f.kind === 'tell' && f.event)).toEqual(Array.from({ length: 1200 }, (_, i) => i + 1))
+  })
 })

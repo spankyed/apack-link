@@ -235,36 +235,58 @@ describe('the parts of a frame, as they arrive', () => {
     return { bare, heard, ended }
   }
 
-  it('end the link once they add up to more than a frame may be, however many more are said to be coming', async () => {
+  it('end the link once they add up to more than a frame may be, and reject an impossible part count on the first part', async () => {
     const { bare, heard, ended } = facing()
     const piece = 'x'.repeat(1000)
-    const last = JSON.stringify([part(3, 2, 1_000_000, piece)])
-    bare.send(JSON.stringify([part(1, 0, 1_000_000, piece)]))
-    bare.send(JSON.stringify([part(2, 1, 1_000_000, piece)]))
+    const last = JSON.stringify([part(3, 2, 10, piece)])
+    bare.send(JSON.stringify([part(1, 0, 10, piece)]))
+    bare.send(JSON.stringify([part(2, 1, 10, piece)]))
     await turn()
     expect(ended).toEqual([])
     // The third is past 2048 bytes.
     bare.send(last)
-    for (let at = 3; at < 50; at++) bare.send(JSON.stringify([part(at + 1, at, 1_000_000, piece)]))
+    for (let at = 3; at < 10; at++) bare.send(JSON.stringify([part(at + 1, at, 10, piece)]))
     await turn()
     expect([heard, ended]).toEqual([[], [{ why: 'not a frame', size: last.length }]])
+
+    // Declaring more parts than `bound.frame` bytes can ever hold (each part is >= 1 byte) fails immediately on part 0.
+    const impossible = facing()
+    const first = JSON.stringify([part(1, 0, 1_000_000, piece)])
+    impossible.bare.send(first)
+    await turn()
+    expect([impossible.heard, impossible.ended]).toEqual([[], [{ why: 'not a frame', size: first.length }]])
   })
 
-  it('are taken when they add up to exactly as much as a frame may be', async () => {
+  it('are taken when they add up to exactly as much as a frame may be, counting cause bytes on part 0', async () => {
     const { bare, heard, ended } = facing()
     const frame = tell('x'.repeat(2048 - JSON.stringify(tell('')).length))
     const text = JSON.stringify(frame)
     bare.send(JSON.stringify([part(1, 0, 2, text.slice(0, 1024)), part(2, 1, 2, text.slice(1024))]))
     await turn()
     expect([heard, ended]).toEqual([[frame], []])
+
+    // Adding a cause pushes frame + cause past 2048 bytes and ends `not a frame`.
+    const over = facing()
+    const p1 = JSON.stringify([{ seq: 1, part: 0, of: 2, data: text.slice(0, 1024), cause: 'c' }])
+    const p2 = JSON.stringify([part(2, 1, 2, text.slice(1024))])
+    over.bare.send(p1)
+    over.bare.send(p2)
+    await turn()
+    expect([over.heard, over.ended]).toEqual([[], [{ why: 'not a frame', size: p2.length }]])
   })
 
-  it('end the link when one of them holds nothing', async () => {
+  it('end the link when one of them holds nothing or a continuation part carries cause/private', async () => {
     const { bare, heard, ended } = facing()
-    const text = JSON.stringify([part(1, 0, 1_000_000, '{"kind":'), part(2, 1, 1_000_000, '')])
+    const text = JSON.stringify([part(1, 0, 10, '{"kind":'), part(2, 1, 10, '')])
     bare.send(text)
     await turn()
     expect([heard, ended]).toEqual([[], [{ why: 'not a frame', size: text.length }]])
+
+    const extra = facing()
+    const badCont = JSON.stringify([part(1, 0, 2, '{"kind":'), { seq: 2, part: 1, of: 2, data: '"tell"}', cause: 'late' }])
+    extra.bare.send(badCont)
+    await turn()
+    expect([extra.heard, extra.ended]).toEqual([[], [{ why: 'not a frame', size: badCont.length }]])
   })
 })
 
