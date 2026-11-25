@@ -159,9 +159,31 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
 }
 
 /**
+ * Returns a `Link` `Options.later` callback that schedules each batch flush on `lane` as a tracked DPOR task and
+ * records a write to `resource` even if the link already flushed or closed before the turn runs.
+ */
+export function trackedLater(schedule: Schedule, lane: Lane, resource: Resource): (run: () => void) => void {
+  return (run) => {
+    schedule.later(lane, () => {
+      schedule.write(resource)
+      run()
+    }, { tracked: true })
+  }
+}
+
+const modelResources = new WeakMap<Model, WeakMap<Schedule, Resource>>()
+const modelResourceOf = (held: Model, schedule: Schedule): Resource => {
+  let bySchedule = modelResources.get(held)
+  if (!bySchedule) { bySchedule = new WeakMap(); modelResources.set(held, bySchedule) }
+  let res = bySchedule.get(schedule)
+  if (!res) { res = schedule.resource('model'); bySchedule.set(schedule, res) }
+  return res
+}
+
+/**
  * Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
- * this package's own scenarios are run over. Given a model, each end is put under it (when combining `tracked: true`
- * with a shared `Model`, do not race `lost` endings concurrently across ends because `model()` checks peer endings).
+ * this package's own scenarios are run over. Given a model, each end is put under it (with cross-end ending checks
+ * attributed to a shared model resource when `tracked: true` so wakeup-tree DPOR remains sound).
  */
 export function memoryEnds(
   schedule: Schedule,
@@ -177,7 +199,26 @@ export function memoryEnds(
   const resA = schedule.resource(`link:${names[0]}`)
   const resB = schedule.resource(`link:${names[1]}`)
   const [left, right] = scheduledPair(schedule, names, { tracked: true, resources: [resA, resB] })
-  const a = trackedLink(dial(left, linkOptions), schedule, resA)
-  const b = trackedLink(listen(right, linkOptions), schedule, resB)
-  return held ? { a: held.end(a, names[0]), b: held.end(b, names[1]) } : { a, b }
+  const optionsA: Options = linkOptions.later
+    ? { ...linkOptions, later: (run) => linkOptions.later!(() => { schedule.write(resA); run() }) }
+    : linkOptions
+  const optionsB: Options = linkOptions.later
+    ? { ...linkOptions, later: (run) => linkOptions.later!(() => { schedule.write(resB); run() }) }
+    : linkOptions
+  const rawA = dial(left, optionsA)
+  const rawB = listen(right, optionsB)
+  if (held) {
+    const modelRes = modelResourceOf(held, schedule)
+    rawA.onEnd(() => { schedule.write(modelRes) })
+    rawB.onEnd(() => { schedule.write(modelRes) })
+  }
+  const a = trackedLink(rawA, schedule, resA)
+  const b = trackedLink(rawB, schedule, resB)
+  if (!held) return { a, b }
+  const modelRes = modelResourceOf(held, schedule)
+  const wrapModel = <L extends Link>(link: L, name: string): L => {
+    const modeled = held.end(link, name)
+    return { ...modeled, close: (bye) => { schedule.write(modelRes); modeled.close(bye) } }
+  }
+  return { a: wrapModel(a, names[0]), b: wrapModel(b, names[1]) }
 }

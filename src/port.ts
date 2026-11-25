@@ -30,35 +30,73 @@ export type MessagePortLike = { postMessage(message: unknown): void; close(): vo
  */
 export function port(of: MessagePortLike): Transport {
   const hears: Array<(message: Message) => void> = []
+  /** Messages received before the first `onData` listener is attached, delivered in order when one attaches. */
+  const queued: Message[] = []
+  let closeQueued = false
+  let started = false
+  let closing = false
   const closes = once()
+  closes.add(() => { hears.length = 0; queued.length = 0; closeQueued = false })
   const arrived = (data: unknown): void => {
-    if (closes.fired) return
+    if (closes.fired || closing || closeQueued) return
     // What says the other end closed.
     if (data === null) {
-      closes.fire()
-      try { of.close() } catch { /* already closed */ }
+      if (hears.length === 0 && queued.length > 0) {
+        closeQueued = true
+        try { of.close() } catch { /* already closed */ }
+        return
+      }
+      try { of.close() } catch { /* already closed */ } finally { closes.fire() }
       return
     }
     const message = typeof data === 'string' ? data : toBytes(data)
-    if (message !== undefined) for (const heard of hears) heard(message)
+    if (message === undefined) return
+    if (hears.length === 0) { queued.push(message); return }
+    for (const heard of hears) {
+      if (closes.fired || closing) break
+      heard(message)
+    }
   }
   if ('addEventListener' in of) {
     of.addEventListener('message', (event) => arrived(event.data))
-    of.addEventListener('close', () => closes.fire())
+    of.addEventListener('close', () => {
+      if (hears.length === 0 && queued.length > 0) closeQueued = true
+      else closes.fire()
+    })
   } else {
     of.on('message', (event) => arrived(event.data))
-    of.on('close', () => closes.fire())
+    of.on('close', () => {
+      if (hears.length === 0 && queued.length > 0) closeQueued = true
+      else closes.fire()
+    })
   }
-  of.start?.()
   return {
-    send: (message) => { if (!closes.fired) of.postMessage(message) },
-    onData: (heard) => { hears.push(heard) },
+    send: (message) => { if (!closes.fired && !closing) of.postMessage(message) },
+    onData: (heard) => {
+      if (closes.fired || closing) return
+      hears.push(heard)
+      if (!started) {
+        started = true
+        for (const message of queued.splice(0)) {
+          if (closes.fired || closing) break
+          for (const listener of hears) {
+            if (closes.fired || closing) break
+            listener(message)
+          }
+        }
+        if (closeQueued) { closeQueued = false; closes.fire(); return }
+        if (!closes.fired && !closing) of.start?.()
+      }
+    },
     onClose: closes.add,
     close: () => {
-      if (closes.fired) return
-      of.postMessage(null)
-      of.close()
-      closes.fire()
+      if (closes.fired || closing) return
+      closing = true
+      try {
+        try { of.postMessage(null) } finally { of.close() }
+      } finally {
+        closes.fire()
+      }
     },
   }
 }

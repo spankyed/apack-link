@@ -182,10 +182,11 @@ describe('a message longer than a stream takes', () => {
     expect([noted.written.length, closed(), noted.ended]).toEqual([1, 1, 1])
   })
 
-  it('refuses a most that is not a positive whole number of bytes', () => {
-    for (const most of [0, -1, 1.5, NaN, Infinity]) {
+  it('refuses a most that is not a positive whole number of bytes within 32-bit length range', () => {
+    for (const most of [0, -1, 1.5, NaN, Infinity, 0x1_0000_0000]) {
       expect(() => stream(fed().duplex, { most })).toThrow(RangeError)
     }
+    expect(stream(fed().duplex, { most: 0xffff_ffff }).most).toBe(0xffff_ffff)
   })
 })
 

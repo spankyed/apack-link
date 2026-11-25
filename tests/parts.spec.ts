@@ -130,14 +130,14 @@ describe('fifty megabytes over a WebSocket', () => {
       let messages = 0
       // The first connection is cut once some of the frame has arrived.
       if (accepted === 1) ws.on('message', () => { if (++messages === 10) ws.terminate() })
-      take(socket(ws as never))
+      take(socket(ws))
     })
     const clients: WebSocket[] = []
     const writes: number[] = []
     const window = dial(() => {
       const ws = new WebSocket(url)
       clients.push(ws)
-      const transport = socket(ws as never)
+      const transport = socket(ws)
       return { ...transport, send: (message) => { writes.push(sizeOf(message)); transport.send(message) } }
     }, { reopen: { clock: timers } })
     const ended: Ending[] = []

@@ -28,6 +28,9 @@ export interface SocketOptions {
 const OPENING = 0
 const OPEN = 1
 
+const isArrayBuffer = (value: unknown): value is ArrayBuffer =>
+  value instanceof ArrayBuffer || Object.prototype.toString.call(value) === '[object ArrayBuffer]'
+
 /**
  * A transport over a WebSocket. What is sent while it is still opening waits, and leaves in order once it is open.
  * Bytes arrive as a `Uint8Array`.
@@ -40,22 +43,36 @@ export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transpor
   const closes = once()
   const waiting: Message[] = []
   let waitingBytes = 0
-  closes.add(() => { waiting.length = 0; waitingBytes = 0 })
+  let closing = false
+  closes.add(() => { waiting.length = 0; waitingBytes = 0; hears.length = 0 })
   ws.binaryType = 'arraybuffer'
   ws.addEventListener('open', () => {
-    if (closes.fired || ws.readyState !== OPEN) { waiting.length = 0; waitingBytes = 0; return }
+    if (closes.fired || closing || ws.readyState !== OPEN) { waiting.length = 0; waitingBytes = 0; return }
     const queued = waiting.splice(0)
     waitingBytes = 0
     for (const message of queued) {
-      if (closes.fired || ws.readyState !== OPEN) break
-      ws.send(message)
+      if (closes.fired || closing || ws.readyState !== OPEN) break
+      try { ws.send(message) } catch {
+        closing = true
+        try { ws.close() } catch { /* already closed */ } finally { closes.fire() }
+        break
+      }
     }
   })
   ws.addEventListener('message', ({ data }) => {
-    if (closes.fired) return
-    const message = typeof data === 'string' ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : undefined
+    if (closes.fired || closing) return
+    const message = typeof data === 'string'
+      ? data
+      : isArrayBuffer(data)
+        ? new Uint8Array(data)
+        : ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : undefined
     if (message === undefined) return
-    for (const heard of hears) heard(message)
+    for (const heard of hears) {
+      if (closes.fired || closing) break
+      heard(message)
+    }
   })
   // An error is followed by a close; it says nothing a close does not.
   ws.addEventListener('error', () => {})
@@ -63,18 +80,18 @@ export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transpor
   if (ws.readyState > OPEN) queueMicrotask(() => closes.fire())
   return {
     send: (message) => {
-      if (closes.fired) return
+      if (closes.fired || closing) return
       if (ws.readyState === OPENING) { waiting.push(message); waitingBytes += sizeOf(message) }
       else if (ws.readyState === OPEN) ws.send(message)
     },
-    onData: (heard) => { hears.push(heard) },
+    onData: (heard) => { if (!closes.fired && !closing) hears.push(heard) },
     onClose: closes.add,
     ...(options.most === undefined ? {} : { most: options.most }),
     waiting: () => ws.bufferedAmount + waitingBytes,
     close: () => {
-      if (closes.fired) return
-      ws.close()
-      closes.fire()
+      if (closes.fired || closing) return
+      closing = true
+      try { ws.close() } finally { closes.fire() }
     },
   }
 }
