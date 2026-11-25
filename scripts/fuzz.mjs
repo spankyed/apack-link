@@ -189,6 +189,7 @@ async function fuzzPeerHold(rng, count) {
     })
 
     const pendingCatchups = []
+    const viewCaughtUpCount = new Map()
     const viewDefs = []
     const toWindow = join(b, {
       tell: () => {},
@@ -197,16 +198,25 @@ async function fuzzPeerHold(rng, count) {
         ended({ ok: true, value: `ans:${String(args)}` })
         return () => {}
       },
-      follow: (_f, view, _args, shown) => {
+      follow: (_f, view, args, shown) => {
         const behavior = view // 'sync' | 'async' | 'stall' | 'throw' | 'then-throw'
+        const tag = args.tag
+        viewCaughtUpCount.set(tag, 0)
         viewDefs.push({ behavior, shown })
+        let stopped = false
         return {
-          stop: () => {},
+          stop: () => { stopped = true },
           caughtUp: (then) => {
-            if (behavior === 'sync') { then(); return }
+            if (behavior === 'sync') { viewCaughtUpCount.set(tag, (viewCaughtUpCount.get(tag) ?? 0) + 1); then(); return }
             if (behavior === 'throw') throw new Error(`view ${behavior} broke`)
             if (behavior === 'then-throw') { then(); throw new Error(`view ${behavior} broke`) }
-            if (behavior === 'async') { pendingCatchups.push(then); return }
+            if (behavior === 'async') {
+              pendingCatchups.push(() => {
+                if (!stopped) viewCaughtUpCount.set(tag, (viewCaughtUpCount.get(tag) ?? 0) + 1)
+                then()
+              })
+              return
+            }
             // 'stall': never calls then
           },
         }
@@ -229,10 +239,10 @@ async function fuzzPeerHold(rng, count) {
     for (let v = 0; v < numViews; v++) {
       const behavior = pick(rng, behaviors)
       const tag = `v${v}:${behavior}`
-      subs.push(toBackend.follow('f', behavior, { secret: canary }, (u) => {
+      subs.push(toBackend.follow('f', behavior, { secret: canary, tag }, (u) => {
         clientOrder.push(`shown:${tag}:${String(u)}`)
       }, (failure) => {
-        viewOverIndex.set(tag, clientOrder.length)
+        viewOverIndex.set(tag, { index: clientOrder.length, message: failure.message })
         clientOrder.push(`over:${tag}:${failure.message}`)
       }))
     }
@@ -248,7 +258,13 @@ async function fuzzPeerHold(rng, count) {
         let endedCount = 0
         asks.push({
           get ended() { return endedCount },
-          leave: toBackend.ask('svc', 'DO', `${canary}:a${s}`, () => {}, () => { endedCount++ }),
+          leave: toBackend.ask(
+            'svc',
+            'DO',
+            `${canary}:a${s}`,
+            () => { clientOrder.push('held:progress') },
+            (o) => { endedCount++; if (o.ok) clientOrder.push('held:answer') },
+          ),
         })
       } else if (op === 4 && pendingCatchups.length > 0) {
         const idx = randInt(rng, 0, pendingCatchups.length - 1)
@@ -270,7 +286,20 @@ async function fuzzPeerHold(rng, count) {
     for (const ask of asks) {
       if (ask.ended !== 1) throw new Error(`fuzzPeerHold iter ${i}: ask ended ${ask.ended} times (expected 1)`)
     }
-    // Every `throw` / `then-throw` view that failed must have delivered `over` before any `tell` that triggered it.
+    // Every view that failed due to `caughtUp` throw or stall must have delivered `over` strictly before any held
+    // frame (`tell`, `progress`, or `answer`) beyond the rounds that view had caught up for while live.
+    const heldIndices = []
+    for (let idx = 0; idx < clientOrder.length; idx++) {
+      if (clientOrder[idx].startsWith('tell:') || clientOrder[idx].startsWith('held:')) heldIndices.push(idx)
+    }
+    for (const [tag, over] of viewOverIndex) {
+      if (over.message === 'The link closed') continue
+      const caught = viewCaughtUpCount.get(tag) ?? 0
+      const firstUnapproved = heldIndices[caught]
+      if (firstUnapproved !== undefined && over.index > firstUnapproved) {
+        throw new Error(`fuzzPeerHold iter ${i}: view ${tag} over (${over.message}) at ${over.index} arrived after unapproved held frame #${caught} at ${firstUnapproved}`)
+      }
+    }
     for (const stall of stalls) {
       if (stall.views.length === 0) throw new Error(`fuzzPeerHold iter ${i}: empty HoldStall.views`)
       if (stall.held.frames <= 0 || stall.held.size <= 0) throw new Error(`fuzzPeerHold iter ${i}: non-positive HoldStall.held`)

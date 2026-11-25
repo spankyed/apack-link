@@ -60,8 +60,14 @@ know before changing it.
 
 ```bash
 npm run typecheck
+npm run typecheck:floor
 npm test
+npm run test:browser
 npm run build
+npm run fuzz
 npm run reference:check
+npm run workflows:check
+npm run package:lint
 npm run package:smoke
+npm run mutants
 ```

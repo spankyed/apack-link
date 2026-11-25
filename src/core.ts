@@ -916,7 +916,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (!hasOnly(arrived, at === 0 ? PART_KEYS : PART_CONT_KEYS)) { unknown(); return false }
     if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
-    if (at === 0 ? s.parting !== undefined || of > largest : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
+    if (at === 0 ? s.parting !== undefined || of > largest - causeSize : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
     if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: causeSize, ...(s.tapped ? { size: 0 } : {}), ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = s.parting!
     // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is

@@ -110,11 +110,14 @@ export function trackedLink<L extends Link>(link: L, schedule: Schedule, resourc
   }
 }
 
+const trackedJoined = new WeakSet<Link>()
+
 /**
  * Joins `link` and `mine` while attributing every peer-hold, port-call, async answer/view callback, and `caughtUp`
  * callback mutation on this end to `resource` for wakeup-tree DPOR.
  */
 export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource, options?: JoinOptions): Port {
+  if (trackedJoined.has(link)) throw new TypeError('A link can only be joined once')
   const trackedMine: Port = {
     tell: (to, event, how) => { mine.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => mine.ask(
@@ -143,6 +146,7 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
     },
   }
   const remote = join(trackedLink(link, schedule, resource), trackedMine, options)
+  trackedJoined.add(link)
   return {
     tell: (to, event, how) => { schedule.write(resource); remote.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => {
@@ -207,15 +211,14 @@ export function memoryEnds(
     : linkOptions
   const rawA = dial(left, optionsA)
   const rawB = listen(right, optionsB)
-  if (held) {
-    const modelRes = modelResourceOf(held, schedule)
+  const modelRes = held ? modelResourceOf(held, schedule) : undefined
+  if (modelRes) {
     rawA.onEnd(() => { schedule.write(modelRes) })
     rawB.onEnd(() => { schedule.write(modelRes) })
   }
   const a = trackedLink(rawA, schedule, resA)
   const b = trackedLink(rawB, schedule, resB)
-  if (!held) return { a, b }
-  const modelRes = modelResourceOf(held, schedule)
+  if (!held || !modelRes) return { a, b }
   const wrapModel = <L extends Link>(link: L, name: string): L => {
     const modeled = held.end(link, name)
     return { ...modeled, close: (bye) => { schedule.write(modelRes); modeled.close(bye) } }
