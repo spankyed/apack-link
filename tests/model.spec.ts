@@ -364,7 +364,7 @@ describe('what the model finds', () => {
 
 describe('real ends under the model', () => {
   /** A schedule that never gets to anything: whatever is sent is never handed over. */
-  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {}, clock: { now: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) } }
+  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {}, clock: { now: () => 0, monotonic: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) } }
 
   it("the kit's ends are under the model they are given", () => {
     const held = model()
