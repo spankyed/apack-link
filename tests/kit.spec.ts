@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { asFrame, join, json, dial, listen, memoryPair, type Port, type Transport } from '../src/index.ts'
 import { auditIndependence, everyOrder, explore } from '@apackdev/orderings'
-import { asking, carried, desk, holds, laneClock, made, memoryEnds, same, scheduledPair, trackedJoin, trackedLink, watching } from '../src/testing/index.ts'
+import { asking, carried, desk, holds, laneClock, made, memoryEnds, model, same, scheduledPair, trackedJoin, trackedLater, trackedLink, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
   it('gives back what it was given, from text and from the same text as bytes', () => {
@@ -59,7 +59,15 @@ describe('same and holds', () => {
   it('pass what holds and throw, saying what was looked at, for what does not', () => {
     same({ a: [1, { b: null }] }, { a: [1, { b: null }] }, 'alike')
     holds(true, 'true')
-    for (const [actual, expected] of [[{ a: 1 }, { a: 1, b: 2 }], [[1, 2], [2, 1]], [[], {}], [null, {}], [{ a: undefined }, { b: undefined }], [NaN, 0]] as const) {
+    for (const [actual, expected] of [
+      [{ a: 1 }, { a: 1, b: 2 }],
+      [[1, 2], [2, 1]],
+      [[], {}],
+      [null, {}],
+      [{ a: undefined }, { b: undefined }],
+      [{ toString: undefined }, { constructor: undefined }],
+      [NaN, 0],
+    ] as const) {
       expect(() => same(actual, expected, 'the thing')).toThrow(/the thing/)
     }
     expect(() => holds(false, 'that one')).toThrow(/that one/)
@@ -380,7 +388,108 @@ describe('wakeup-tree DPOR tracking helpers', () => {
       }, { tracked: true })
       return () => { states.add(`${received},${closed}`) }
     })
-    expect(transportAttach.states).toContain('0,0')
-    expect(transportAttach.states).toContain('1,1')
+    // Late onClose always fires (consistent with port/socket/stream); onData sees 'ping' only when attached before delivery.
+    expect(transportAttach.states).toEqual(['0,1', '1,1'])
+
+    // 5. trackedLater batch flush racing link close and send on the same end.
+    const laterRace = await checkDifferential((states) => (schedule) => {
+      const resA = schedule.resource('a')
+      const resB = schedule.resource('b')
+      const [left, right] = scheduledPair(schedule, ['a', 'b'], { tracked: true, resources: [resA, resB] })
+      const a = trackedLink(dial(left, { later: trackedLater(schedule, { label: 'flush-a' }, resA) }), schedule, resA)
+      const b = trackedLink(listen(right, { later: trackedLater(schedule, { label: 'flush-b' }, resB) }), schedule, resB)
+      const heard: unknown[] = []
+      let ended = 'open'
+      b.onFrame((f) => { if (f.kind === 'tell') heard.push(f.event) })
+      b.onEnd((e) => { ended = e.why })
+      a.send({ kind: 'tell', to: 'x', event: 1 })
+      schedule.later({ label: 'close-a' }, () => { a.close('ended') }, { tracked: true })
+      schedule.later({ label: 'send-a2' }, () => { a.send({ kind: 'tell', to: 'x', event: 2 }) }, { tracked: true })
+      return () => { states.add(`${heard.join(',')}|${ended}`) }
+    })
+    expect(laterRace.states).toContain('1|goodbye')
+    expect(laterRace.states).toContain('1,2|goodbye')
+
+    // 6. laneClock with `resource` driving `there` watch timer vs incoming frame delivery.
+    const clockRace = await checkDifferential((states) => (schedule) => {
+      const resA = schedule.resource('a')
+      const resB = schedule.resource('b')
+      const [left, right] = scheduledPair(schedule, ['a', 'b'], { tracked: true, resources: [resA, resB] })
+      const clock = laneClock(schedule, { label: 'there-a' }, { resource: resA })
+      const a = trackedLink(dial(left, { there: { window: 100, clock } }), schedule, resA)
+      let ended = 'open'
+      a.onEnd((e) => { ended = e.why })
+      const settle = a.awaiting()
+      let replied = false
+      // Raw peer sends hello so `a` begins watching, then schedules a frame on a separate tracked lane (never answering `there` probes).
+      right.onData(() => {
+        if (replied) return
+        replied = true
+        right.send(JSON.stringify([{ link: 1, session: 'peer-b', taken: 0 }]))
+        schedule.later({ label: 'b-reply' }, () => {
+          right.send(JSON.stringify([{ taken: 1 }, { seq: 1, frame: { kind: 'tell', to: 'y', event: 'pong' } }]))
+        }, { tracked: true })
+      })
+      a.onFrame(() => { settle() })
+      a.send({ kind: 'tell', to: 'x', event: 'ping' })
+      return () => { states.add(ended) }
+    })
+    expect(clockRace.states).toEqual(['closed', 'open'])
+
+    // 7. memoryEnds with `tracked: true` and a shared `model()` across concurrent endings + custom `later`.
+    const modelRace = await checkDifferential((states) => (schedule) => {
+      const held = model({ may: ['lost'] })
+      const flushLane = { label: 'flush' }
+      const { a, b } = memoryEnds(schedule, {
+        tracked: true,
+        later: (run) => schedule.later(flushLane, run, { tracked: true }),
+      }, held)
+      let endA = 'open'
+      let endB = 'open'
+      a.onEnd((e) => { endA = e.why })
+      b.onEnd((e) => { endB = e.why })
+      a.send({ kind: 'tell', to: 'x', event: 1 })
+      schedule.later({ label: 'close-a' }, () => { a.close('ended') }, { tracked: true })
+      schedule.later({ label: 'close-b' }, () => { b.close('restarting') }, { tracked: true })
+      return () => {
+        held.check()
+        states.add(`${endA}|${endB}`)
+      }
+    })
+    expect(modelRace.states.length).toBeGreaterThanOrEqual(2)
+
+    // 8. trackedJoin with `JoinOptions` hold stall bound racing view caughtUp and ask cancellation.
+    const stallRace = await checkDifferential((states) => (schedule) => {
+      const resW = schedule.resource('w')
+      const resB = schedule.resource('b')
+      const [left, right] = scheduledPair(schedule, ['w', 'b'], { tracked: true, resources: [resW, resB] })
+      const winLink = dial(left)
+      const backLink = listen(right)
+      const events: string[] = []
+      const viewLane = { label: 'view-catchup' }
+      const backPort: Port = {
+        tell: () => {},
+        ask: () => () => {},
+        follow: () => ({
+          stop: () => {},
+          caughtUp: (then) => { schedule.later(viewLane, () => { then() }, { tracked: true }) },
+        }),
+      }
+      const winPort: Port = {
+        tell: (_to, event) => { events.push(`t:${String(event)}`) },
+        ask: () => () => {},
+        follow: () => ({ stop: () => {} }),
+      }
+      const toBack = trackedJoin(winLink, winPort, schedule, resW)
+      const toWin = trackedJoin(backLink, backPort, schedule, resB, { bound: { frames: 1 } })
+      toBack.follow('f', 'v', null, () => {}, (failure) => { events.push(`over:${failure.message}`) })
+      schedule.later({ label: 'sender' }, () => {
+        toWin.tell('x', 1)
+        toWin.tell('x', 2)
+      }, { tracked: true })
+      return () => { states.add(events.join('|')) }
+    })
+    expect(stallRace.states.some((s) => s.includes('over:The view stalled'))).toBe(true)
+    expect(stallRace.states.some((s) => s === 't:1|t:2')).toBe(true)
   })
 })

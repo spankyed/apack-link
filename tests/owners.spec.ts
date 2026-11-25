@@ -471,14 +471,14 @@ describe('owners over real WebSockets', () => {
     })
     currentHandler = (ws, owner) => {
       serverSockets.push(ws)
-      taking.take(socket(ws as never), owner)
+      taking.take(socket(ws), owner)
     }
     const clientEnded: Ending[] = []
     const clientHeard: Frame[] = []
     let opens = 0
     const client = dial(() => {
       opens++
-      return socket(openSocket('win-1') as never)
+      return socket(openSocket('win-1'))
     }, { reopen: { clock: timers, first: 15, most: 50 } })
     client.onEnd((ending) => { clientEnded.push(ending) })
     client.onFrame((frame) => { clientHeard.push(frame) })
@@ -512,17 +512,17 @@ describe('owners over real WebSockets', () => {
       events.push(`began ${owner}#${n}`)
       link.onEnd((ending) => { events.push(`ended ${owner}#${n}:${ending.why}`) })
     })
-    currentHandler = (ws, owner) => { taking.take(socket(ws as never), owner) }
+    currentHandler = (ws, owner) => { taking.take(socket(ws), owner) }
 
     const firstEnded: Ending[] = []
     let firstOpens = 0
-    const first = dial(() => { firstOpens++; return socket(openSocket('reload-owner') as never) }, { reopen: { clock: timers, first: 15, most: 50 } })
+    const first = dial(() => { firstOpens++; return socket(openSocket('reload-owner')) }, { reopen: { clock: timers, first: 15, most: 50 } })
     first.onEnd((ending) => { firstEnded.push(ending) })
     await until(() => events.includes('began reload-owner#1'))
 
     // Reload: a second link connects as the same owner, ending the first session cleanly before handing over the second.
     const secondEnded: Ending[] = []
-    const second = dial(() => socket(openSocket('reload-owner') as never), { reopen: { clock: timers, first: 15, most: 50 } })
+    const second = dial(() => socket(openSocket('reload-owner')), { reopen: { clock: timers, first: 15, most: 50 } })
     second.onEnd((ending) => { secondEnded.push(ending) })
     await until(() => firstEnded.length === 1 && events.includes('began reload-owner#2'))
     expect(firstEnded).toEqual([{ why: 'goodbye', bye: 'ended' }])
@@ -530,7 +530,7 @@ describe('owners over real WebSockets', () => {
 
     // Another owner (bystander) stays unaffected when reload-owner is declared gone, AND a silent socket of reload-owner closes too.
     const otherEnded: Ending[] = []
-    const other = dial(() => socket(openSocket('other-owner') as never), { reopen: { clock: timers, first: 15, most: 50 } })
+    const other = dial(() => socket(openSocket('other-owner')), { reopen: { clock: timers, first: 15, most: 50 } })
     other.onEnd((ending) => { otherEnded.push(ending) })
     await until(() => events.includes('began other-owner#1'))
 
@@ -560,7 +560,7 @@ describe('owners over real WebSockets', () => {
     const taking = accept<string>((link) => {
       link.onFrame((frame) => { link.send(frame) })
     })
-    currentHandler = (ws, owner) => { taking.take(socket(ws as never), owner) }
+    currentHandler = (ws, owner) => { taking.take(socket(ws), owner) }
 
     let attempts = 0
     const heard: Frame[] = []
@@ -569,7 +569,7 @@ describe('owners over real WebSockets', () => {
       attempts++
       // First two attempts hit the refused port (error-then-close); third hits the live server.
       const target = attempts <= 2 ? closedPort : portNumber
-      return socket(openSocket('reopen-owner', target) as never)
+      return socket(openSocket('reopen-owner', target))
     }, {
       reopen: { clock: timers, first: 15, most: 30 },
       thrown: (error) => { thrown.push(error) },
@@ -583,7 +583,7 @@ describe('owners over real WebSockets', () => {
     expect(thrown).toEqual([])
 
     // Closing a dialled link while its WebSocket is still CONNECTING closes cleanly without throwing.
-    const aborted = dial(() => socket(openSocket('abort-owner', closedPort) as never), {
+    const aborted = dial(() => socket(openSocket('abort-owner', closedPort)), {
       reopen: { clock: timers, first: 50, most: 100 },
       thrown: (error) => { thrown.push(error) },
     })

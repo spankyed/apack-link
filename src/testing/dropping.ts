@@ -4,21 +4,24 @@ import { dial, listen, type Clock, type Link, type Listener, type Options } from
 import { memoryPair, type Message, type Transport } from '../transport.ts'
 import type { Model } from './model.ts'
 import type { Ends } from './scenarios.ts'
-import type { Lane, Schedule, TaskOptions } from '@apackdev/orderings'
+import type { Lane, Resource, Schedule, TaskOptions } from '@apackdev/orderings'
 
 /**
  * A clock that keeps no time, for a link on a schedule: what is asked for runs when the schedule gets to it in the
- * lane given, however long was asked for, unless it is called off first.
+ * lane given, however long was asked for, unless it is called off first. Pass `resource` (e.g. a link's DPOR
+ * resource) so timer firings and cancellations attribute directly to that resource even on no-op or state-only turns.
  */
-export function laneClock(schedule: Schedule, lane: Lane, options?: TaskOptions): Clock {
+export function laneClock(schedule: Schedule, lane: Lane, options?: TaskOptions & { readonly resource?: Resource }): Clock {
+  const tracked = options?.tracked ?? (options?.resource !== undefined)
+  const taskOptions: TaskOptions | undefined = tracked ? { tracked: true } : undefined
+  const res = options?.resource ?? (tracked ? schedule.resource(`clock:${lane.label}`) : undefined)
   return {
     after: (_, run) => {
       let off = false
-      const res = options?.tracked ? schedule.resource(`clock:${lane.label}`) : undefined
       schedule.later(lane, () => {
         if (res) schedule.write(res)
         if (!off) run()
-      }, options)
+      }, taskOptions)
       return () => {
         if (res) schedule.write(res)
         off = true

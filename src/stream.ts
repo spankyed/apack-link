@@ -22,8 +22,8 @@ export interface DuplexLike {
 export interface StreamOptions {
   /**
    * The longest message, in bytes, that is sent or taken: a head that claims more closes the stream, and so does
-   * sending more. 128 MiB unless given, and never more than a length in four bytes can say. The transport says it
-   * (`most`), and a link carried on it sends nothing longer, so both ends are to be given the same.
+   * sending more. 128 MiB unless given, and at most `0xffff_ffff` (what a four-byte length can say). The transport
+   * says it (`most`), and a link carried on it sends nothing longer, so both ends are to be given the same.
    */
   readonly most?: number
 }
@@ -44,12 +44,13 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
  * stream beneath it is let go.
  */
 export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transport {
-  if (options.most !== undefined && (!Number.isSafeInteger(options.most) || options.most < 1)) {
-    throw new RangeError('stream most is a positive whole number of bytes')
+  if (options.most !== undefined && (!Number.isSafeInteger(options.most) || options.most < 1 || options.most > LONGEST)) {
+    throw new RangeError(`stream most is a whole number of bytes between 1 and ${LONGEST}`)
   }
-  const most = Math.min(options.most ?? MOST, LONGEST)
+  const most = options.most ?? MOST
   const hears: Array<(message: Message) => void> = []
   const closes = once()
+  let closing = false
   type Piece = { readonly bytes: Uint8Array; next?: Piece }
   /** What has arrived and is not yet a whole message, as a linked queue of pieces; how much of the first is used; how much is left. */
   let first: Piece | undefined
@@ -58,7 +59,7 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
   let pending = 0
   /** The message being waited for, once its head is here: what it is and how long. */
   let head: { readonly kind: number; readonly length: number } | undefined
-  closes.add(() => { first = last = undefined; used = 0; pending = 0 })
+  closes.add(() => { first = last = undefined; head = undefined; used = 0; pending = 0; hears.length = 0 })
 
   const advance = (): void => {
     first = first!.next
@@ -92,13 +93,15 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
   }
   /** Closes because of what the other end handed over, and lets go of the stream beneath: nothing more of it is wanted. */
   const refuse = (): void => {
-    if (closes.fired) return
-    closes.fire()
-    if (duplex.destroy) duplex.destroy()
-    else duplex.end()
+    if (closes.fired || closing) return
+    closing = true
+    try {
+      if (duplex.destroy) duplex.destroy()
+      else duplex.end()
+    } finally { closes.fire() }
   }
   const take = (): void => {
-    while (!closes.fired) {
+    while (!closes.fired && !closing) {
       if (!head) {
         if (pending < HEAD) return
         const bytes = pull(HEAD, false)
@@ -116,11 +119,14 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
       if (kind === TEXT) {
         try { message = decoder.decode(body) } catch { refuse(); return }
       } else message = body
-      for (const heard of hears) heard(message)
+      for (const heard of hears) {
+        if (closes.fired || closing) break
+        heard(message)
+      }
     }
   }
   duplex.on('data', (chunk) => {
-    if (closes.fired || !chunk.length) return
+    if (closes.fired || closing || !chunk.length) return
     const piece: Piece = { bytes: chunk }
     if (last) last = last.next = piece
     else first = last = piece
@@ -133,24 +139,28 @@ export function stream(duplex: DuplexLike, options: StreamOptions = {}): Transpo
   duplex.on('error', () => {})
   return {
     send: (message) => {
-      if (closes.fired) return
+      if (closes.fired || closing) return
       const body = typeof message === 'string' ? encoder.encode(message) : message
       // Longer than the other end takes, or than a head can say: this stream cannot carry it.
-      if (body.length > most) { duplex.end(); closes.fire(); return }
+      if (body.length > most) {
+        closing = true
+        try { duplex.end() } finally { closes.fire() }
+        return
+      }
       const out = new Uint8Array(HEAD + body.length)
       out[0] = typeof message === 'string' ? TEXT : BYTES
       new DataView(out.buffer).setUint32(1, body.length)
       out.set(body, HEAD)
       duplex.write(out)
     },
-    onData: (heard) => { hears.push(heard) },
+    onData: (heard) => { if (!closes.fired && !closing) hears.push(heard) },
     onClose: closes.add,
     most,
     waiting: () => duplex.writableLength ?? 0,
     close: () => {
-      if (closes.fired) return
-      duplex.end()
-      closes.fire()
+      if (closes.fired || closing) return
+      closing = true
+      try { duplex.end() } finally { closes.fire() }
     },
   }
 }

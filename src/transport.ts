@@ -30,23 +30,32 @@ export interface Transport {
  * of a schedule each, to run every order there is.
  */
 export function memoryPair(later: (run: () => void) => void = queueMicrotask, back: (run: () => void) => void = later): [Transport, Transport] {
-  const ends = [0, 1].map(() => ({ open: true, hears: [] as Array<(message: Message) => void>, closes: [] as Array<() => void> }))
-  const shut = (end: (typeof ends)[number]): void => {
-    if (!end.open) return
-    end.open = false
-    for (const closed of end.closes) closed()
-  }
+  const ends = [0, 1].map(() => {
+    const hears: Array<(message: Message) => void> = []
+    const closes = once()
+    closes.add(() => { hears.length = 0 })
+    return { hears, closes }
+  })
   const make = (mine: 0 | 1, cross: (run: () => void) => void): Transport => {
     const here = ends[mine]!
     const there = ends[1 - mine]!
     return {
-      send: (message) => { if (here.open) cross(() => { if (there.open) for (const heard of there.hears) heard(message) }) },
-      onData: (heard) => { here.hears.push(heard) },
-      onClose: (closed) => { here.closes.push(closed) },
+      send: (message) => {
+        if (here.closes.fired) return
+        cross(() => {
+          if (there.closes.fired) return
+          for (const heard of there.hears) {
+            if (there.closes.fired) break
+            heard(message)
+          }
+        })
+      },
+      onData: (heard) => { if (!here.closes.fired) here.hears.push(heard) },
+      onClose: here.closes.add,
       close: () => {
-        if (!here.open) return
-        shut(here)
-        cross(() => shut(there))
+        if (here.closes.fired) return
+        here.closes.fire()
+        cross(() => there.closes.fire())
       },
     }
   }

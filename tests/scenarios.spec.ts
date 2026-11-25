@@ -34,7 +34,7 @@ const websockets = async (): Promise<Carrier> => {
       const client = new WebSocket(`ws://127.0.0.1:${at}`)
       const [[accepted]] = await Promise.all([eventOnce(server, 'connection') as Promise<[WebSocket]>, eventOnce(client, 'open')])
       made.push(client, accepted)
-      return [socket(client as never), socket(accepted as never)]
+      return [socket(client), socket(accepted)]
     },
     stop: async () => {
       for (const ws of made) ws.terminate()
@@ -223,11 +223,11 @@ describe('a WebSocket', () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
     await eventOnce(server, 'listening')
     const heard: Frame[] = []
-    server.on('connection', (accepted) => { listen(socket(accepted as never)).onFrame((frame) => { heard.push(frame) }) })
+    server.on('connection', (accepted) => { listen(socket(accepted)).onFrame((frame) => { heard.push(frame) }) })
     const client = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}`)
     try {
       expect(client.readyState).toBe(WebSocket.CONNECTING)
-      const a = dial(socket(client as never))
+      const a = dial(socket(client))
       a.send({ kind: 'tell', to: 'x', event: 1 })
       await Promise.resolve()
       a.send({ kind: 'tell', to: 'x', event: 2 })

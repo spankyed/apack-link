@@ -7,7 +7,7 @@ const alike = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true
   if (kindOf(a) !== kindOf(b) || typeof a !== 'object' || a === null || b === null) return false
   const [mine, theirs] = [Object.keys(a), Object.keys(b as object)]
-  return mine.length === theirs.length && mine.every((key) => key in (b as object) && alike((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+  return mine.length === theirs.length && mine.every((key) => Object.hasOwn(b as object, key) && alike((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
 }
 
 const shownAs = (value: unknown): string => {

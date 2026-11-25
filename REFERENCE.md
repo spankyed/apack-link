@@ -574,8 +574,8 @@ stream(duplex: DuplexLike, options?: StreamOptions): Transport
 interface StreamOptions {
   /**
    * The longest message, in bytes, that is sent or taken: a head that claims more closes the stream, and so does
-   * sending more. 128 MiB unless given, and never more than a length in four bytes can say. The transport says it
-   * (`most`), and a link carried on it sends nothing longer, so both ends are to be given the same.
+   * sending more. 128 MiB unless given, and at most `0xffff_ffff` (what a four-byte length can say). The transport
+   * says it (`most`), and a link carried on it sends nothing longer, so both ends are to be given the same.
    */
   readonly most?: number
 }
@@ -795,10 +795,11 @@ interface KitScenario {
 ### `laneClock`
 
 A clock that keeps no time, for a link on a schedule: what is asked for runs when the schedule gets to it in the
-lane given, however long was asked for, unless it is called off first.
+lane given, however long was asked for, unless it is called off first. Pass `resource` (e.g. a link's DPOR
+resource) so timer firings and cancellations attribute directly to that resource even on no-op or state-only turns.
 
 ```ts
-laneClock(schedule: Schedule, lane: Lane, options?: TaskOptions): Clock
+laneClock(schedule: Schedule, lane: Lane, options?: TaskOptions & { readonly resource?: Resource; }): Clock
 ```
 
 ### `made`
@@ -836,8 +837,8 @@ type MakeEnds = (schedule: Schedule) => Ends
 ### `memoryEnds`
 
 Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
-this package's own scenarios are run over. Given a model, each end is put under it (when combining `tracked: true`
-with a shared `Model`, do not race `lost` endings concurrently across ends because `model()` checks peer endings).
+this package's own scenarios are run over. Given a model, each end is put under it (with cross-end ending checks
+attributed to a shared model resource when `tracked: true` so wakeup-tree DPOR remains sound).
 
 ```ts
 memoryEnds(schedule: Schedule, options?: Options & { readonly tracked?: boolean; readonly names?: readonly [string, string]; }, held?: Model): Ends
@@ -943,6 +944,15 @@ callback mutation on this end to `resource` for wakeup-tree DPOR.
 
 ```ts
 trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource, options?: JoinOptions): Port
+```
+
+### `trackedLater`
+
+Returns a `Link` `Options.later` callback that schedules each batch flush on `lane` as a tracked DPOR task and
+records a write to `resource` even if the link already flushed or closed before the turn runs.
+
+```ts
+trackedLater(schedule: Schedule, lane: Lane, resource: Resource): (run: () => void) => void
 ```
 
 ### `trackedLink`
