@@ -1,21 +1,21 @@
 // What a spec of a link is written with, here and anywhere an end of a link is built: two ends in memory whose
 // directions are lanes of a schedule, and the scenarios themselves, to be run over any pair of ends. The schedule
 // that runs a scenario under every order is `@apackdev/orderings`, which whoever uses this entry installs.
-import { dial, listen, type Link, type Listener, type Options, type Prepared, type Sending } from '../link.ts'
-import type { Frame } from '../frames.ts'
-import { join, type Following, type JoinOptions, type Port } from '../peer.ts'
-import { memoryPair, type Transport } from '../transport.ts'
-import type { Model } from './model.ts'
-import type { Ends } from './scenarios.ts'
+import { dial, listen, type Link, type Listener, type Options, type Prepared, type Sending } from '../link.js'
+import type { Frame } from '../frames.js'
+import { join, type Following, type JoinOptions, type Port } from '../peer.js'
+import { memoryPair, type Transport } from '../transport.js'
+import type { Model } from './model.js'
+import type { Ends } from './scenarios.js'
 import type { Lane, Resource, Schedule } from '@apackdev/orderings'
 
-export { carried } from './carried.ts'
-export { holds, same } from './check.ts'
-export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
-export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.ts'
-export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.ts'
-export { model, underModel, type Model, type ModelOptions } from './model.ts'
-export { made, type Made } from './views.ts'
+export { carried } from './carried.js'
+export { holds, same } from './check.js'
+export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.js'
+export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.js'
+export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.js'
+export { model, underModel, type Model, type ModelOptions } from './model.js'
+export { made, type Made } from './views.js'
 
 /** What a pair of ends is made over: given a schedule, two links. */
 export type MakeEnds = (schedule: Schedule) => Ends
@@ -110,11 +110,14 @@ export function trackedLink<L extends Link>(link: L, schedule: Schedule, resourc
   }
 }
 
+const trackedJoined = new WeakSet<Link>()
+
 /**
  * Joins `link` and `mine` while attributing every peer-hold, port-call, async answer/view callback, and `caughtUp`
  * callback mutation on this end to `resource` for wakeup-tree DPOR.
  */
 export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource, options?: JoinOptions): Port {
+  if (trackedJoined.has(link)) throw new TypeError('A link can only be joined once')
   const trackedMine: Port = {
     tell: (to, event, how) => { mine.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => mine.ask(
@@ -143,6 +146,7 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
     },
   }
   const remote = join(trackedLink(link, schedule, resource), trackedMine, options)
+  trackedJoined.add(link)
   return {
     tell: (to, event, how) => { schedule.write(resource); remote.tell(to, event, how) },
     ask: (to, name, args, heard, ended, how) => {
@@ -207,15 +211,14 @@ export function memoryEnds(
     : linkOptions
   const rawA = dial(left, optionsA)
   const rawB = listen(right, optionsB)
-  if (held) {
-    const modelRes = modelResourceOf(held, schedule)
+  const modelRes = held ? modelResourceOf(held, schedule) : undefined
+  if (modelRes) {
     rawA.onEnd(() => { schedule.write(modelRes) })
     rawB.onEnd(() => { schedule.write(modelRes) })
   }
   const a = trackedLink(rawA, schedule, resA)
   const b = trackedLink(rawB, schedule, resB)
-  if (!held) return { a, b }
-  const modelRes = modelResourceOf(held, schedule)
+  if (!held || !modelRes) return { a, b }
   const wrapModel = <L extends Link>(link: L, name: string): L => {
     const modeled = held.end(link, name)
     return { ...modeled, close: (bye) => { schedule.write(modelRes); modeled.close(bye) } }

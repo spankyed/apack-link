@@ -4,8 +4,8 @@
 // A link encodes each thing it says where it is said, so that what cannot be encoded is refused there alone, and
 // joins what is already encoded into a batch, which cannot fail. So a codec encodes one value, and joins values it
 // has already encoded as a list or as the fields of a record.
-import { bytesOf } from './frames.ts'
-import type { Message } from './transport.ts'
+import { bytesOf } from './frames.js'
+import type { Message } from './transport.js'
 
 /**
  * A list a codec makes is no longer than its parts, one byte between each two, and two more, as JSON's is: a link

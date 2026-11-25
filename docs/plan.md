@@ -1,6 +1,6 @@
 # The plan: everything a link is to be
 
-Status: built, 2026-11-22. The frames, one end of a link and two ends in memory are built, and steps 0 to 10.
+Status: built. Steps 0 to 14 are complete.
 
 This is written to be handed to whoever builds it, with nothing else in hand but this repository. It says what to
 build, in what order, what each step has to hold, and how each is known to be done. `README.md` says what a link is
@@ -228,7 +228,7 @@ leaves no gap, and the specs of steps 1 and 2 pass unchanged.
 
 Built: `src/socket.ts`, `src/port.ts`, `src/stream.ts`. `Transport` is `send(message)`, `onData`, `onClose`,
 `close`, with `Message = string | Uint8Array`. The scenarios run over each in `tests/scenarios.spec.ts`: every order
-over memory, forty over each of the others, since a real connection per order makes every order too slow to run.
+over memory, twenty over each of the others, since a real connection per order makes every order too slow to run.
 
 - **A socket**: `socket(webSocketLike): Transport`, taking anything with `send`, `close` and the events a browser's
   `WebSocket` and Node's `ws` share. Neither is imported. The token apack sends as a subprotocol is the host's to
@@ -340,9 +340,8 @@ ask outstanding for many windows with progress arriving is left alone.
 
 ## Step 8. What caused a frame, and what may be seen of it
 
-Built, in `src/link.ts`: `send(frame, { cause, private })`, `onFrame(heard(frame, cause))`, `onTraffic`, and
-`toText` in `src/frames.ts`. `join` does not yet take a cause: `Port` has nowhere to put one, and that is the
-kernel's to add when it reaches a link through a port.
+Built, in `src/link.ts` and `src/peer.ts`: `send(frame, { cause, private })`, `onFrame(heard(frame, cause))`,
+`onTraffic`, `bytesOf` in `src/frames.ts`, and `how?: Sending` across `Port` methods and callbacks.
 
 - **Cause.** `send(frame, cause?)`, and a frame arrives with the cause it was sent with. A cause is a short text
   the kernel makes, naming the step that sent the frame. A link passes it on and never reads it.

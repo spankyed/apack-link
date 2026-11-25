@@ -32,15 +32,20 @@
     "node": ">=24.12.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "typecheck:floor": "node node_modules/typescript-5.7/bin/tsc --noEmit -p tsconfig.floor.json",
+    "test": "vitest run --project node",
+    "test:browser": "vitest run --project browser",
     "test:watch": "vitest",
     "prepack": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build",
     "reference:check": "node scripts/reference.mjs",
     "reference:update": "node scripts/reference.mjs --write",
+    "package:lint": "node scripts/package-lint.mjs",
     "package:smoke": "node scripts/package-smoke.mjs",
-    "workflows:check": "node scripts/workflows-check.mjs"
+    "workflows:check": "node scripts/workflows-check.mjs",
+    "fuzz": "node scripts/fuzz.mjs",
+    "mutants": "stryker run"
   },
   "peerDependencies": {
     "@apackdev/orderings": "*"
@@ -52,10 +57,17 @@
   },
   "devDependencies": {
     "@apackdev/orderings": "https://github.com/spankyed/apack-orderings/releases/download/pkg-3af72783b7de9ea1d32a8ac8d33ecd562fce0933/apackdev-orderings-0.1.0.tgz",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@msgpack/msgpack": "^3.1.3",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^24.1.0",
     "@types/ws": "^8.18.2",
+    "@vitest/browser-playwright": "^4.1.12",
+    "playwright": "^1.65.1",
+    "publint": "^0.3.25",
     "typescript": "^5.9.3",
+    "typescript-5.7": "npm:typescript@~5.7.3",
     "vitest": "^4.1.12",
     "ws": "^8.23.0"
   }

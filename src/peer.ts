@@ -8,8 +8,8 @@
 // What a system says to the other end waits until the views it runs for that end have caught up: the hold. A view's
 // `shown` and `over` are what is waited for, and go at once; everything else the system says is one queue, in the
 // order it was said, and leaves a round at a time once every view the round asked has called back.
-import type { Failure, Frame, Id } from './frames.ts'
-import type { Link, Prepared, Sending, Size } from './link.ts'
+import type { Failure, Frame, Id } from './frames.js'
+import type { Link, Prepared, Sending, Size } from './link.js'
 
 /** How an ask ended. A system's own outcomes pass through as they are; these are the ones a link makes. */
 export type Outcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly failure: Failure }

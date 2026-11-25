@@ -53,9 +53,9 @@
 // What is to be done is done in the order it is given, after the step that gave it: a step is whole before
 // anything it asks for happens. A frame handed over is always the last thing a step asks for, so that whatever a
 // listener does in answer comes before anything more of the same message is taken.
-import { head, joined, json, lengthOf, sizeOf, slice, type Codec } from './codec.ts'
-import { asFrame, type Frame } from './frames.ts'
-import type { Message } from './transport.ts'
+import { head, joined, json, lengthOf, sizeOf, slice, type Codec } from './codec.js'
+import { asFrame, type Frame } from './frames.js'
+import type { Message } from './transport.js'
 
 /** Which link this is. Both ends ship together, so there is one, and an end that says another is refused. */
 export const LINK = 1
@@ -916,7 +916,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     if (!hasOnly(arrived, at === 0 ? PART_KEYS : PART_CONT_KEYS)) { unknown(); return false }
     if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
-    if (at === 0 ? s.parting !== undefined || of > largest : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
+    if (at === 0 ? s.parting !== undefined || of > largest - causeSize : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
     if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: causeSize, ...(s.tapped ? { size: 0 } : {}), ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = s.parting!
     // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is

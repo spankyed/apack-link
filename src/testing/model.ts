@@ -13,9 +13,9 @@
 //
 // A run of real ends is held to it as it happens. Each link a scenario is given is put under the model, which notes
 // what it is sent, what it hands over and how it ends, and finds the first of those the model could not have done.
-import { json, type Codec } from '../codec.ts'
-import type { Frame } from '../frames.ts'
-import type { Bye, Ending, Link, Prepared, Sending } from '../link.ts'
+import { json, type Codec } from '../codec.js'
+import type { Frame } from '../frames.js'
+import type { Bye, Ending, Link, Prepared, Sending } from '../link.js'
 
 export interface Model {
   /** Puts a link under the model, before anything is sent on it or listens to it. What comes back is the link to use. */

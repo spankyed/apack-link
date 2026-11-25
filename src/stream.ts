@@ -4,7 +4,7 @@
 // What arrives is kept as the pieces it came in, and a message is joined once, when all of it is here: the work
 // is in proportion to the bytes that arrive, however small the pieces. A head may claim no more than `most`, so
 // what is kept waiting for a message is bounded by it, and a link is told `most`, so it hands over nothing longer.
-import { once, type Message, type Transport } from './transport.ts'
+import { once, type Message, type Transport } from './transport.js'
 
 /** What a Node `Duplex` has, and all a link uses of one. */
 export interface DuplexLike {

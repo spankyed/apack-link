@@ -43,7 +43,7 @@ chose; each end numbers its own asks and its own views from 1, and uses each onc
 | `{"kind":"tell","to":T,"event":E}` | either | Something happened. Nobody waits. |
 | `{"kind":"ask","id":I,"to":T,"name":N,"args":A}` | the asker | A question, answered once. |
 | `{"kind":"progress","id":I,"update":U}` | the one answering | What it says before it answers. |
-| `{"kind":"answer","id":I,"outcome":O}` | the one answering | How the ask ended. `O` is `{"ok":true,"value":V}` or `{"ok":false,"failure":{"kind":K,"message":M}}`. Nothing with its id follows. |
+| `{"kind":"answer","id":I,"outcome":O}` | the one answering | How the ask ended. `join` sends `{"ok":true,"value":V}` or `{"ok":false,"failure":{"kind":K,"message":M}}`; `asFrame` treats `outcome` as opaque. Nothing with its id follows. |
 | `{"kind":"left","id":I}` | the asker | Whoever asked has gone: what is being done for them can stop. |
 | `{"kind":"follow","id":I,"feature":F,"view":V,"args":A}` | the follower | Follow a view: its result, and each changed result after it. |
 | `{"kind":"shown","id":I,"update":U}` | the one running it | What the view shows now. |
