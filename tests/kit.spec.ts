@@ -1,7 +1,7 @@
 // The codec built in, and the pieces of the testing kit a spec of another end is written with: each does what its
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
-import { asFrame, join, json, dial, listen, memoryPair, type Port, type Transport } from '../src/index.ts'
+import { asFrame, bytesOf, join, json, dial, listen, memoryPair, type Port, type Transport } from '../src/index.ts'
 import { auditIndependence, everyOrder, explore } from '@apackdev/orderings'
 import { asking, carried, desk, holds, laneClock, made, memoryEnds, model, same, scheduledPair, trackedJoin, trackedLater, trackedLink, watching } from '../src/testing/index.ts'
 
@@ -50,8 +50,29 @@ describe('asFrame', () => {
       null, 'tell', [], { kind: 'shout', id: 1 },
       { kind: 'tell', event: 1 }, { kind: 'ask', id: 1, to: 't', args: 1 }, { kind: 'follow', id: 1, feature: 'f', args: 1 },
       { kind: 'left', id: 0 }, { kind: 'left', id: 1.5 }, { kind: 'left', id: '1' },
-      { kind: 'over', id: 1, failure: 'gone' }, { kind: 'over', id: 1, failure: { kind: 'gone' } },
+      { kind: 'over', id: 1, failure: 'gone' }, { kind: 'over', id: 1, failure: null }, { kind: 'over', id: 1, failure: [] }, { kind: 'over', id: 1, failure: { kind: 'gone' } },
     ]) expect(asFrame(arrived)).toBeUndefined()
+  })
+})
+
+describe('bytesOf', () => {
+  it('matches TextEncoder UTF-8 byte lengths across ASCII, BMP, surrogate-pair, and lone-surrogate boundaries', () => {
+    const encoder = new TextEncoder()
+    const samples = [
+      '',
+      '\u0000\u007f',
+      '\u0080\u07ff',
+      '\u0800\ud7ff\ue000\uffff',
+      '\ud800\udc00', // lowest surrogate pair (U+10000)
+      '\udbff\udfff', // highest surrogate pair (U+10FFFF)
+      '\ud800',       // lone high surrogate at end
+      '\udbff',       // lone high surrogate at end
+      '\ud800a',      // high surrogate followed by non-low
+      '\ud7ff\udc00', // BMP below high surrogate followed by lone low surrogate
+      '\udc00\udc00', // two lone low surrogates
+      '\ue000\udc00', // BMP above surrogate range followed by lone low surrogate
+    ]
+    for (const s of samples) expect(bytesOf(s)).toBe(encoder.encode(s).byteLength)
   })
 })
 

@@ -85,6 +85,11 @@ end until the views it runs for that end have caught up.
   before anything held leaves, so nothing held passes a live view's update. A view with no
   `caughtUp` is not waited on. An end that runs no views for the other holds nothing. A view followed after
   something was held is not waited on for it.
+- **Bounded against stalled views.** The hold is bounded (`JoinOptions.bound`, 16 384 frames and 64 MiB unless
+  given). If one or more views stall and the hold crosses its bound, only the stalled view(s) blocking the oldest
+  round are ended `over` (`failed`, `"The view stalled"`) and stopped strictly ahead of the held frames, reporting
+  payload-free `HoldStall` diagnostics via `JoinOptions.onStall`. Healthy views, active asks, and the link itself
+  continue uninterrupted without ever releasing a frame ahead of a live view.
 - **Refused where it was said.** A held frame is put into text as it is held (`Link.prepare`), which is how it is
   known whether it can be sent: a `tell` that cannot be throws to the system that told it, and an answer that
   cannot be is answered `failed` in its place, in its place in the queue. That text is what leaves when the hold
@@ -336,7 +341,7 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
 
 ## What caused a frame, and what may be seen of it
 
-- **Cause.** `send(frame, { cause })`. A cause is a short text the kernel makes, naming the step that sent the
+- **Cause.** `send(frame, { cause })` (and `Port` methods/callbacks via `how?: Sending`). A cause is a short text the kernel makes, naming the step that sent the
   frame. It crosses beside the frame (`{ "seq", "frame", "cause" }`), and `onFrame` hears it. A link never reads
   it. It is 1024 bytes at most as it crosses, and a frame sent with a longer one is refused where it is sent: it
   crosses whole beside a frame or its first part, so what a link needs of what carries it counts it in. A result that overtook another while waiting carries its own cause.
@@ -348,8 +353,9 @@ An ask is delivered at most once, because a frame is: an answer lost on the way 
   re-encoding an arriving entry throws, the error goes to `thrown`, that one tap event is skipped, and the frame is
   still handed over as normal. A tap that throws is the tap's to answer for; the link goes on.
 - **Private.** `send(frame, { private: true })` marks it on the wire (`"private": true`). A tap at either end is
-  told only that it crossed, its number and its size: no kind, id, name or cause. This is what a secret travels
-  in. The frame itself reaches the other end as any other does.
+  told only that it crossed, its number and its size: no kind, id, name or cause. This redacts tap metadata only
+  (it is not wire encryption; confidentiality and authentication belong to the transport). The frame itself reaches
+  the other end as any other does.
 - **Nothing a link reports holds what a frame carries.** A frame that cannot be put into text is refused with
   `TypeError('A frame could not be put into text')`: what JSON says of a value it cannot take names its keys, and a
   key is something a frame carries. An ending holds kinds, numbers and sizes.
@@ -475,10 +481,12 @@ what the package exports and nothing else, to be run over any pair of ends, so t
 end is held to the same file.
 
 `tests/scenarios.spec.ts` runs every scenario over memory under every order, and over a WebSocket (a real `ws`
-server and client), a `worker_threads` message port and a `node:net` socket path under forty orders each, from a
+server and client), a `worker_threads` message port and a `node:net` socket path under twenty orders each, from a
 seed. Over something real, `carried` (`src/testing/carried.ts`) puts what arrives at each end into a lane of its
 direction, so the schedule chooses among what has arrived, and `Schedule.outside` keeps a run from coming to rest
-while a message or a close is on its way.
+while a message or a close is on its way. `tests/browser/browser.spec.ts` exercises `port()` and `socket()` in
+headless Chromium across a real Web Worker and WebSocket server, and `scripts/fuzz.mjs` fuzzes malformed wire
+inputs, peer-hold stall races, and Unicode chunking.
 
 Every one of those runs is held to a model as well as to what its scenario checks. The model
 (`src/testing/model.ts`) is what two ends are to each other with nothing about how: a queue each way, where an end

@@ -1,9 +1,9 @@
 // Two ends of a link in memory whose connection can be dropped, or whose second end can restart, at any moment a
 // scenario chooses: what a link that comes back is held to.
-import { dial, listen, type Clock, type Link, type Listener, type Options } from '../link.ts'
-import { memoryPair, type Message, type Transport } from '../transport.ts'
-import type { Model } from './model.ts'
-import type { Ends } from './scenarios.ts'
+import { dial, listen, type Clock, type Link, type Listener, type Options } from '../link.js'
+import { memoryPair, type Message, type Transport } from '../transport.js'
+import type { Model } from './model.js'
+import type { Ends } from './scenarios.js'
 import type { Lane, Resource, Schedule, TaskOptions } from '@apackdev/orderings'
 
 /**

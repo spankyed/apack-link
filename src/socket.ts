@@ -1,7 +1,7 @@
 // A link carried on a WebSocket: a browser's, or Node's `ws`, or anything with the parts of one they share. Neither
 // is imported. The socket is opened by whoever holds it, with whatever it needs to be let in.
-import { sizeOf } from './codec.ts'
-import { once, type Message, type Transport } from './transport.ts'
+import { sizeOf } from './codec.js'
+import { once, type Message, type Transport } from './transport.js'
 
 /** What a browser's `WebSocket` and Node's `ws` both have, and all a link uses of either. */
 export interface WebSocketLike {

@@ -1,9 +1,9 @@
 // A system to put at an end of a link in a scenario: a port that notes everything it is told, asked and has
 // followed, and does only what the scenario has it do. And the other side of each: an ask and a view as whoever
 // made them sees them.
-import type { Failure } from '../frames.ts'
-import type { Sending } from '../link.ts'
-import type { Following, Outcome, Port } from '../peer.ts'
+import type { Failure } from '../frames.js'
+import type { Sending } from '../link.js'
+import type { Following, Outcome, Port } from '../peer.js'
 
 /** An ask as the system asked sees it. */
 export interface Asked {

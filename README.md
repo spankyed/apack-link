@@ -49,11 +49,16 @@ toBackend.ask('threads', 'CREATE', { topic: 'one' }, (update) => {}, (outcome) =
 ```
 
 What `ask` returns is to be called when whoever asked has gone: the other end is told, and nothing more is heard
-for it. A `Following`'s `stop` does the same for a view.
+for it. A `Following`'s `stop` does the same for a view. Every `Port` method and callback accepts an optional
+`how?: Sending` (`{ cause, private }`) to attach a causal tag or redact tap metadata.
 
 A system that runs views gives each `Following` a `caughtUp(then, soon)`: call `then` once this view has been
 shown everything kept before the call. `soon` is true when an asker is blocked on it. With it, an answer reaches
-the other end after the views that end follows show what the answer is about.
+the other end after the views that end follows show what the answer is about. `join(link, mine, options)` bounds
+that hold (`options.bound`, 16 384 frames and 64 MiB unless given): if a view stalls and the hold crosses its
+bound, only the stalled view(s) blocking the oldest round are ended `over` and stopped (with payload-free
+`HoldStall` diagnostics via `options.onStall`), keeping the link and all healthy views alive without ever releasing
+a frame ahead of a live view.
 
 ### Two ends that are not alike
 
@@ -151,7 +156,9 @@ Nothing else. A new frame is a new thing a state can say, and is added with the 
 ### Across a connection that drops
 
 - **A link outlives what carries it.** Each end keeps what it sent until the other says it took it, and a new
-  connection picks up where each end got to, within a frame in parts too. Nothing is taken twice.
+  connection picks up where each end got to, within a frame in parts too. Nothing is taken twice. A peer's `taken`
+  acknowledges link-level receipt into `onFrame`, not application persistence or commit; if a link ends
+  `disconnected` or `lost` while an ask is in flight, the other end may or may not have processed it.
 - **Nothing is handed to a stranger.** An end that opens its own connections sends nothing until it has met the
   other end, so a window that starts before its backend listens starts with whichever backend it meets.
 - **A connection takes a link's place only once it fits.** The end that listens keeps the connection it has
@@ -192,8 +199,8 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 
 ### Bounded
 
-- **How far behind the other end is, is what it has not said it took.** Past a mark (`bound.kept`) a link stops
-  numbering what is sent, and it waits.
+- **How far behind the other end is, is what it has not said it took.** Past a high-water mark (`bound.kept`) a
+  link stops numbering what is sent, and it waits.
 - **Only a view's overtaken result is let go.** One that a later result of the same view overtakes while it
   waits is dropped: only the last matters. Nothing else is.
 - **Past the bound on what waits (`bound.waiting`) the link ends `overrun`,** saying by how much (counting each waiting frame with its cause).
@@ -227,7 +234,9 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 - **What caused a frame crosses with it.** `send(frame, { cause })`, and `onFrame` hears the cause.
 - **A tap never sees what a frame carries.** `onTraffic` is told of each frame that begins after it is added, out
   and in: its direction, number, kind, id, name, size and cause. Of one sent `{ private: true }`, only that it
-  crossed, its number and its size. Removing the last tap turns tapping off until another is added.
+  crossed, its number and its size. Removing the last tap turns tapping off until another is added. Note that
+  `private: true` redacts tap metadata only; it is not wire encryption (confidentiality and authentication belong
+  to the transport).
 - **Nothing a link reports holds what a frame carries.** An ending names a kind, a number or a size, and what is
   thrown for a frame that cannot be encoded is the link's own.
 
@@ -367,10 +376,15 @@ It has no dependencies at run time, and runs in a window and in Node from one so
 ```bash
 npm ci
 npm run typecheck
+npm run typecheck:floor    # TypeScript 5.7 consumer floor check
 npm test
+npm run test:browser       # real Chromium + Web Worker MessagePort and WebSocket checks
 npm run build
 npm run reference:check    # REFERENCE.md as the source says; :update writes it
-npm run package:smoke      # the tarball installed elsewhere, and the README's first example run from it
+npm run package:lint       # publint --strict and @arethetypeswrong/cli (attw)
+npm run package:smoke      # the tarball installed elsewhere, consumer types checked, and the README example run
+npm run fuzz               # seeded wire, peer-hold, and Unicode chunker fuzzing
+npm run mutants            # Stryker mutation testing on core/peer/frames/codec
 ```
 
 Node 24.12 or later.

@@ -8,6 +8,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -16,6 +19,7 @@ jobs:
   suite:
     name: suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -28,17 +32,35 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run typecheck:floor
       - run: npm run build
       - run: npm test
+      - run: npm run fuzz
       - run: npm run reference:check
       - run: npm run workflows:check
-      # The package as a consumer gets it: packed, installed elsewhere, and the README's example run from it.
+      - run: npm run package:lint
+      # The package as a consumer gets it: packed, installed elsewhere, consumer types checked, and the README's example run from it.
       - run: npm run package:smoke
+
+  browser:
+    name: browser (chromium)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
 
   # The one check a release waits on: every job above passed.
   ci-pass:
     if: always()
-    needs: [suite]
+    needs: [suite, browser]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - run: test "${{ needs.suite.result }}" = "success"
+      - run: test "${{ needs.suite.result }}" = "success" && test "${{ needs.browser.result }}" = "success"

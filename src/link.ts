@@ -8,12 +8,12 @@
 //
 // What a listener throws is never the link's. Every listener is still called and every frame of a batch still
 // taken, and what was thrown is handed to `thrown`, or thrown again in a turn of its own.
-import { core, firstOf, isHello, isObject, LEAST, LINK, rawLimitOf, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.ts'
-import { json, type Codec } from './codec.ts'
-import type { Frame } from './frames.ts'
-import type { Message, Transport } from './transport.ts'
+import { core, firstOf, isHello, isObject, LEAST, LINK, rawLimitOf, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.js'
+import { json, type Codec } from './codec.js'
+import type { Frame } from './frames.js'
+import type { Message, Transport } from './transport.js'
 
-export { LEAST, LINK, type Bye, type Ending, type Sending, type Size, type Traffic } from './core.ts'
+export { LEAST, LINK, type Bye, type Ending, type Sending, type Size, type Traffic } from './core.js'
 
 export interface Link {
   /**

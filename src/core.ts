@@ -53,9 +53,9 @@
 // What is to be done is done in the order it is given, after the step that gave it: a step is whole before
 // anything it asks for happens. A frame handed over is always the last thing a step asks for, so that whatever a
 // listener does in answer comes before anything more of the same message is taken.
-import { head, joined, json, lengthOf, sizeOf, slice, type Codec } from './codec.ts'
-import { asFrame, type Frame } from './frames.ts'
-import type { Message } from './transport.ts'
+import { head, joined, json, lengthOf, sizeOf, slice, type Codec } from './codec.js'
+import { asFrame, type Frame } from './frames.js'
+import type { Message } from './transport.js'
 
 /** Which link this is. Both ends ship together, so there is one, and an end that says another is refused. */
 export const LINK = 1

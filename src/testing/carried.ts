@@ -1,7 +1,7 @@
 // Two ends of something real that carries a link, put on a schedule: what arrives at each end is put into a lane of
 // its direction, so a scenario runs over a socket, a port or a stream as it does over memory, and the schedule
 // chooses among what has arrived. What is on its way is outside the schedule, and a run waits for it.
-import type { Message, Transport } from '../transport.ts'
+import type { Message, Transport } from '../transport.js'
 import type { Schedule } from '@apackdev/orderings'
 
 /** Wraps two joined transports so that what crosses them is run in a lane of the schedule for each direction. */

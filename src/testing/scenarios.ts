@@ -5,15 +5,15 @@
 // A scenario builds what it checks on a schedule and returns what must hold once everything has come to rest.
 // Whatever a system does in answer to something arriving it does in a lane of its own, so that it falls in every
 // place among what crosses the link.
-import type { Frame } from '../frames.ts'
-import type { Link } from '../link.ts'
-import { join } from '../peer.ts'
-import { holds, same } from './check.ts'
-import { asking, desk, watching } from './desk.ts'
+import type { Frame } from '../frames.js'
+import type { Link } from '../link.js'
+import { join } from '../peer.js'
+import { holds, same } from './check.js'
+import { asking, desk, watching } from './desk.js'
 import type { Schedule } from '@apackdev/orderings'
-import { made } from './views.ts'
-import type { Dropping } from './dropping.ts'
-import type { Ending } from '../link.ts'
+import { made } from './views.js'
+import type { Dropping } from './dropping.js'
+import type { Ending } from '../link.js'
 
 /** Two ends of one link. */
 export interface Ends { readonly a: Link; readonly b: Link }

@@ -1,4 +1,7 @@
 node_modules/
 dist/
+.stryker-tmp/
+.vitest-attachments/
+reports/
 .DS_Store
 *.log

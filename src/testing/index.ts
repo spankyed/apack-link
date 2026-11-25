@@ -1,21 +1,21 @@
 // What a spec of a link is written with, here and anywhere an end of a link is built: two ends in memory whose
 // directions are lanes of a schedule, and the scenarios themselves, to be run over any pair of ends. The schedule
 // that runs a scenario under every order is `@apackdev/orderings`, which whoever uses this entry installs.
-import { dial, listen, type Link, type Listener, type Options, type Prepared, type Sending } from '../link.ts'
-import type { Frame } from '../frames.ts'
-import { join, type Following, type JoinOptions, type Port } from '../peer.ts'
-import { memoryPair, type Transport } from '../transport.ts'
-import type { Model } from './model.ts'
-import type { Ends } from './scenarios.ts'
+import { dial, listen, type Link, type Listener, type Options, type Prepared, type Sending } from '../link.js'
+import type { Frame } from '../frames.js'
+import { join, type Following, type JoinOptions, type Port } from '../peer.js'
+import { memoryPair, type Transport } from '../transport.js'
+import type { Model } from './model.js'
+import type { Ends } from './scenarios.js'
 import type { Lane, Resource, Schedule } from '@apackdev/orderings'
 
-export { carried } from './carried.ts'
-export { holds, same } from './check.ts'
-export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.ts'
-export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.ts'
-export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.ts'
-export { model, underModel, type Model, type ModelOptions } from './model.ts'
-export { made, type Made } from './views.ts'
+export { carried } from './carried.js'
+export { holds, same } from './check.js'
+export { asking, desk, watching, type Asked, type Asking, type Desk, type Viewed, type Watching } from './desk.js'
+export { droppingMemoryEnds, laneClock, type Dropping } from './dropping.js'
+export { hold, peers, resume, withoutTheHold, type DroppingScenario, type Ends, type KitScenario } from './scenarios.js'
+export { model, underModel, type Model, type ModelOptions } from './model.js'
+export { made, type Made } from './views.js'
 
 /** What a pair of ends is made over: given a schedule, two links. */
 export type MakeEnds = (schedule: Schedule) => Ends

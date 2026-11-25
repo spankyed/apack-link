@@ -1,6 +1,6 @@
 // A link carried on a message port: a browser's `MessagePort`, Node's `worker_threads` port, or Electron's
 // `MessagePortMain`. None is imported.
-import { once, type Message, type Transport } from './transport.ts'
+import { once, type Message, type Transport } from './transport.js'
 
 /** A value as a `Uint8Array` of this realm when it is one, even if it crossed from another realm, or nothing. */
 const toBytes = (value: unknown): Uint8Array | undefined => {

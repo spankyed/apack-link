@@ -1,4 +1,4 @@
-// The hold's scenarios are run with the others in carriers.spec.ts. Here they are shown able to fail: with views
+// The hold's scenarios are run with the others in scenarios.spec.ts. Here they are shown able to fail: with views
 // that offer no `caughtUp`, there is an order in which each does.
 import { describe, expect, it } from 'vitest'
 import { explore } from '@apackdev/orderings'

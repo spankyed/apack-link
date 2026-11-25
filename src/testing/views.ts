@@ -3,8 +3,8 @@
 // gets to it, and asked whether it has caught up, it calls back in the same lane, after what it was to show. Asked
 // again before it has called back, with nothing new to show between, it calls both back at once, as a view that
 // runs once for every caller since it last ran does.
-import type { Following } from '../peer.ts'
-import type { Viewed } from './desk.ts'
+import type { Following } from '../peer.js'
+import type { Viewed } from './desk.js'
 import type { Schedule } from '@apackdev/orderings'
 
 export interface Made {
