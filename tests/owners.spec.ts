@@ -604,7 +604,8 @@ describe('owners over real WebSockets', () => {
       backendLinks.push(entry)
       link.onEnd((e) => { entry.ended.push(e) })
     })
-    currentHandler = (ws, owner) => { taking.take(socket(ws), owner) }
+    let taken = 0
+    currentHandler = (ws, owner) => { taken++; taking.take(socket(ws), owner) }
 
     const win1Ended: Ending[] = []
     let win1Opens = 0
@@ -617,11 +618,11 @@ describe('owners over real WebSockets', () => {
 
     // Silent socket that never sends hello
     const silent = openSocket('silent')
-    await eventOnce(silent, 'open')
     let silentClosed = false
     silent.on('close', () => { silentClosed = true })
 
-    await until(() => backendLinks.length === 2)
+    // Wait until both sessions are established AND the silent socket has been registered with `taking.take`.
+    await until(() => backendLinks.length === 2 && taken === 3)
 
     // Planned restart: sends `bye: 'restarting'` to every active session and closes silent sockets too.
     // A reopening dialler (`win1`) stays alive to reconnect (until a new backend answers with a new session -> lost),
@@ -646,14 +647,14 @@ describe('owners over real WebSockets', () => {
     expect(() => taking.close('ended')).not.toThrow()
 
     // Separate accept instance with `close('ended')` ends reopening diallers permanently.
-    const endedTaking = accept<string>(() => {})
+    let win3Accepted = 0
+    const endedTaking = accept<string>(() => { win3Accepted++ })
     currentHandler = (ws, owner) => { endedTaking.take(socket(ws), owner) }
     const win3Ended: Ending[] = []
     let win3Opens = 0
     const win3 = dial(() => { win3Opens++; return socket(openSocket('w3')) }, { reopen: { clock: timers, first: 15, most: 50 } })
     win3.onEnd((e) => { win3Ended.push(e) })
-    await until(() => win3Opens === 1)
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await until(() => win3Accepted === 1)
     endedTaking.close('ended')
     await until(() => win3Ended.length === 1)
     expect(win3Ended).toEqual([{ why: 'goodbye', bye: 'ended' }])
