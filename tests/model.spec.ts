@@ -2,7 +2,7 @@
 // way, are each found, and what a link may do is let pass.
 import { describe, expect, it } from 'vitest'
 import { dial, listen, memoryPair, type Bye, type Ending, type Frame, type Link, type Transport } from '../src/index.ts'
-import { everyOrder, sample, type Schedule } from '@apackdev/orderings'
+import { auditIndependence, everyOrder, type Schedule } from '@apackdev/orderings'
 import { droppingMemoryEnds, memoryEnds, model, underModel, type Model } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
@@ -364,7 +364,17 @@ describe('what the model finds', () => {
 
 describe('real ends under the model', () => {
   /** A schedule that never gets to anything: whatever is sent is never handed over. */
-  const never: Schedule = { later: () => {}, does: () => {}, work: () => new Promise(() => {}), breaks: () => new Promise(() => {}), outside: () => () => {}, clock: { now: () => 0, monotonic: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) } }
+  const never: Schedule = {
+    later: () => {},
+    does: () => {},
+    work: () => new Promise(() => {}),
+    breaks: () => new Promise(() => {}),
+    outside: () => () => {},
+    resource: () => ({}),
+    read: () => {},
+    write: () => {},
+    clock: { now: () => 0, monotonic: () => 0, after: () => () => {}, sleep: () => new Promise(() => {}) },
+  }
 
   it("the kit's ends are under the model they are given", () => {
     const held = model()
@@ -406,9 +416,8 @@ describe('real ends under the model', () => {
   })
 
   it('holds a link to it where frames cross in parts and no more than one is kept at a time', async () => {
-    const options = { part: 64, bound: { kept: { frames: 1, size: 64 }, frame: 4096 } }
-    // Each part and each word that it was taken is one more thing in the order: too many to run them all.
-    const ran = await sample((schedule) => underModel((held) => {
+    const options = { part: 64, bound: { kept: { frames: 1, size: 64 }, frame: 4096 }, tracked: true }
+    const scenario = (schedule: Schedule) => underModel((held) => {
       const { a, b } = memoryEnds(schedule, options, held)
       a.send(tell('x'.repeat(300)), { cause: 'a long one' })
       a.send(shown(1, 'first'))
@@ -416,9 +425,12 @@ describe('real ends under the model', () => {
       a.send(tell('last'))
       b.send(tell('y'.repeat(100)))
       return () => {}
-    }), { seed: 11, runs: 400 })
-    if (ran.failure) throw ran.failure.error
-    expect(ran.orderings).toBe(400)
+    })
+    // Optimal DPOR collapses independent cross-direction part/ACK interleavings so the full state space is exhaustive.
+    expect(await everyOrder(scenario)).toBeGreaterThan(0)
+    const audited = await auditIndependence(scenario, { seed: 11, runs: 20, swaps: 50 })
+    expect(audited.violation).toBeUndefined()
+    expect(audited.checked).toBeGreaterThan(0)
   })
 
   it('finds two links carried on something that loses what it is handed', () => {

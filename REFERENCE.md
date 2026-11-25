@@ -736,7 +736,7 @@ A clock that keeps no time, for a link on a schedule: what is asked for runs whe
 lane given, however long was asked for, unless it is called off first.
 
 ```ts
-laneClock(schedule: Schedule, lane: Lane): Clock
+laneClock(schedule: Schedule, lane: Lane, options?: TaskOptions): Clock
 ```
 
 ### `made`
@@ -777,7 +777,7 @@ Two ends of a link in memory, on a schedule, made with `options`: the first dial
 this package's own scenarios are run over. Given a model, each end is put under it.
 
 ```ts
-memoryEnds(schedule: Schedule, options?: Options, held?: Model): Ends
+memoryEnds(schedule: Schedule, options?: Options & { readonly tracked?: boolean; readonly names?: readonly [string, string]; }, held?: Model): Ends
 ```
 
 ### `model`
@@ -845,13 +845,50 @@ Throws unless the two are the same all the way down. `what` says what was being 
 same(actual: unknown, expected: unknown, what: string): void
 ```
 
+### `ScheduledOptions`
+
+Options for `scheduledPair` when opting into Optimal DPOR tracking.
+
+```ts
+interface ScheduledOptions {
+  /**
+   * Marks both directions as tracked for Optimal DPOR: allocates one `Resource` per end (or uses `resources`) so
+   * deliveries, sends, and closes on disjoint ends commute while operations on the same end conflict. Only enable
+   * when listeners attached to both ends report their own shared-state accesses. Defaults to `false`.
+   */
+  readonly tracked?: boolean
+  /** Pre-allocated resources `[a, b]` for the two ends, for callers that share them with `trackedLink` or `trackedJoin`. */
+  readonly resources?: readonly [Resource, Resource]
+  /** Pre-allocated lanes `[aToB, bToA]` to reuse across multiple connections of the same pair (e.g. `reopen`). */
+  readonly lanes?: readonly [Lane, Lane]
+}
+```
+
 ### `scheduledPair`
 
 Two ends in memory on a schedule: each direction is a lane of its own, so what crosses one way keeps its order
 and the schedule chooses between the two, and whatever else a spec adds.
 
 ```ts
-scheduledPair(schedule: Schedule, names?: readonly [string, string]): [Transport, Transport]
+scheduledPair(schedule: Schedule, names?: readonly [string, string], options?: ScheduledOptions): [Transport, Transport]
+```
+
+### `trackedJoin`
+
+Joins `link` and `mine` while attributing every peer-hold, port-call, and `caughtUp` callback mutation on this end
+to `resource` for Optimal DPOR.
+
+```ts
+trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port
+```
+
+### `trackedLink`
+
+Wraps a `Link` (or `Listener`) so direct calls on this end record `read()`/`write()` against `resource` for
+Optimal DPOR, keeping pure protocol activity on disjoint ends commutative.
+
+```ts
+trackedLink<L extends Link>(link: L, schedule: Schedule, resource: Resource): L
 ```
 
 ### `underModel`

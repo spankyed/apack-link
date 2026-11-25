@@ -2,8 +2,8 @@ import { once as eventOnce } from 'node:events'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
 import { accept, dial, memoryPair, socket, timers, type Clock, type Ending, type Frame, type Link, type Message, type Transport } from '../src/index.ts'
-import { everyOrder, sample, type Schedule } from '@apackdev/orderings'
-import { holds, laneClock, same } from '../src/testing/index.ts'
+import { auditIndependence, explore, type Schedule } from '@apackdev/orderings'
+import { holds, laneClock, same, scheduledPair, trackedLink } from '../src/testing/index.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
 /** A clock that keeps no time: what is asked for runs a turn later, however long was asked for. */
@@ -354,6 +354,7 @@ describe('a session has an owner', () => {
  * two for one owner, and none ends that its owner could still go on with.
  */
 const comeAndGo = (does: ReadonlyArray<'drops' | 'reloads'>) => (schedule: Schedule) => {
+  const resBackend = schedule.resource('backend')
   /** Each session the backend was handed and has not seen end. */
   const kept: Link[] = []
   let said = false
@@ -371,26 +372,41 @@ const comeAndGo = (does: ReadonlyArray<'drops' | 'reloads'>) => (schedule: Sched
   })
   let pages = 0
   const page = () => {
-    const lanes = [{ label: `page ${++pages} to backend` }, { label: `backend to page ${pages}` }] as const
+    const num = ++pages
+    const resPage = schedule.resource(`page:${num}`)
+    const lanes = [{ label: `page ${num} to backend` }, { label: `backend to page ${num}` }] as const
     let current: Transport | undefined
-    const link = dial(() => {
-      const [left, right] = memoryPair((run) => schedule.later(lanes[0], run), (run) => schedule.later(lanes[1], run))
+    const reopenClock = laneClock(schedule, lanes[0], { tracked: true })
+    const link = trackedLink(dial(() => {
+      schedule.write(resPage)
+      schedule.write(resBackend)
+      const [left, right] = scheduledPair(schedule, [`page ${num}`, 'backend'], {
+        tracked: true,
+        resources: [resPage, resBackend],
+        lanes,
+      })
       current = left
       backend.take({ ...right, onData: (heard) => { right.onData((message) => { taking = true; try { heard(message) } finally { taking = false } }) } }, 'the window')
       return left
-    }, { reopen: { clock: laneClock(schedule, lanes[0]) } })
+    }, {
+      reopen: {
+        clock: {
+          after: (ms, run) => reopenClock.after(ms, () => { schedule.write(resPage); run() }),
+        },
+      },
+    }), schedule, resPage)
     return { link, drop: () => { current!.close() } }
   }
   let now = page()
   const main = { label: 'main to backend' }
-  schedule.does('the window',
+  schedule.does({ label: 'the window', tracked: true },
     ...does.map((what) => [what, what === 'drops'
       ? () => { now.drop() }
       // The page it was goes, and with it what it dialled with: nothing says so to the backend.
       : () => { now.link.close(); now = page() }] as const),
     ['is destroyed', () => {
       now.link.close()
-      schedule.later(main, () => { said = true; backend.gone('the window') })
+      schedule.later(main, () => { schedule.write(resBackend); said = true; backend.gone('the window') }, { tracked: true })
     }],
   )
   return () => {
@@ -402,19 +418,15 @@ const comeAndGo = (does: ReadonlyArray<'drops' | 'reloads'>) => (schedule: Sched
 const named = (does: ReadonlyArray<string>): string => [...does, 'is destroyed'].join(', then ')
 
 describe('an owner coming and going, under every order', () => {
-  for (const does of [[], ['drops'], ['reloads']] as const) {
+  for (const does of [[], ['drops'], ['reloads'], ['drops', 'reloads'], ['reloads', 'drops'], ['reloads', 'reloads']] as const) {
     it(`keeps one session at most, none once it is gone, and ends none it could go on with: ${named(does)}`, async () => {
-      expect(await everyOrder(comeAndGo(does), { limit: 2_000_000 })).toBeGreaterThan(1)
-    }, 600_000)
-  }
-})
-
-// Two things done before it is destroyed are more orders than can all be run.
-describe('an owner coming and going, under orders drawn from a seed', () => {
-  for (const does of [['drops', 'reloads'], ['reloads', 'drops'], ['reloads', 'reloads']] as const) {
-    it(`keeps one session at most, none once it is gone, and ends none it could go on with: ${named(does)}`, async () => {
-      const ran = await sample(comeAndGo(does), { seed: 23, runs: 20_000 })
-      expect(ran.failure).toBeUndefined()
+      const scenario = comeAndGo(does)
+      const ran = await explore(scenario, { limit: 200_000 })
+      if (ran.failure) throw ran.failure.error
+      expect(ran.complete).toBe(true)
+      expect(ran.orderings).toBeGreaterThan(1)
+      const audited = await auditIndependence(scenario, { seed: 23, runs: 20, swaps: 50 })
+      expect(audited.violation).toBeUndefined()
     }, 600_000)
   }
 })

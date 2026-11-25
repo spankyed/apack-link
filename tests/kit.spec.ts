@@ -2,8 +2,8 @@
 // doc says, so that a scenario that passes says something.
 import { describe, expect, it } from 'vitest'
 import { asFrame, join, json, dial, listen, memoryPair, type Port, type Transport } from '../src/index.ts'
-import { everyOrder } from '@apackdev/orderings'
-import { asking, carried, desk, holds, made, memoryEnds, same, watching } from '../src/testing/index.ts'
+import { auditIndependence, everyOrder, explore } from '@apackdev/orderings'
+import { asking, carried, desk, holds, laneClock, made, memoryEnds, same, scheduledPair, trackedJoin, trackedLink, watching } from '../src/testing/index.ts'
 
 describe('json', () => {
   it('gives back what it was given, from text and from the same text as bytes', () => {
@@ -167,5 +167,107 @@ describe('carried', () => {
         holds(!('most' in wrappedB) && !('waiting' in wrappedB), 'absent fields stay absent')
       }
     })
+  })
+})
+
+describe('Optimal DPOR tracking helpers', () => {
+  it('collapses independent traffic across two tracked links and passes auditIndependence', async () => {
+    const scenario = (schedule: Parameters<typeof memoryEnds>[0]) => {
+      const link1 = memoryEnds(schedule, { tracked: true, names: ['a1', 'b1'] })
+      const link2 = memoryEnds(schedule, { tracked: true, names: ['a2', 'b2'] })
+      const seen1: number[] = []
+      const seen2: number[] = []
+      link1.b.onFrame((frame) => { if (frame.kind === 'tell') seen1.push(frame.event as number) })
+      link2.b.onFrame((frame) => { if (frame.kind === 'tell') seen2.push(frame.event as number) })
+      link1.a.send({ kind: 'tell', to: 'x', event: 1 })
+      link1.a.send({ kind: 'tell', to: 'x', event: 2 })
+      link2.a.send({ kind: 'tell', to: 'y', event: 10 })
+      link2.a.send({ kind: 'tell', to: 'y', event: 20 })
+      return () => {
+        same(seen1, [1, 2], 'link1 delivered in order')
+        same(seen2, [10, 20], 'link2 delivered in order')
+      }
+    }
+    const reduced = await explore(scenario)
+    expect(reduced).toEqual({ orderings: 1, complete: true, reduced: true })
+    const unreduced = await explore(scenario, { reduce: false })
+    expect(unreduced.orderings).toBeGreaterThan(reduced.orderings)
+
+    const audited = await auditIndependence(scenario, { seed: 1, runs: 20, swaps: 50 })
+    expect(audited.violation).toBeUndefined()
+    expect(audited.checked).toBeGreaterThan(0)
+  })
+
+  it('attributes trackedJoin hold, caughtUp callbacks, and ask/follow/stop mutations to the end resource', async () => {
+    const scenario = (schedule: Parameters<typeof memoryEnds>[0]) => {
+      const resW = schedule.resource('window')
+      const resB = schedule.resource('backend')
+      const [left, right] = scheduledPair(schedule, ['window', 'backend'], { tracked: true, resources: [resW, resB] })
+      const winLink = dial(left)
+      const backLink = listen(right)
+      const events: string[] = []
+      const v1Lane = { label: 'view 1' }
+      const v2Lane = { label: 'view 2' }
+      const backendPort: Port = {
+        tell: () => {},
+        ask: (_to, _name, _args, _heard, ended) => {
+          ended({ ok: true, value: 'ok' })
+          return () => {}
+        },
+        follow: (_feature, view, _args, shown) => {
+          shown(0)
+          const lane = view === 'v1' ? v1Lane : v2Lane
+          return {
+            stop: () => {},
+            caughtUp: (then) => { schedule.later(lane, () => { then() }, { tracked: true }) },
+          }
+        },
+      }
+      const winPort: Port = {
+        tell: () => {},
+        ask: () => () => {},
+        follow: () => ({ stop: () => {} }),
+      }
+      const toBackend = trackedJoin(winLink, winPort, schedule, resW)
+      trackedJoin(backLink, backendPort, schedule, resB)
+      const f1 = toBackend.follow('f', 'v1', null, () => { events.push('v1') }, () => {})
+      const f2 = toBackend.follow('f', 'v2', null, () => { events.push('v2') }, () => {})
+      toBackend.ask('svc', 'GO', null, () => {}, (outcome) => { if (outcome.ok) events.push('answered') })
+      schedule.does({ label: 'cleanup', tracked: true }, ['stops', () => { f1.stop(); f2.stop() }])
+      return () => {
+        holds(events.includes('answered'), 'ask answered after hold released')
+      }
+    }
+    const explored = await explore(scenario)
+    expect(explored.complete).toBe(true)
+    const audited = await auditIndependence(scenario, { seed: 5, runs: 20, swaps: 50 })
+    expect(audited.violation).toBeUndefined()
+  })
+
+  it('tracks trackedLink Listener.carry, kept/waiting reads, and laneClock cancel-vs-fire races', async () => {
+    const firedStates = new Set<boolean>()
+    const scenario = (schedule: Parameters<typeof memoryEnds>[0]) => {
+      const resA = schedule.resource('a')
+      const resB = schedule.resource('b')
+      const [left, right] = scheduledPair(schedule, ['a', 'b'], { tracked: true, resources: [resA, resB] })
+      const a = trackedLink(dial(left), schedule, resA)
+      const b = trackedLink(listen(), schedule, resB)
+      b.carry(right)
+      let fired = false
+      const timerLane = { label: 'timer' }
+      const clock = laneClock(schedule, timerLane, { tracked: true })
+      const cancel = clock.after(10, () => { fired = true })
+      schedule.later({ label: 'canceller' }, () => {
+        cancel()
+        void a.kept()
+        void a.waiting()
+      }, { tracked: true })
+      return () => { firedStates.add(fired) }
+    }
+    const explored = await explore(scenario)
+    expect(explored.complete).toBe(true)
+    expect([...firedStates].sort()).toEqual([false, true])
+    const audited = await auditIndependence(scenario, { seed: 3, runs: 10, swaps: 20 })
+    expect(audited.violation).toBeUndefined()
   })
 })
