@@ -774,7 +774,8 @@ type MakeEnds = (schedule: Schedule) => Ends
 ### `memoryEnds`
 
 Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
-this package's own scenarios are run over. Given a model, each end is put under it.
+this package's own scenarios are run over. Given a model, each end is put under it (when combining `tracked: true`
+with a shared `Model`, do not race `lost` endings concurrently across ends because `model()` checks peer endings).
 
 ```ts
 memoryEnds(schedule: Schedule, options?: Options & { readonly tracked?: boolean; readonly names?: readonly [string, string]; }, held?: Model): Ends
@@ -847,14 +848,14 @@ same(actual: unknown, expected: unknown, what: string): void
 
 ### `ScheduledOptions`
 
-Options for `scheduledPair` when opting into Optimal DPOR tracking.
+Options for `scheduledPair` when opting into wakeup-tree DPOR tracking.
 
 ```ts
 interface ScheduledOptions {
   /**
-   * Marks both directions as tracked for Optimal DPOR: allocates one `Resource` per end (or uses `resources`) so
-   * deliveries, sends, and closes on disjoint ends commute while operations on the same end conflict. Only enable
-   * when listeners attached to both ends report their own shared-state accesses. Defaults to `false`.
+   * Marks both directions as tracked for wakeup-tree DPOR: allocates one `Resource` per end (or uses `resources`) so
+   * deliveries, sends, listener changes, and closes on disjoint ends commute while operations on the same end
+   * conflict. Only enable when listeners attached to both ends report their own shared-state accesses. Defaults to `false`.
    */
   readonly tracked?: boolean
   /** Pre-allocated resources `[a, b]` for the two ends, for callers that share them with `trackedLink` or `trackedJoin`. */
@@ -875,8 +876,8 @@ scheduledPair(schedule: Schedule, names?: readonly [string, string], options?: S
 
 ### `trackedJoin`
 
-Joins `link` and `mine` while attributing every peer-hold, port-call, and `caughtUp` callback mutation on this end
-to `resource` for Optimal DPOR.
+Joins `link` and `mine` while attributing every peer-hold, port-call, async answer/view callback, and `caughtUp`
+callback mutation on this end to `resource` for wakeup-tree DPOR.
 
 ```ts
 trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port
@@ -884,8 +885,8 @@ trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Por
 
 ### `trackedLink`
 
-Wraps a `Link` (or `Listener`) so direct calls on this end record `read()`/`write()` against `resource` for
-Optimal DPOR, keeping pure protocol activity on disjoint ends commutative.
+Wraps a `Link` (or `Listener`) so direct calls and listener subscriptions on this end record `read()`/`write()`
+against `resource` for wakeup-tree DPOR, keeping pure protocol activity on disjoint ends commutative.
 
 ```ts
 trackedLink<L extends Link>(link: L, schedule: Schedule, resource: Resource): L

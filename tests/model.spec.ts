@@ -426,7 +426,7 @@ describe('real ends under the model', () => {
       b.send(tell('y'.repeat(100)))
       return () => {}
     })
-    // Optimal DPOR collapses independent cross-direction part/ACK interleavings so the full state space is exhaustive.
+    // Wakeup-tree DPOR collapses independent cross-direction part/ACK interleavings so the full state space is exhaustive.
     expect(await everyOrder(scenario)).toBeGreaterThan(0)
     const audited = await auditIndependence(scenario, { seed: 11, runs: 20, swaps: 50 })
     expect(audited.violation).toBeUndefined()

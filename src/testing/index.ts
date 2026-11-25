@@ -19,12 +19,12 @@ export { made, type Made } from './views.ts'
 /** What a pair of ends is made over: given a schedule, two links. */
 export type MakeEnds = (schedule: Schedule) => Ends
 
-/** Options for `scheduledPair` when opting into Optimal DPOR tracking. */
+/** Options for `scheduledPair` when opting into wakeup-tree DPOR tracking. */
 export interface ScheduledOptions {
   /**
-   * Marks both directions as tracked for Optimal DPOR: allocates one `Resource` per end (or uses `resources`) so
-   * deliveries, sends, and closes on disjoint ends commute while operations on the same end conflict. Only enable
-   * when listeners attached to both ends report their own shared-state accesses. Defaults to `false`.
+   * Marks both directions as tracked for wakeup-tree DPOR: allocates one `Resource` per end (or uses `resources`) so
+   * deliveries, sends, listener changes, and closes on disjoint ends commute while operations on the same end
+   * conflict. Only enable when listeners attached to both ends report their own shared-state accesses. Defaults to `false`.
    */
   readonly tracked?: boolean
   /** Pre-allocated resources `[a, b]` for the two ends, for callers that share them with `trackedLink` or `trackedJoin`. */
@@ -57,22 +57,36 @@ export function scheduledPair(
   const wrap = (transport: Transport, resource: Resource): Transport => ({
     ...transport,
     send: (message) => { schedule.write(resource); transport.send(message) },
+    onData: (heard) => { schedule.write(resource); transport.onData(heard) },
+    onClose: (closed) => { schedule.write(resource); transport.onClose(closed) },
     close: () => { schedule.write(resource); transport.close() },
   })
   return [wrap(left, resA), wrap(right, resB)]
 }
 
 /**
- * Wraps a `Link` (or `Listener`) so direct calls on this end record `read()`/`write()` against `resource` for
- * Optimal DPOR, keeping pure protocol activity on disjoint ends commutative.
+ * Wraps a `Link` (or `Listener`) so direct calls and listener subscriptions on this end record `read()`/`write()`
+ * against `resource` for wakeup-tree DPOR, keeping pure protocol activity on disjoint ends commutative.
  */
 export function trackedLink<L extends Link>(link: L, schedule: Schedule, resource: Resource): L {
   const wrapped: Link = {
     send: (frame, how) => { schedule.write(resource); link.send(frame, how) },
     prepare: (frame, how) => { schedule.write(resource); return link.prepare(frame, how) },
-    onFrame: (heard) => link.onFrame(heard),
-    onTraffic: (seen) => link.onTraffic(seen),
-    onEnd: (ended) => link.onEnd(ended),
+    onFrame: (heard) => {
+      schedule.write(resource)
+      const stop = link.onFrame(heard)
+      return () => { schedule.write(resource); stop() }
+    },
+    onTraffic: (seen) => {
+      schedule.write(resource)
+      const stop = link.onTraffic(seen)
+      return () => { schedule.write(resource); stop() }
+    },
+    onEnd: (ended) => {
+      schedule.write(resource)
+      const stop = link.onEnd(ended)
+      return () => { schedule.write(resource); stop() }
+    },
     close: (bye) => { schedule.write(resource); link.close(bye) },
     kept: () => { schedule.read(resource); return link.kept() },
     waiting: () => { schedule.read(resource); return link.waiting() },
@@ -92,15 +106,27 @@ export function trackedLink<L extends Link>(link: L, schedule: Schedule, resourc
 }
 
 /**
- * Joins `link` and `mine` while attributing every peer-hold, port-call, and `caughtUp` callback mutation on this end
- * to `resource` for Optimal DPOR.
+ * Joins `link` and `mine` while attributing every peer-hold, port-call, async answer/view callback, and `caughtUp`
+ * callback mutation on this end to `resource` for wakeup-tree DPOR.
  */
 export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port {
   const trackedMine: Port = {
     tell: (to, event) => { mine.tell(to, event) },
-    ask: (to, name, args, heard, ended) => mine.ask(to, name, args, heard, ended),
+    ask: (to, name, args, heard, ended) => mine.ask(
+      to,
+      name,
+      args,
+      (update) => { schedule.write(resource); heard(update) },
+      (outcome) => { schedule.write(resource); ended(outcome) },
+    ),
     follow: (feature, view, args, shown, over) => {
-      const following: Following = mine.follow(feature, view, args, shown, over)
+      const following: Following = mine.follow(
+        feature,
+        view,
+        args,
+        (update) => { schedule.write(resource); shown(update) },
+        (failure) => { schedule.write(resource); over(failure) },
+      )
       if (!following.caughtUp) return following
       const caughtUp = following.caughtUp.bind(following)
       return {
@@ -127,7 +153,8 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
 
 /**
  * Two ends of a link in memory, on a schedule, made with `options`: the first dials and the second listens. What
- * this package's own scenarios are run over. Given a model, each end is put under it.
+ * this package's own scenarios are run over. Given a model, each end is put under it (when combining `tracked: true`
+ * with a shared `Model`, do not race `lost` endings concurrently across ends because `model()` checks peer endings).
  */
 export function memoryEnds(
   schedule: Schedule,
