@@ -159,6 +159,21 @@ describe('a link that opens its own connections', () => {
     pass(1)
     expect(made).toHaveLength(2)
   })
+
+  it('clamps defaulted first to most when only most is given, honors explicit first past default most, and throws when explicit first > most', () => {
+    const { clock, pass } = moved()
+    const { open, made } = dialled()
+    dial(open, { reopen: { clock, most: 50 } })
+    closesAndWaits(made, pass, 50)
+    closesAndWaits(made, pass, 50)
+
+    const { clock: c2, pass: p2 } = moved()
+    const { open: o2, made: m2 } = dialled()
+    dial(o2, { reopen: { clock: c2, first: 15_000 } })
+    closesAndWaits(m2, p2, 15_000)
+
+    expect(() => dial(open, { reopen: { clock, first: 200, most: 100 } })).toThrow(RangeError)
+  })
 })
 
 describe('the clock on timers', () => {

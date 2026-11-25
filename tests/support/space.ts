@@ -189,7 +189,7 @@ export function space(script: Script): { readonly states: number; readonly rests
     if (state.taking.length) fail(`${end.session} is left taking a message`)
     if (state.ending) {
       // An end that has ended holds nothing, is on nothing and waits on nothing.
-      const left = [state.now && 'a connection', state.pending && 'a connection waiting', state.parting && 'a frame in parts', state.kept.length && 'what it kept', state.waiting.length && 'what waited', state.showing.size && 'a result waiting', (state.keptSize || state.waitingSize) && 'a size', (state.reopening ?? state.holding ?? state.watching) !== undefined && 'a clock', end.timers.length && 'something on a clock'].filter(Boolean)
+      const left = [state.now && 'a connection', state.pending && 'a connection waiting', state.parting && 'a frame in parts', (state.kept.length - state.keptHead || state.keptHead) && 'what it kept', (state.waiting.length - state.waitingHead || state.waitingHead) && 'what waited', state.showing.size && 'a result waiting', (state.keptSize || state.waitingSize) && 'a size', (state.reopening ?? state.holding ?? state.watching) !== undefined && 'a clock', end.timers.length && 'something on a clock'].filter(Boolean)
       if (left.length) fail(`${end.session} ended and still has ${left.join(', ')}`)
       return
     }
@@ -197,9 +197,11 @@ export function space(script: Script): { readonly states: number; readonly rests
     const held = [state.reopening, state.holding, state.watching?.timer].filter((timer) => timer !== undefined)
     if (end.timers.length !== held.length || end.timers.some((timer) => !held.includes(timer))) fail(`${end.session} has ${end.timers.length} things on a clock, and holds ${held.length}`)
     if (!state.now && (state.holding ?? state.watching) !== undefined) fail(`${end.session} is on no connection, and still waits to find one held or quiet`)
-    if (state.kept.some((one, at) => one.seq !== state.released + 1 + at) || state.released + state.kept.length !== state.sent) fail(`${end.session} keeps ${state.kept.map((one) => one.seq).join(',')}, having sent ${state.sent} and let go up to ${state.released}`)
-    if (state.keptSize !== state.kept.reduce((sum, one) => sum + one.size, 0)) fail(`${end.session} counts ${state.keptSize} bytes kept, and keeps another number`)
-    if (state.waitingSize !== state.waiting.reduce((sum, one) => sum + one.size, 0)) fail(`${end.session} counts ${state.waitingSize} bytes waiting, and has another number wait`)
+    const kept = state.kept.slice(state.keptHead)
+    const waiting = state.waiting.slice(state.waitingHead)
+    if (kept.some((one, at) => one.seq !== state.released + 1 + at) || state.released + kept.length !== state.sent) fail(`${end.session} keeps ${kept.map((one) => one.seq).join(',')}, having sent ${state.sent} and let go up to ${state.released}`)
+    if (state.keptSize !== kept.reduce((sum, one) => sum + one.size, 0)) fail(`${end.session} counts ${state.keptSize} bytes kept, and keeps another number`)
+    if (state.waitingSize !== waiting.reduce((sum, one) => sum + one.size, 0)) fail(`${end.session} counts ${state.waitingSize} bytes waiting, and has another number wait`)
     if (state.now && state.now.told > state.heard) fail(`${end.session} said it took ${state.now.told}, having taken ${state.heard}`)
   }
 
@@ -315,6 +317,9 @@ export function space(script: Script): { readonly states: number; readonly rests
   const key = (world: World): string => JSON.stringify(world, function (this: unknown, name, value: unknown) {
     if (value instanceof Map) return [...value]
     if (value === Infinity) return 'any'
+    if (name === 'keptHead' || name === 'waitingHead') return undefined
+    if (name === 'kept' && Array.isArray(value)) return value.slice((this as State).keptHead)
+    if (name === 'waiting' && Array.isArray(value)) return value.slice((this as State).waitingHead)
     if (name === 'timers' && typeof value === 'number') return undefined
     if (name === 'timers' && Array.isArray(value)) {
       const { state } = this as End

@@ -238,4 +238,17 @@ describe('an end that is asked whether it is there', () => {
     await turn()
     expect(texts.flat()).toContainEqual({ here: 7 })
   })
+
+  it('coalesces repeated there probes in one batch into a single here reply', async () => {
+    const [bare, right] = memoryPair()
+    listen(right)
+    const texts: unknown[][] = []
+    bare.onData((message) => { texts.push(JSON.parse(message as string) as unknown[]) })
+    const flood = Array.from({ length: 500 }, (_, i) => ({ there: i + 1 }))
+    bare.send(JSON.stringify([{ link: 1, session: 's', taken: 0 }, ...flood]))
+    await turn()
+    await turn()
+    const replies = texts.flat().filter((entry) => typeof entry === 'object' && entry !== null && 'here' in entry)
+    expect(replies).toEqual([{ here: 500 }])
+  })
 })

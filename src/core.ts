@@ -125,17 +125,26 @@ export type Lost = { readonly lost: true }
 type There = { readonly there: number }
 type Here = { readonly here: number }
 
-export const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !ArrayBuffer.isView(value)
+export const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value)
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 /** Whether what arrived is a hello of this link's number, as far as its shape goes. */
 export const isHello = (said: unknown): said is Hello => isObject(said) && said.link === LINK && typeof said.session === 'string' && isCount(said.taken)
   && (said.resumes === undefined || typeof said.resumes === 'string') && (said.most === undefined || (isCount(said.most) && said.most > 0))
 
+/** Whether an inbound raw message exceeds `limit` bytes, rejecting oversized strings in O(1) before UTF-8 scanning or decoding. */
+export const exceedsRaw = (message: Message, limit: number): boolean => {
+  if (limit === Number.POSITIVE_INFINITY) return false
+  if (typeof message === 'string') return message.length > limit || sizeOf(message) > limit
+  return message.byteLength > limit
+}
+
 /**
  * The first thing a message says, where it is a list of things said, as every message of a link's is. What is not
  * one says nothing: what it holds under a name is not something said.
  */
-export const firstOf = (codec: Codec, message: Message): unknown => {
+export const firstOf = (codec: Codec, message: Message, limit = Number.POSITIVE_INFINITY): unknown => {
+  if (exceedsRaw(message, limit)) return undefined
   try {
     const said = codec.decode(message)
     return Array.isArray(said) ? (said as unknown[])[0] : undefined
@@ -249,6 +258,7 @@ export function limits(given: Pick<Given, 'bound' | 'part' | 'window' | 'first' 
   if (given.window !== undefined && (!(given.window > 0) || !Number.isFinite(given.window))) throw new RangeError('there.window is a finite number more than 0')
   if (given.first !== undefined && (!(given.first >= 0) || !Number.isFinite(given.first))) throw new RangeError('reopen.first is a finite number, 0 at least')
   if (given.most !== undefined && (!(given.most >= 0) || !Number.isFinite(given.most))) throw new RangeError('reopen.most is a finite number, 0 at least')
+  if (given.first !== undefined && given.most !== undefined && given.first > given.most) throw new RangeError('reopen.first is no more than reopen.most')
   return { largest, part }
 }
 
@@ -261,6 +271,8 @@ export function setup(given: Given): Setup {
   const { largest, part } = limits(given)
   if (given.codec && around(given.codec) > AROUND) throw new TypeError(`A codec puts ${AROUND} bytes at most around a frame, as JSON does`)
   if (given.connections === (given.role === 'dials' ? 'handed' : 'opened')) throw new TypeError(`An end that ${given.role} is not ${given.connections} its connections`)
+  const most = given.most ?? Math.max(REOPEN_MOST, given.first ?? REOPEN_FIRST)
+  const first = given.first ?? Math.min(REOPEN_FIRST, most)
   return {
     role: given.role,
     connections: given.connections,
@@ -271,9 +283,19 @@ export function setup(given: Given): Setup {
     bound: { ...WAITING, ...given.bound?.waiting },
     largest,
     ...(given.window === undefined ? {} : { window: given.window }),
-    first: given.first ?? REOPEN_FIRST,
-    most: given.most ?? REOPEN_MOST,
+    first,
+    most,
   }
+}
+
+/**
+ * Generous pre-decode cap on a single inbound raw batch message: large enough to never reject legitimate multi-frame
+ * batches, while refusing unbounded blobs before `codec.decode` allocates parsed structures.
+ */
+export function rawLimitOf(set: Setup): number {
+  if (set.largest === Number.POSITIVE_INFINITY || set.mark.size === Number.POSITIVE_INFINITY) return Number.POSITIVE_INFINITY
+  const batchRoom = Math.max(set.largest, set.mark.size, set.part === Number.POSITIVE_INFINITY ? 0 : set.part, KEPT.size)
+  return batchRoom + set.largest + AROUND + 2
 }
 
 /**
@@ -283,7 +305,10 @@ export function setup(given: Given): Setup {
  */
 export function narrowest(state: State, after = 0): number {
   let longest = 0
-  for (const one of state.kept) if (one.seq > after && one.size > longest) longest = one.size
+  for (let at = state.keptHead; at < state.kept.length; at++) {
+    const one = state.kept[at]!
+    if (one.seq > after && one.size > longest) longest = one.size
+  }
   return Math.max(LEAST, longest + 2)
 }
 
@@ -316,14 +341,18 @@ export interface Ready { encoded: Message; size: number; causeSize: number; abou
  * says what the frame holds: what a codec says of a value names its keys.
  */
 export function ready(set: Setup, frame: Frame, how: Sending): Ready {
+  const valid = asFrame(frame)
+  if (!valid) throw new TypeError('Not a frame a link can send')
+  if (how.cause !== undefined && typeof how.cause !== 'string') throw new TypeError('What caused a frame must be text')
   let encoded: Message
-  try { encoded = set.codec.encode(frame) } catch { throw new TypeError('A frame could not be put into text') }
+  try { encoded = set.codec.encode(valid) } catch { throw new TypeError('A frame could not be put into text') }
   const frameSize = sizeOf(encoded)
+  if (how.cause !== undefined && how.cause.length > CAUSE) throw new RangeError('What caused a frame is longer than may be said')
   const causeSize = how.cause === undefined ? 0 : sizeOf(set.codec.encode(how.cause))
   if (causeSize > CAUSE) throw new RangeError('What caused a frame is longer than may be said')
   const size = frameSize + causeSize
   if (size > set.largest) throw new RangeError('A frame is larger than may be sent')
-  return { encoded, size, causeSize, about: aboutOf(frame, how), ...(frame.kind === 'shown' ? { view: frame.id } : {}) }
+  return { encoded, size, causeSize, about: aboutOf(valid, how), ...(valid.kind === 'shown' ? { view: valid.id } : {}) }
 }
 
 /** The connection an end is on, with what is said on it this turn. */
@@ -339,6 +368,8 @@ export interface Connection {
   held: boolean
   /** The last number this end has said, on this connection, that it took. */
   told: number
+  /** The latest `there` probe number to answer with `{ here }` in this turn's batch, coalesced per turn. */
+  here?: number
   /** The longest message the other end said it takes, once it has said. */
   takes: number
   /** What is said on it this turn, and how many bytes each is. */
@@ -356,11 +387,13 @@ export interface State {
   heard: number
   /** The last number the other end said it took: what was sent up to it is no longer kept. */
   released: number
-  /** What was sent and not yet taken, as it is on the wire, oldest first, and the size of all of it. */
+  /** What was sent and not yet taken, as it is on the wire, oldest first from `keptHead`, and the size of all of it. */
   kept: Array<{ readonly seq: number; readonly encoded: Message; readonly size: number }>
+  keptHead: number
   keptSize: number
-  /** What was sent and waits to be numbered, each frame encoded, oldest first, and the size of all of it. */
+  /** What was sent and waits to be numbered, each frame encoded, oldest first from `waitingHead`, and the size of all of it. */
   waiting: Ready[]
+  waitingHead: number
   waitingSize: number
   /** For each view with a result waiting, that result: a later one takes its place. */
   showing: Map<number, Ready>
@@ -387,12 +420,12 @@ export interface State {
   /** The last number given to something put on a clock. */
   timers: number
   /** Each message being taken, the last begun last: what it held, how far it has been taken, and the message itself. */
-  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message }>
+  taking: Array<{ readonly on: number; readonly said: readonly unknown[]; at: number; readonly message: Message; bytes?: number }>
 }
 
 /** What an end holds before anything has happened. */
 export function start(): State {
-  return { sent: 0, heard: 0, released: 0, kept: [], keptSize: 0, waiting: [], waitingSize: 0, showing: new Map(), failed: 0, owed: 0, asked: 0, tapped: false, timers: 0, taking: [] }
+  return { sent: 0, heard: 0, released: 0, kept: [], keptHead: 0, keptSize: 0, waiting: [], waitingHead: 0, waitingSize: 0, showing: new Map(), failed: 0, owed: 0, asked: 0, tapped: false, timers: 0, taking: [] }
 }
 
 /**
@@ -459,12 +492,22 @@ type Unfit =
   | { readonly no: 'lost' }
   | { readonly no: 'too narrow'; readonly most: number; readonly needs: number }
 
+const FRAME_KEYS = new Set(['seq', 'frame', 'cause', 'private'])
+const PART_KEYS = new Set(['seq', 'part', 'of', 'data', 'cause', 'private'])
+const PART_CONT_KEYS = new Set(['seq', 'part', 'of', 'data'])
+const hasOnly = (obj: Record<string, unknown>, allowed: ReadonlySet<string>): boolean => {
+  for (const key in obj) if (Object.hasOwn(obj, key) && !allowed.has(key)) return false
+  return true
+}
+const COMPACT_AT = 64
+
 /**
  * What an end set this way does. What comes back takes what an end holds and one thing that happened, changes
  * what it holds, and returns what is to be done, in order.
  */
 export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const { codec, part, mark, bound, largest, session: mine } = set
+  const rawLimit = rawLimitOf(set)
   const dials = set.role === 'dials'
   const once = set.connections === 'one'
   const opens = set.connections === 'opened'
@@ -474,6 +517,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   let backlog = 0
   /** The message being taken, for saying how large something that was not a frame was. */
   let arriving: Message = ''
+
+  const keptLen = (): number => s.kept.length - s.keptHead
+  const waitingLen = (): number => s.waiting.length - s.waitingHead
 
   /** What a link says of itself, encoded. These are its own values, which a codec can always hold. */
   const word = (value: Hello | Taken | Goodbye | Lost | There | Here): Message => codec.encode(value)
@@ -508,7 +554,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const flush = (on: Connection): void => {
     on.due = false
     if (s.ending || s.now !== on) return
-    if (!on.batch.length && !(on.met && s.heard > on.told)) return
+    if (!on.batch.length && !(on.met && s.heard > on.told) && on.here === undefined) return
+    if (on.here !== undefined) { put(on, word({ here: on.here })); delete on.here }
     // What this end has taken goes with it, when there is more to say of it: last, behind a hello if there is one.
     if (on.met && s.heard > on.told) { put(on, word({ taken: s.heard })); on.told = s.heard }
     const { batch, sizes } = on
@@ -558,8 +605,10 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     off(s.holding)
     delete s.holding
     s.kept = []
+    s.keptHead = 0
     s.keptSize = 0
     s.waiting = []
+    s.waitingHead = 0
     s.waitingSize = 0
     s.showing.clear()
     delete s.parting
@@ -573,7 +622,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   }
   /** Stops watching a quiet connection once this end is owed nothing. */
   const unwatch = (): void => {
-    if (s.kept.length || s.owed) return
+    if (keptLen() || s.owed) return
     off(s.watching?.timer)
     delete s.watching
   }
@@ -584,14 +633,27 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const letGo = (taken: number): boolean => {
     if (taken > s.sent || taken < s.released) return false
     s.released = taken
-    let first = 0
-    while (first < s.kept.length && s.kept[first]!.seq <= taken) s.keptSize -= s.kept[first++]!.size
-    if (first) s.kept = s.kept.slice(first)
+    while (s.keptHead < s.kept.length && s.kept[s.keptHead]!.seq <= taken) {
+      s.keptSize -= s.kept[s.keptHead]!.size
+      s.kept[s.keptHead++] = undefined as never
+    }
+    if (s.keptHead === s.kept.length) {
+      s.kept = []
+      s.keptHead = 0
+    } else if (s.keptHead >= COMPACT_AT && s.keptHead * 2 >= s.kept.length) {
+      s.kept = s.kept.slice(s.keptHead)
+      s.keptHead = 0
+    }
     return true
   }
 
-  /** Whether what is sent now can be numbered: there is a connection, and the other end is not too far behind. */
-  const roomy = (): boolean => !!s.now?.live && s.kept.length < mark.frames && s.keptSize < mark.size && backlog < mark.size
+  /**
+   * Whether what is sent now can be numbered: there is a connection, and the other end is not too far behind.
+   * When `allowProbe` is true (pumping on inbound arrival) and nothing is kept in flight (`keptLen() === 0`),
+   * one frame is allowed out even if `backlog >= mark.size` so a transient transport buffer lag cannot deadlock `waiting`.
+   */
+  const roomy = (allowProbe = false): boolean =>
+    !!s.now?.live && keptLen() < mark.frames && s.keptSize < mark.size && (backlog < mark.size || (allowProbe && keptLen() === 0))
   /** Numbers one unit and puts it in this turn's batch. Joining what is encoded cannot fail, nor can encoding a number or a text. */
   const unit = (fields: Array<readonly [string, Message]>, about: About, first: boolean): number => {
     s.sent++
@@ -685,7 +747,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     off(s.watching?.timer)
     delete s.watching
     const on = s.now
-    if (s.ending || !on?.met || (!s.kept.length && !s.owed)) return
+    if (s.ending || !on?.met || (!keptLen() && !s.owed)) return
     s.watching = { timer: after(set.window / 2, 'there'), on: on.id, asked: false }
   }
   /** A watch's time is up: half the window in, the other end is asked; the whole of it in, the connection is let go. */
@@ -704,19 +766,25 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const half = set.window! / 2
     s.watching = { timer: after(set.window! - half, 'there'), on, asked: true }
   }
-  /** Numbers what waits, oldest first, for as long as `keep()` holds. Drains in one pass so large backlogs stay linear. */
+  /** Numbers what waits, oldest first, for as long as `keep()` holds. Drains in O(1) amortized per frame. */
   const drain = (keep: () => boolean): void => {
-    let taken = 0
-    while (taken < s.waiting.length && keep()) {
-      const one = s.waiting[taken++]!
+    while (s.waitingHead < s.waiting.length && keep()) {
+      const one = s.waiting[s.waitingHead]!
+      s.waiting[s.waitingHead++] = undefined as never
       s.waitingSize -= one.size
       if (one.view !== undefined && s.showing.get(one.view) === one) s.showing.delete(one.view)
       number(one.encoded, one.size, one.causeSize, one.about)
     }
-    if (taken) s.waiting = taken === s.waiting.length ? [] : s.waiting.slice(taken)
+    if (s.waitingHead === s.waiting.length) {
+      s.waiting = []
+      s.waitingHead = 0
+    } else if (s.waitingHead >= COMPACT_AT && s.waitingHead * 2 >= s.waiting.length) {
+      s.waiting = s.waiting.slice(s.waitingHead)
+      s.waitingHead = 0
+    }
   }
   /** Numbers what waits, oldest first, for as long as there is room. */
-  const pump = (): void => { drain(() => !s.ending && roomy()) }
+  const pump = (allowProbe = false): void => { drain(() => !s.ending && roomy(allowProbe)) }
 
   /**
    * What the first thing said on a connection is, to this end as it stands: a hello that fits, or why not. What
@@ -727,7 +795,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
    * before it is taken. An end that has met nobody has numbered nothing, so the two start afresh.
    */
   const greeting = (arrived: unknown, local?: number): Hello | Unfit => {
-    if (!isObject(arrived) || typeof arrived.link !== 'number') return { no: 'not a frame' }
+    if (!isObject(arrived) || !isCount(arrived.link) || arrived.link === 0) return { no: 'not a frame' }
     if (arrived.link !== LINK) return { no: 'version', theirs: arrived.link }
     if (!isHello(arrived)) return { no: 'not a frame' }
     const { session, taken, resumes, most } = arrived
@@ -757,7 +825,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       // What was numbered this turn, before the other end said how little the connection takes, was cut for more:
       // it is not said, and the link is ending. What else waits to be said on the connection is this end's hello,
       // and that is said, with that the session is lost, in messages no longer than is taken.
-      const numbered = new Set(s.kept.map((one) => one.encoded))
+      const numbered = new Set<Message>()
+      for (let at = s.keptHead; at < s.kept.length; at++) numbered.add(s.kept[at]!.encoded)
       const said = on.batch.map((encoded, at) => [encoded, on.sizes[at]!] as const).filter(([encoded]) => !numbered.has(encoded))
       on.batch = said.map(([encoded]) => encoded)
       on.sizes = said.map(([, size]) => size)
@@ -774,7 +843,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const unknown = (): void => { end({ why: 'not a frame', size: sizeOf(arriving) }) }
 
   /** Takes one thing said on the connection this end is on. Whether a frame was handed over for it. */
-  const take = (on: Connection, arrived: unknown, measure: () => number | undefined): boolean => {
+  const take = (on: Connection, arrived: unknown, measure: () => number | undefined, arrivingBytes: () => number): boolean => {
     if (!on.met) {
       const fits = greeting(arrived, on.most)
       if ('no' in fits) { refuse(on, fits); return false }
@@ -788,33 +857,54 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       if (!on.live) {
         on.live = true
         // Sent again as it was first, in as many messages as it takes.
-        for (const one of s.kept) say(on, one.encoded, one.size)
+        for (let at = s.keptHead; at < s.kept.length; at++) {
+          const one = s.kept[at]!
+          say(on, one.encoded, one.size)
+        }
       }
+      pump(true)
       return false
     }
     if (!isObject(arrived)) { unknown(); return false }
-    if (arrived.lost === true) { end({ why: 'lost' }); return false }
-    if (isCount(arrived.there)) { say(on, word({ here: arrived.there })); return false }
-    if (isCount(arrived.here)) return false
-    if (arrived.bye === 'ended') { end({ why: 'goodbye', bye: 'ended' }); return false }
-    if (arrived.bye === 'restarting') {
-      // A link that comes back waits for the other end to: if it comes back a new session, that is lost.
-      if (once) end({ why: 'goodbye', bye: 'restarting' })
-      return false
-    }
-    if (!('seq' in arrived) && 'taken' in arrived) {
-      if (!isCount(arrived.taken) || !letGo(arrived.taken)) unknown()
+    if (!('seq' in arrived)) {
+      const keys = Object.keys(arrived)
+      if (keys.length !== 1) { unknown(); return false }
+      const only = keys[0]!
+      if (only === 'lost' && arrived.lost === true) { end({ why: 'lost' }); return false }
+      if (only === 'there' && isCount(arrived.there)) { on.here = arrived.there; turn(on); return false }
+      if (only === 'here' && isCount(arrived.here)) return false
+      if (only === 'bye' && arrived.bye === 'ended') { end({ why: 'goodbye', bye: 'ended' }); return false }
+      if (only === 'bye' && arrived.bye === 'restarting') {
+        // A link that comes back waits for the other end to: if it comes back a new session, that is lost.
+        if (once) end({ why: 'goodbye', bye: 'restarting' })
+        return false
+      }
+      if (only === 'taken') {
+        if (!isCount(arrived.taken) || !letGo(arrived.taken)) { unknown(); return false }
+        pump(true)
+        return false
+      }
+      unknown()
       return false
     }
     const { seq, cause } = arrived
     if (!isCount(seq) || seq === 0) { unknown(); return false }
-    if ((cause !== undefined && typeof cause !== 'string') || (arrived.private !== undefined && arrived.private !== true)) { unknown(); return false }
+    if (cause !== undefined && (typeof cause !== 'string' || cause.length > CAUSE)) { unknown(); return false }
+    if (arrived.private !== undefined && arrived.private !== true) { unknown(); return false }
+    const causeSize = cause === undefined ? 0 : sizeOf(codec.encode(cause))
+    if (causeSize > CAUSE) { unknown(); return false }
     if ('frame' in arrived) {
+      if (!hasOnly(arrived, FRAME_KEYS)) { unknown(); return false }
       const frame = asFrame(arrived.frame)
       if (!frame) { unknown(); return false }
       if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
       // A whole frame where a frame in parts was arriving: its parts were not all sent.
       if (s.parting) { unknown(); return false }
+      if (largest !== Number.POSITIVE_INFINITY && arrivingBytes() > largest) {
+        let frameBytes: number
+        try { frameBytes = sizeOf(codec.encode(frame)) } catch { unknown(); return false }
+        if (frameBytes + causeSize > largest) { unknown(); return false }
+      }
       s.heard = seq
       // This end says it took it with its next batch, and has one leave for that alone if none is to.
       turn(on)
@@ -823,10 +913,11 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     }
     const { part: at, of, data } = arrived
     if (!isCount(at) || !isCount(of) || of < 2 || at >= of || (typeof data !== 'string' && !(data instanceof Uint8Array))) { unknown(); return false }
+    if (!hasOnly(arrived, at === 0 ? PART_KEYS : PART_CONT_KEYS)) { unknown(); return false }
     if (seq !== s.heard + 1) { end({ why: 'out of order', expected: s.heard + 1, got: seq }); return false }
     // The first part begins a frame, and each after it is the next of that frame's: nothing is taken between them.
-    if (at === 0 ? s.parting !== undefined : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
-    if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: 0, ...(s.tapped ? { size: 0 } : {}), ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
+    if (at === 0 ? s.parting !== undefined || of > largest : s.parting?.of !== of || s.parting.pieces.length !== at || typeof data !== typeof s.parting.pieces[0]) { unknown(); return false }
+    if (at === 0) s.parting = { first: seq, of, pieces: [], bytes: causeSize, ...(s.tapped ? { size: 0 } : {}), ...(cause === undefined ? {} : { cause }), private: arrived.private === true }
     const whole = s.parting!
     // What a frame's parts add up to is a frame, and no longer than one may be: so what is kept while one arrives is
     // bounded, however many parts it is said to be in. A part holds something, so they are no more than that many.
@@ -863,6 +954,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
   const hear = (on: Connection, message: Message): void => {
     if (s.now !== on || s.ending) return
     arriving = message
+    if (exceedsRaw(message, rawLimit)) { unknown(); return }
     let said: unknown
     try { said = codec.decode(message) } catch { unknown(); return }
     if (!Array.isArray(said) || !said.length) { unknown(); return }
@@ -877,6 +969,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const taking = s.taking.at(-1)
     if (!taking) return
     arriving = taking.message
+    const arrivingBytes = (): number => (taking.bytes ??= sizeOf(taking.message))
     while (taking.at < taking.said.length) {
       // Something taken may end the link, or put it on another connection: then the rest is not this one's.
       if (s.ending || s.now?.id !== taking.on) { s.taking.pop(); return }
@@ -887,14 +980,14 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
           return undefined
         }
       }
-      if (take(s.now, entry, measure)) return
+      if (take(s.now, entry, measure, arrivingBytes)) return
     }
     s.taking.pop()
     // Whoever was handed its last frame may have ended the link, or put it on another connection.
     if (s.ending || s.now?.id !== taking.on) return
     // Anything arriving is when an end looks again at whether there is room to number what waits: what carries it
     // says nothing when it has written all it was given. And it starts a quiet connection's window over.
-    pump()
+    pump(true)
     watch(true)
   }
   /**
@@ -919,8 +1012,9 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
 
   const send = (one: Ready): void => {
     if (s.ending) return
+    if (waitingLen() && roomy(false)) pump(false)
     const { encoded, size, causeSize, about, view } = one
-    if (!s.waiting.length && roomy()) { number(encoded, size, causeSize, about); return }
+    if (!waitingLen() && roomy(false)) { number(encoded, size, causeSize, about); return }
     // A view's result waiting to be numbered is overtaken by a later one, which takes its place in the order.
     const overtaken = view === undefined ? undefined : s.showing.get(view)
     if (overtaken) {
@@ -934,8 +1028,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       s.waitingSize += size
       if (view !== undefined) s.showing.set(view, one)
     }
-    if (s.waiting.length > bound.frames || s.waitingSize > bound.size) {
-      end({ why: 'overrun', waiting: { frames: s.waiting.length, size: s.waitingSize }, bound: { frames: bound.frames, size: bound.size } })
+    if (waitingLen() > bound.frames || s.waitingSize > bound.size) {
+      end({ why: 'overrun', waiting: { frames: waitingLen(), size: s.waitingSize }, bound: { frames: bound.frames, size: bound.size } })
     }
   }
   const close = (bye: Bye | undefined): void => {
@@ -952,6 +1046,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     }
     const on = s.now
     if (on) {
+      delete on.here
       // An end that has met nobody has numbered nothing: what it numbers now arrives once or not at all, since
       // it sends nothing again.
       if (on.live || s.theirs === undefined) drain(() => true)
@@ -975,7 +1070,7 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
     const waited = s.pending
     if (s.ending || waited?.id !== id) return
     delete s.pending
-    const fits = greeting(firstOf(codec, message), waited.most)
+    const fits = greeting(firstOf(codec, message, rawLimit), waited.most)
     if ('no' in fits) {
       // Turned away, and told why where it would otherwise wait: which link this is, so that another link ends
       // saying both numbers, and that the session is lost. It is told nothing of the session this end is in: a

@@ -244,7 +244,8 @@ describe('what is around a frame', () => {
       expect(state.ending).toBeUndefined()
       expect(written.length).toBeGreaterThan(0)
       expect(Math.max(...written)).toBeLessThanOrEqual(takes)
-      for (const unit of state.kept) {
+      for (let at = state.keptHead; at < state.kept.length; at++) {
+        const unit = state.kept[at]!
         const said = codec.decode(unit.encoded) as { frame?: unknown; data?: unknown; cause?: string }
         const held = sizeOf(codec.encode('frame' in said ? said.frame : said.data)) + (said.cause === undefined ? 0 : sizeOf(codec.encode(said.cause)))
         expect(unit.size - held).toBeLessThanOrEqual(counted)
