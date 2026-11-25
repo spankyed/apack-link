@@ -9,7 +9,7 @@
 // `shown` and `over` are what is waited for, and go at once; everything else the system says is one queue, in the
 // order it was said, and leaves a round at a time once every view the round asked has called back.
 import type { Failure, Frame, Id } from './frames.ts'
-import type { Link, Prepared } from './link.ts'
+import type { Link, Prepared, Sending } from './link.ts'
 
 /** How an ask ended. A system's own outcomes pass through as they are; these are the ones a link makes. */
 export type Outcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly failure: Failure }
@@ -17,11 +17,25 @@ export type Outcome = { readonly ok: true; readonly value: unknown } | { readonl
 /** What one system offers another. */
 export interface Port {
   /** Something happened. Nobody waits. Throws for an event that cannot be sent, having sent nothing. */
-  tell(to: string, event: unknown): void
+  tell(to: string, event: unknown, how?: Sending): void
   /** Asks. `heard` takes what is said before the answer, `ended` how it ended. Returns what to call when whoever asked has gone. */
-  ask(to: string, name: string, args: unknown, heard: (update: unknown) => void, ended: (outcome: Outcome) => void): () => void
+  ask(
+    to: string,
+    name: string,
+    args: unknown,
+    heard: (update: unknown, how?: Sending) => void,
+    ended: (outcome: Outcome, how?: Sending) => void,
+    how?: Sending,
+  ): () => void
   /** Follows a view. `shown` takes its result and each changed result after it, `over` that it has ended and why. */
-  follow(feature: string, view: string, args: unknown, shown: (update: unknown) => void, over: (failure: Failure) => void): Following
+  follow(
+    feature: string,
+    view: string,
+    args: unknown,
+    shown: (update: unknown, how?: Sending) => void,
+    over: (failure: Failure, how?: Sending) => void,
+    how?: Sending,
+  ): Following
 }
 
 export interface Following {
@@ -65,6 +79,8 @@ interface Work {
 /** Something the system said, waiting in the hold. */
 interface Held {
   readonly frame: Frame
+  /** What caused the frame and whether it is private, passed to `link.prepare` or `link.send`. */
+  readonly how?: Sending
   /** The frame as the link put it into text when it was held: what is sent, whatever becomes of the frame after. */
   ready?: Prepared
   /** The ask it is for, on this end's side: once that is spoiled, it is not sent. */
@@ -80,8 +96,8 @@ interface Round { readonly upTo: number; readonly waiting: Set<Work> }
 export function join(link: Link, mine: Port): Port {
   let closed = false
   /** What this end asked and has not been answered, and what it follows. */
-  const asked = new Map<Id, { heard(update: unknown): void; ended(outcome: Outcome): void; settle(): void }>()
-  const followed = new Map<Id, { shown(update: unknown): void; over(failure: Failure): void }>()
+  const asked = new Map<Id, { heard(update: unknown, how?: Sending): void; ended(outcome: Outcome, how?: Sending): void; settle(): void }>()
+  const followed = new Map<Id, { shown(update: unknown, how?: Sending): void; over(failure: Failure, how?: Sending): void }>()
   /** What this end is answering for the other, and the views it runs for it. */
   const answering = new Map<Id, Work>()
   const running = new Map<Id, Work>()
@@ -102,7 +118,10 @@ export function join(link: Link, mine: Port): Port {
   /** Sends one thing the system said. What cannot be sent is refused alone, with what goes in its place. */
   const emit = (one: Held): void => {
     if (one.of?.spoiled) return
-    try { link.send(one.ready ?? one.frame) } catch (error) {
+    try {
+      if (one.ready) link.send(one.ready)
+      else link.send(one.frame, one.how)
+    } catch (error) {
       if (!one.refused) throw error
       const instead = one.refused()
       if (instead) link.send(instead)
@@ -140,7 +159,7 @@ export function join(link: Link, mine: Port): Port {
     if (!held.length && !views.length) { emit(one); return }
     // Found to be unsendable where it was said, as when it is sent at once: what is refused is refused there.
     // It is put into text here, once, and that text is what leaves: what it holds may change after and it will not.
-    try { one.ready = link.prepare(one.frame) } catch (error) {
+    try { one.ready = link.prepare(one.frame, one.how) } catch (error) {
       if (!one.refused) throw error
       const instead = one.refused()
       if (instead) hand({ frame: instead })
@@ -181,7 +200,7 @@ export function join(link: Link, mine: Port): Port {
     work.halt?.()
   }
 
-  const answer = (id: Id, to: string, name: string, args: unknown): void => {
+  const answer = (id: Id, to: string, name: string, args: unknown, how: Sending | undefined): void => {
     const work: Work = { halted: false }
     answering.set(id, work)
     const live = (): boolean => answering.get(id) === work
@@ -194,12 +213,13 @@ export function join(link: Link, mine: Port): Port {
     let gone: () => void
     try {
       gone = mine.ask(to, name, args,
-        (update) => { if (live()) hand({ frame: { kind: 'progress', id, update }, of: work, refused: spoil }) },
-        (outcome) => {
+        (update, send) => { if (live()) hand({ frame: { kind: 'progress', id, update }, ...(send ? { how: send } : {}), of: work, refused: spoil }) },
+        (outcome, send) => {
           if (!live()) return
           answering.delete(id)
-          hand({ frame: { kind: 'answer', id, outcome }, of: work, refused: spoil })
-        })
+          hand({ frame: { kind: 'answer', id, outcome }, ...(send ? { how: send } : {}), of: work, refused: spoil })
+        },
+        how)
     } catch {
       if (live()) { answering.delete(id); hand({ frame: failed(id, refused()) }) }
       return
@@ -208,14 +228,14 @@ export function join(link: Link, mine: Port): Port {
     else work.halt = gone
   }
 
-  const run = (id: Id, feature: string, view: string, args: unknown): void => {
+  const run = (id: Id, feature: string, view: string, args: unknown, how: Sending | undefined): void => {
     const work: Work = { halted: false }
     running.set(id, work)
     const live = (): boolean => running.get(id) === work
     // A view's own words are what the hold waits for, so they go at once — ahead of anything held that waited on it.
-    const end = (failure: Failure): void => {
+    const end = (failure: Failure, send?: Sending): void => {
       running.delete(id)
-      link.send({ kind: 'over', id, failure })
+      link.send({ kind: 'over', id, failure }, send)
       forget(work)
     }
     work.fail = () => {
@@ -226,14 +246,15 @@ export function join(link: Link, mine: Port): Port {
     let following: Following
     try {
       following = mine.follow(feature, view, args,
-        (update) => {
+        (update, send) => {
           if (!live()) return
-          try { link.send({ kind: 'shown', id, update }) } catch { end(unsendable()); halt(work) }
+          try { link.send({ kind: 'shown', id, update }, send) } catch { end(unsendable()); halt(work) }
         },
-        (failure) => {
+        (failure, send) => {
           if (!live()) return
-          try { end({ kind: String(failure.kind), message: String(failure.message) }) } catch { end(unsendable()) }
-        })
+          try { end({ kind: String(failure.kind), message: String(failure.message) }, send) } catch { end(unsendable()) }
+        },
+        how)
     } catch {
       if (live()) end(refused())
       return
@@ -243,39 +264,40 @@ export function join(link: Link, mine: Port): Port {
     if (live() && following.caughtUp) work.caughtUp = following.caughtUp.bind(following)
   }
 
-  link.onFrame((frame) => {
+  link.onFrame((frame, cause) => {
+    const how: Sending | undefined = cause === undefined ? undefined : { cause }
     switch (frame.kind) {
-      case 'tell': mine.tell(frame.to, frame.event); return
+      case 'tell': mine.tell(frame.to, frame.event, how); return
       case 'ask':
         if (frame.id <= lastAsk) return
         lastAsk = frame.id
-        answer(frame.id, frame.to, frame.name, frame.args)
+        answer(frame.id, frame.to, frame.name, frame.args, how)
         return
       case 'left': {
         const work = answering.get(frame.id)
         if (work) { answering.delete(frame.id); halt(work) }
         return
       }
-      case 'progress': asked.get(frame.id)?.heard(frame.update); return
+      case 'progress': asked.get(frame.id)?.heard(frame.update, how); return
       case 'answer': {
         const waiting = asked.get(frame.id)
-        if (waiting) { asked.delete(frame.id); waiting.settle(); waiting.ended(frame.outcome as Outcome) }
+        if (waiting) { asked.delete(frame.id); waiting.settle(); waiting.ended(frame.outcome as Outcome, how) }
         return
       }
       case 'follow':
         if (frame.id <= lastFollow) return
         lastFollow = frame.id
-        run(frame.id, frame.feature, frame.view, frame.args)
+        run(frame.id, frame.feature, frame.view, frame.args, how)
         return
       case 'unfollow': {
         const work = running.get(frame.id)
         if (work) { running.delete(frame.id); halt(work) }
         return
       }
-      case 'shown': followed.get(frame.id)?.shown(frame.update); return
+      case 'shown': followed.get(frame.id)?.shown(frame.update, how); return
       case 'over': {
         const view = followed.get(frame.id)
-        if (view) { followed.delete(frame.id); view.over(frame.failure) }
+        if (view) { followed.delete(frame.id); view.over(frame.failure, how) }
         return
       }
     }
@@ -301,8 +323,8 @@ export function join(link: Link, mine: Port): Port {
   })
 
   return {
-    tell: (to, event) => { hand({ frame: { kind: 'tell', to, event } }) },
-    ask: (to, name, args, heard, ended) => {
+    tell: (to, event, how) => { hand({ frame: { kind: 'tell', to, event }, ...(how ? { how } : {}) }) },
+    ask: (to, name, args, heard, ended, how) => {
       if (closed) { ended({ ok: false, failure: disconnected() }); return () => {} }
       const id = ++asks
       // Owed an answer: the link watches a quiet connection while it is.
@@ -310,16 +332,18 @@ export function join(link: Link, mine: Port): Port {
       asked.set(id, { heard, ended, settle })
       hand({
         frame: { kind: 'ask', id, to, name, args },
+        ...(how ? { how } : {}),
         refused: () => { if (asked.delete(id)) { settle(); ended({ ok: false, failure: unsendable() }) } return undefined },
       })
       return () => { if (asked.delete(id)) { settle(); hand({ frame: { kind: 'left', id } }) } }
     },
-    follow: (feature, view, args, shown, over) => {
+    follow: (feature, view, args, shown, over, how) => {
       if (closed) { over(disconnected()); return { stop: () => {} } }
       const id = ++views
       followed.set(id, { shown, over })
       hand({
         frame: { kind: 'follow', id, feature, view, args },
+        ...(how ? { how } : {}),
         refused: () => { if (followed.delete(id)) over(unsendable()); return undefined },
       })
       return { stop: () => { if (followed.delete(id)) hand({ frame: { kind: 'unfollow', id } }) } }

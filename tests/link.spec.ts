@@ -1057,11 +1057,18 @@ describe('options a link is set with', () => {
     const clock = { after: () => () => {} }
     for (const options of [
       { part: NaN },
+      { part: 16.5 },
+      { part: Number.MAX_SAFE_INTEGER + 1 },
       { bound: { frame: NaN } },
+      { bound: { frame: 1024.5 } },
       { bound: { kept: { frames: 0, size: 1024 } } },
+      { bound: { kept: { frames: 1.5, size: 1024 } } },
       { bound: { kept: { frames: 1, size: 0 } } },
+      { bound: { kept: { frames: 1, size: 10.5 } } },
       { bound: { waiting: { frames: -1, size: 1024 } } },
+      { bound: { waiting: { frames: 0.5, size: 1024 } } },
       { bound: { waiting: { frames: 1, size: NaN } } },
+      { bound: { waiting: { frames: 1, size: 2.5 } } },
       { there: { window: 0, clock } },
       { there: { window: NaN, clock } },
       { there: { window: Infinity, clock } },

@@ -414,11 +414,25 @@ What one system offers another.
 ```ts
 interface Port {
   /** Something happened. Nobody waits. Throws for an event that cannot be sent, having sent nothing. */
-  tell(to: string, event: unknown): void
+  tell(to: string, event: unknown, how?: Sending): void
   /** Asks. `heard` takes what is said before the answer, `ended` how it ended. Returns what to call when whoever asked has gone. */
-  ask(to: string, name: string, args: unknown, heard: (update: unknown) => void, ended: (outcome: Outcome) => void): () => void
+  ask(
+    to: string,
+    name: string,
+    args: unknown,
+    heard: (update: unknown, how?: Sending) => void,
+    ended: (outcome: Outcome, how?: Sending) => void,
+    how?: Sending,
+  ): () => void
   /** Follows a view. `shown` takes its result and each changed result after it, `over` that it has ended and why. */
-  follow(feature: string, view: string, args: unknown, shown: (update: unknown) => void, over: (failure: Failure) => void): Following
+  follow(
+    feature: string,
+    view: string,
+    args: unknown,
+    shown: (update: unknown, how?: Sending) => void,
+    over: (failure: Failure, how?: Sending) => void,
+    how?: Sending,
+  ): Following
 }
 ```
 
@@ -600,8 +614,9 @@ interface Asked {
   readonly to: string
   readonly name: string
   readonly args: unknown
-  heard(update: unknown): void
-  ended(outcome: Outcome): void
+  readonly cause?: string
+  heard(update: unknown, how?: Sending): void
+  ended(outcome: Outcome, how?: Sending): void
   /** How many times it was told whoever asked has gone. */
   left: number
 }
@@ -610,7 +625,7 @@ interface Asked {
 ### `asking`
 
 ```ts
-asking(of: Port, to: string, name: string, args: unknown): Asking
+asking(of: Port, to: string, name: string, args: unknown, how?: Sending): Asking
 ```
 
 ### `Asking`
@@ -641,7 +656,7 @@ A system that notes what reaches it. `tell`, `ask` and `follow` are called as ea
 there and then or to put it off into a lane; `follow` may return what the view's `Following` has beside `stop`.
 
 ```ts
-desk(does?: { tell?(to: string, event: unknown): void; ask?(asked: Asked): void; follow?(viewed: Viewed): Pick<Following, "caughtUp"> | void; }): Desk
+desk(does?: { tell?(to: string, event: unknown, how?: Sending): void; ask?(asked: Asked): void; follow?(viewed: Viewed): Pick<Following, "caughtUp"> | void; }): Desk
 ```
 
 ### `Desk`
@@ -649,7 +664,7 @@ desk(does?: { tell?(to: string, event: unknown): void; ask?(asked: Asked): void;
 ```ts
 interface Desk {
   readonly port: Port
-  readonly told: Array<{ to: string; event: unknown }>
+  readonly told: Array<{ to: string; event: unknown; cause?: string }>
   readonly asks: Asked[]
   readonly views: Viewed[]
 }
@@ -910,8 +925,9 @@ interface Viewed {
   readonly feature: string
   readonly view: string
   readonly args: unknown
-  shown(update: unknown): void
-  over(failure: Failure): void
+  readonly cause?: string
+  shown(update: unknown, how?: Sending): void
+  over(failure: Failure, how?: Sending): void
   /** How many times it was stopped. */
   stopped: number
 }
@@ -920,7 +936,7 @@ interface Viewed {
 ### `watching`
 
 ```ts
-watching(of: Port, feature: string, view: string, args: unknown): Watching
+watching(of: Port, feature: string, view: string, args: unknown, how?: Sending): Watching
 ```
 
 ### `Watching`
