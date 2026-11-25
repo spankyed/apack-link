@@ -1,8 +1,9 @@
 // What caused a frame crosses with it; a tap is told of each frame and never of what it carries; a private frame is
 // told of as having crossed, and its size, and nothing else.
 import { describe, expect, it } from 'vitest'
-import { join, dial, json, listen, memoryPair, type Codec, type Ending, type Frame, type Traffic } from '../src/index.ts'
-import { desk } from '../src/testing/index.ts'
+import { join, dial, json, listen, memoryPair, type Codec, type Ending, type Frame, type Port, type Traffic } from '../src/index.ts'
+import { explore } from '@apackdev/orderings'
+import { asking, desk, scheduledPair, trackedJoin, watching } from '../src/testing/index.ts'
 import { msgpack } from './support/msgpack.ts'
 
 const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve) })
@@ -340,5 +341,157 @@ describe('what a frame carries', () => {
     expect(thrownCount).toBe(3)
     expect(endings.map((ending) => ending.why).sort()).toEqual(['not a frame', 'not a frame', 'out of order', 'overrun'])
     expect(JSON.stringify(held)).not.toContain(MARK)
+  })
+})
+
+describe('a port carries cause and private both ways through join', () => {
+  it('forwards cause and private across tell, ask, progress, answer, follow, shown, and over (both unheld and held)', async () => {
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const b = listen(right)
+    const tapA = tapped(a)
+    const tapB = tapped(b)
+
+    const release: Array<() => void> = []
+    const backend = desk({
+      ask: (asked) => {
+        if (asked.name === 'HOLD') {
+          asked.heard('step-1', { cause: 'progress-cause' })
+          asked.ended({ ok: true, value: 'done' }, { cause: 'answer-cause' })
+        } else if (asked.name === 'SECRET') {
+          asked.ended({ ok: true, value: 'token' }, { cause: 'secret-answer', private: true })
+        }
+      },
+      follow: (viewed) => {
+        if (viewed.view === 'held') {
+          viewed.shown([1], { cause: 'shown-cause' })
+          return { caughtUp: (then) => { release.push(then) } }
+        }
+        viewed.shown([2], { cause: 'secret-shown', private: true })
+        viewed.over({ kind: 'gone', message: 'closed' }, { cause: 'over-cause' })
+      },
+    })
+    const toWindow = join(b, backend.port)
+    const windowDesk = desk()
+    const toBackend = join(a, windowDesk.port)
+
+    // Unheld outbound tell (public + private) and follow (starts hold on backend).
+    toBackend.tell('svc', { type: 'PING' }, { cause: 'tell-cause' })
+    toBackend.tell('vault', { type: 'UNLOCK' }, { cause: 'secret-tell', private: true })
+    const heldShownCauses: Array<string | undefined> = []
+    toBackend.follow('f', 'held', null, (_u, how) => { heldShownCauses.push(how?.cause) }, () => {}, { cause: 'follow-cause' })
+    await turn()
+
+    // While backend holds behind `caughtUp`, ask and backend->window tell go through `link.prepare(frame, how)`.
+    const heardCauses: Array<string | undefined> = []
+    const answerCauses: Array<string | undefined> = []
+    toBackend.ask('svc', 'HOLD', null, (_u, how) => { heardCauses.push(how?.cause) }, (_o, how) => { answerCauses.push(how?.cause) }, { cause: 'ask-cause' })
+    toWindow.tell('ui', { type: 'HELD' }, { cause: 'held-tell-cause' })
+    await turn()
+    expect(release.length).toBeGreaterThan(0)
+    for (const done of release.splice(0)) done()
+    await turn()
+
+    // Private ask + private answer, plus private shown + caused over.
+    const secretAnswerCauses: Array<string | undefined> = []
+    toBackend.ask('vault', 'SECRET', null, () => {}, (_o, how) => { secretAnswerCauses.push(how?.cause) }, { cause: 'secret-ask', private: true })
+    const secretShownCauses: Array<string | undefined> = []
+    const overCauses: Array<string | undefined> = []
+    toBackend.follow('f', 'secret', null, (_u, how) => { secretShownCauses.push(how?.cause) }, (_f, how) => { overCauses.push(how?.cause) }, { cause: 'secret-follow', private: true })
+    await turn()
+    for (const done of release.splice(0)) done()
+    await turn()
+
+    expect(backend.told).toEqual([
+      { to: 'svc', event: { type: 'PING' }, cause: 'tell-cause' },
+      { to: 'vault', event: { type: 'UNLOCK' }, cause: 'secret-tell' },
+    ])
+    expect(backend.asks.map((x) => ({ name: x.name, cause: x.cause }))).toEqual([
+      { name: 'HOLD', cause: 'ask-cause' },
+      { name: 'SECRET', cause: 'secret-ask' },
+    ])
+    expect(backend.views.map((x) => ({ view: x.view, cause: x.cause }))).toEqual([
+      { view: 'held', cause: 'follow-cause' },
+      { view: 'secret', cause: 'secret-follow' },
+    ])
+    expect(windowDesk.told).toEqual([{ to: 'ui', event: { type: 'HELD' }, cause: 'held-tell-cause' }])
+    expect(heardCauses).toEqual(['progress-cause'])
+    expect(answerCauses).toEqual(['answer-cause'])
+    expect(secretAnswerCauses).toEqual(['secret-answer'])
+    expect(heldShownCauses).toEqual(['shown-cause'])
+    expect(secretShownCauses).toEqual(['secret-shown'])
+    expect(overCauses).toEqual(['over-cause'])
+
+    // Public frames carry `cause` on the tap; private frames hide both body and cause at both ends.
+    expect(tapA.some((t) => t.direction === 'out' && !('private' in t) && t.kind === 'tell' && t.cause === 'tell-cause')).toBe(true)
+    expect(tapB.some((t) => t.direction === 'in' && !('private' in t) && t.kind === 'ask' && t.cause === 'ask-cause')).toBe(true)
+    expect(tapB.some((t) => t.direction === 'out' && !('private' in t) && t.kind === 'answer' && t.cause === 'answer-cause')).toBe(true)
+    expect(tapA.some((t) => t.direction === 'in' && !('private' in t) && t.kind === 'over' && t.cause === 'over-cause')).toBe(true)
+    expect(tapA.filter((t) => t.direction === 'out' && 'private' in t)).toHaveLength(3)
+    expect(tapB.filter((t) => t.direction === 'in' && 'private' in t)).toHaveLength(3)
+    expect(tapB.filter((t) => t.direction === 'out' && 'private' in t)).toHaveLength(2)
+    expect(tapA.filter((t) => t.direction === 'in' && 'private' in t)).toHaveLength(2)
+    expect(JSON.stringify([...tapA, ...tapB])).not.toContain('secret-')
+  })
+
+  it('refuses oversized cause through Port without breaking the link, and works through trackedJoin and legacy Ports', async () => {
+    const tooLong = 'c'.repeat(1025)
+    const [left, right] = memoryPair()
+    const a = dial(left)
+    const b = listen(right)
+    const backend = desk({
+      ask: (asked) => {
+        if (asked.name === 'BAD_ANS') asked.ended({ ok: true, value: 1 }, { cause: tooLong })
+        else asked.ended({ ok: true, value: 'ok' }, { cause: 'good' })
+      },
+      follow: (viewed) => {
+        if (viewed.view === 'bad_shown') viewed.shown(1, { cause: tooLong })
+        else if (viewed.view === 'bad_over') viewed.over({ kind: 'gone', message: 'x' }, { cause: tooLong })
+      },
+    })
+    join(b, backend.port)
+    // Structural compatibility: a Port omitting `how` still passes directly into `join()`.
+    const legacyPort: {
+      tell(to: string, event: unknown): void
+      ask(to: string, name: string, args: unknown, heard: (u: unknown) => void, ended: (o: { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly failure: { readonly kind: string; readonly message: string } }) => void): () => void
+      follow(feature: string, view: string, args: unknown, shown: (u: unknown) => void, over: (f: { readonly kind: string; readonly message: string }) => void): { stop(): void }
+    } = { tell: () => {}, ask: () => () => {}, follow: () => ({ stop: () => {} }) }
+    const toBackend: Port = join(a, legacyPort)
+
+    expect(() => toBackend.tell('svc', 1, { cause: tooLong })).toThrow(RangeError)
+    const badAsk = asking(toBackend, 'svc', 'OK', null, { cause: tooLong })
+    const badFollow = watching(toBackend, 'f', 'v', null, { cause: tooLong })
+    const badAns = asking(toBackend, 'svc', 'BAD_ANS', null)
+    const badShown = watching(toBackend, 'f', 'bad_shown', null)
+    const badOver = watching(toBackend, 'f', 'bad_over', null)
+    const goodAsk = asking(toBackend, 'svc', 'OK', null, { cause: 'ok-cause' })
+    await turn()
+
+    expect(badAsk.ended).toEqual([{ ok: false, failure: { kind: 'failed', message: 'A value could not be sent' } }])
+    expect(badFollow.over).toEqual([{ kind: 'failed', message: 'A value could not be sent' }])
+    expect(badAns.ended).toEqual([{ ok: false, failure: { kind: 'failed', message: 'A value could not be sent' } }])
+    expect(badShown.over).toEqual([{ kind: 'failed', message: 'A value could not be sent' }])
+    expect(badOver.over).toEqual([{ kind: 'failed', message: 'A value could not be sent' }])
+    expect(goodAsk.ended).toEqual([{ ok: true, value: 'ok' }])
+
+    // Also verify trackedJoin preserves `how` end-to-end under wakeup-tree DPOR.
+    const seenCauses: string[] = []
+    const explored = await explore((schedule) => {
+      const resW = schedule.resource('w')
+      const resB = schedule.resource('b')
+      const [l, r] = scheduledPair(schedule, ['w', 'b'], { tracked: true, resources: [resW, resB] })
+      const bDesk = desk({
+        ask: (asked) => {
+          if (asked.cause) seenCauses.push(`ask:${asked.cause}`)
+          asked.ended({ ok: true, value: 1 }, { cause: 'tj-ans' })
+        },
+      })
+      const p = trackedJoin(dial(l), desk().port, schedule, resW)
+      trackedJoin(listen(r), bDesk.port, schedule, resB)
+      p.ask('s', 'Q', null, () => {}, (_o, how) => { if (how?.cause) seenCauses.push(`ans:${how.cause}`) }, { cause: 'tj-ask' })
+      return () => {}
+    })
+    expect(explored.complete).toBe(true)
+    expect(seenCauses).toEqual(['ask:tj-ask', 'ans:tj-ans'])
   })
 })

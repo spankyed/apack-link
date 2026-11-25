@@ -226,22 +226,26 @@ export interface Given {
   readonly most?: number
 }
 
+/** Whether a size or frame bound is `Infinity` (unbounded) or a safe whole number at least `least`. */
+const isBound = (value: number, least: number): boolean =>
+  value === Number.POSITIVE_INFINITY || (Number.isSafeInteger(value) && value >= least)
+
 /**
  * What an end's sizes come to, or a `RangeError` for ones no end is set with: how large a frame may be, and how
  * long a part at most.
  */
 export function limits(given: Pick<Given, 'bound' | 'part' | 'window' | 'first' | 'most'>): { readonly largest: number; readonly part: number } {
   const part = given.part ?? PART
-  if (!(part >= SHORTEST)) throw new RangeError(`part is ${SHORTEST} bytes at least`)
+  if (!isBound(part, SHORTEST)) throw new RangeError(`part is ${SHORTEST} bytes at least`)
   const largest = given.bound?.frame ?? FRAME
   // Less would refuse what a peer says in place of something that could not be sent, and leave an ask unanswered.
-  if (!(largest >= SMALLEST)) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
+  if (!isBound(largest, SMALLEST)) throw new RangeError(`bound.frame is ${SMALLEST} bytes at least`)
   const kept = given.bound?.kept
-  if (kept?.frames !== undefined && !(kept.frames >= 1)) throw new RangeError('bound.kept.frames is 1 at least')
-  if (kept?.size !== undefined && !(kept.size >= 1)) throw new RangeError('bound.kept.size is 1 byte at least')
+  if (kept?.frames !== undefined && !isBound(kept.frames, 1)) throw new RangeError('bound.kept.frames is 1 at least')
+  if (kept?.size !== undefined && !isBound(kept.size, 1)) throw new RangeError('bound.kept.size is 1 byte at least')
   const waiting = given.bound?.waiting
-  if (waiting?.frames !== undefined && !(waiting.frames >= 0)) throw new RangeError('bound.waiting.frames is 0 at least')
-  if (waiting?.size !== undefined && !(waiting.size >= 0)) throw new RangeError('bound.waiting.size is 0 bytes at least')
+  if (waiting?.frames !== undefined && !isBound(waiting.frames, 0)) throw new RangeError('bound.waiting.frames is 0 at least')
+  if (waiting?.size !== undefined && !isBound(waiting.size, 0)) throw new RangeError('bound.waiting.size is 0 bytes at least')
   if (given.window !== undefined && (!(given.window > 0) || !Number.isFinite(given.window))) throw new RangeError('there.window is a finite number more than 0')
   if (given.first !== undefined && (!(given.first >= 0) || !Number.isFinite(given.first))) throw new RangeError('reopen.first is a finite number, 0 at least')
   if (given.most !== undefined && (!(given.most >= 0) || !Number.isFinite(given.most))) throw new RangeError('reopen.most is a finite number, 0 at least')

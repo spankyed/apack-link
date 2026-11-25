@@ -111,21 +111,23 @@ export function trackedLink<L extends Link>(link: L, schedule: Schedule, resourc
  */
 export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource: Resource): Port {
   const trackedMine: Port = {
-    tell: (to, event) => { mine.tell(to, event) },
-    ask: (to, name, args, heard, ended) => mine.ask(
+    tell: (to, event, how) => { mine.tell(to, event, how) },
+    ask: (to, name, args, heard, ended, how) => mine.ask(
       to,
       name,
       args,
-      (update) => { schedule.write(resource); heard(update) },
-      (outcome) => { schedule.write(resource); ended(outcome) },
+      (update, send) => { schedule.write(resource); heard(update, send) },
+      (outcome, send) => { schedule.write(resource); ended(outcome, send) },
+      how,
     ),
-    follow: (feature, view, args, shown, over) => {
+    follow: (feature, view, args, shown, over, how) => {
       const following: Following = mine.follow(
         feature,
         view,
         args,
-        (update) => { schedule.write(resource); shown(update) },
-        (failure) => { schedule.write(resource); over(failure) },
+        (update, send) => { schedule.write(resource); shown(update, send) },
+        (failure, send) => { schedule.write(resource); over(failure, send) },
+        how,
       )
       if (!following.caughtUp) return following
       const caughtUp = following.caughtUp.bind(following)
@@ -137,15 +139,15 @@ export function trackedJoin(link: Link, mine: Port, schedule: Schedule, resource
   }
   const remote = join(trackedLink(link, schedule, resource), trackedMine)
   return {
-    tell: (to, event) => { schedule.write(resource); remote.tell(to, event) },
-    ask: (to, name, args, heard, ended) => {
+    tell: (to, event, how) => { schedule.write(resource); remote.tell(to, event, how) },
+    ask: (to, name, args, heard, ended, how) => {
       schedule.write(resource)
-      const leave = remote.ask(to, name, args, heard, ended)
+      const leave = remote.ask(to, name, args, heard, ended, how)
       return () => { schedule.write(resource); leave() }
     },
-    follow: (feature, view, args, shown, over) => {
+    follow: (feature, view, args, shown, over, how) => {
       schedule.write(resource)
-      const following = remote.follow(feature, view, args, shown, over)
+      const following = remote.follow(feature, view, args, shown, over, how)
       return { stop: () => { schedule.write(resource); following.stop() } }
     },
   }
