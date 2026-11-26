@@ -56,7 +56,7 @@
     }
   },
   "devDependencies": {
-    "@apackdev/orderings": "https://github.com/spankyed/apack-orderings/releases/download/pkg-970d286ecf671402fe0ce18b9c30b4f7a1e6174c/apackdev-orderings-0.1.0.tgz",
+    "@apackdev/orderings": "https://github.com/spankyed/apack-orderings/releases/download/pkg-65dda86e8e69679dd420ed32d8c3b5df171cbe2c/apackdev-orderings-0.1.0.tgz",
     "@arethetypeswrong/cli": "^0.18.5",
     "@msgpack/msgpack": "^3.1.3",
     "@stryker-mutator/core": "^9.6.1",
