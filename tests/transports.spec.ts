@@ -1,7 +1,7 @@
 // Transport adapter edge cases: early message buffering, close-vs-throw resilience, cross-realm ArrayBuffer, and late onClose.
 import * as vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { memoryPair, port, socket, stream, type DuplexLike, type Message, type MessagePortLike, type WebSocketLike } from '../src/index.ts'
+import { dial, json, listen, memoryPair, port, socket, stream, type DuplexLike, type Ending, type Message, type MessagePortLike, type WebSocketLike } from '../src/index.ts'
 
 describe('port() transport hardening', () => {
   it('defers start() until first onData and buffers messages (and close sentinel) arriving before onData', () => {
@@ -147,5 +147,72 @@ describe('stream() and memoryPair() transport hardening', () => {
     let lateB = 0
     b.onClose(() => { lateB++ })
     expect(lateB).toBe(1)
+  })
+})
+
+describe('a close listener that throws', () => {
+  it('keeps no other listener from being called, and what it threw is thrown again by close', () => {
+    const [a] = memoryPair()
+    const called: string[] = []
+    a.onClose(() => { called.push('first'); throw new Error('first threw') })
+    a.onClose(() => { called.push('second'); throw new Error('second threw') })
+    a.onClose(() => { called.push('third') })
+    expect(() => a.close()).toThrow('first threw')
+    expect(called).toEqual(['first', 'second', 'third'])
+  })
+
+  it('keeps the other end of a memory pair from hearing nothing', async () => {
+    const [a, b] = memoryPair()
+    let heard = false
+    a.onClose(() => { throw new Error('at this end') })
+    b.onClose(() => { heard = true })
+    expect(() => a.close()).toThrow('at this end')
+    await Promise.resolve()
+    expect(heard).toBe(true)
+  })
+
+  it('keeps a link carried on the transport from missing its close, whoever listened first', () => {
+    const [a] = memoryPair()
+    a.onClose(() => { throw new Error('not the link') })
+    const ended: Ending[] = []
+    dial(a).onEnd((ending) => { ended.push(ending) })
+    expect(() => a.close()).toThrow('not the link')
+    expect(ended).toEqual([{ why: 'closed' }])
+  })
+
+  it('keeps a link that is handed a transport after it ended from throwing what closing it threw', () => {
+    const thrown: unknown[] = []
+    const link = listen(undefined, { thrown: (error) => { thrown.push(error) } })
+    link.close()
+    const [late] = memoryPair()
+    let closed = false
+    late.onClose(() => { closed = true; throw new Error('closing it') })
+    expect(() => link.carry(late)).not.toThrow()
+    expect(closed).toBe(true)
+    expect(thrown).toEqual([new Error('closing it')])
+  })
+})
+
+describe('text that begins with U+FEFF', () => {
+  it('arrives with it, over a stream', () => {
+    let data: ((chunk: Uint8Array) => void) | undefined
+    const written: Uint8Array[] = []
+    const duplex: DuplexLike = {
+      write: (chunk) => { written.push(chunk) },
+      end: () => {},
+      on: (event: string, listener: never) => { if (event === 'data') data = listener },
+    }
+    const t = stream(duplex)
+    const heard: Message[] = []
+    t.onData((message) => { heard.push(message) })
+    t.send('﻿hello')
+    data!(written[0]!)
+    expect(heard).toEqual(['﻿hello'])
+  })
+
+  it('is read by the JSON codec the same as text or as bytes', () => {
+    const text = '﻿[1]'
+    expect(() => json.decode(text)).toThrow(SyntaxError)
+    expect(() => json.decode(new TextEncoder().encode(text))).toThrow(SyntaxError)
   })
 })

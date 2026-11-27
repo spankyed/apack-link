@@ -688,26 +688,60 @@ describe('what carries a link taking no message longer than it says', () => {
     const arriving = limited(LEAST - 1)
     expect(() => only(accept(() => {}, { bound }))(arriving.narrow)).toThrow(RangeError)
     expect(arriving.noted.closed).toBe(1)
-    // The first of a link that opens its own.
-    const opening = limited(LEAST - 1)
-    expect(() => dial(() => opening.narrow, { bound, reopen: { clock: { after: () => () => {} } } })).toThrow(RangeError)
   })
 
-  it('is counted as a connection that did not hold, and what was wrong handed on, where a link opens it for itself later', () => {
+  it('ends the link too narrow, having closed it, where a link opens it for itself: the first', () => {
+    const waits: number[] = []
+    const thrown: unknown[] = []
+    const endings: Ending[] = []
+    let opens = 0
+    const opening = limited(LEAST - 1)
+    const link = dial(() => { opens++; return opening.narrow }, { bound, reopen: { clock: { after: (ms) => { waits.push(ms); return () => {} } } }, thrown: (error) => { thrown.push(error) } })
+    link.onEnd((ending) => { endings.push(ending) })
+    expect(opens).toBe(1)
+    expect(opening.noted.closed).toBe(1)
+    expect(endings).toEqual([{ why: 'too narrow', most: LEAST - 1, needs: LEAST }])
+    expect(waits).toEqual([])
+    expect(thrown).toEqual([])
+  })
+
+  it('ends the link too narrow, having closed it, where a link opens it for itself: a later one', () => {
     const waits: Array<{ ms: number; run(): void }> = []
     const thrown: unknown[] = []
+    const endings: Ending[] = []
     let narrow = false
     const opened: Array<ReturnType<typeof limited>> = []
-    dial(() => { const end = limited(narrow ? LEAST - 1 : LEAST); opened.push(end); return end.narrow }, { bound, reopen: { clock: { after: (ms, run) => { waits.push({ ms, run }); return () => {} } } }, thrown: (error) => { thrown.push(error) } })
+    const link = dial(() => { const end = limited(narrow ? LEAST - 1 : LEAST); opened.push(end); return end.narrow }, { bound, reopen: { clock: { after: (ms, run) => { waits.push({ ms, run }); return () => {} } } }, thrown: (error) => { thrown.push(error) } })
+    link.onEnd((ending) => { endings.push(ending) })
     narrow = true
     opened[0]!.narrow.close()
     opened[0]!.right.close()
     waits.at(-1)!.run()
-    waits.at(-1)!.run()
-    expect(waits.map((wait) => wait.ms)).toEqual([100, 200, 400])
-    expect(thrown).toHaveLength(2)
-    expect(thrown[0]).toBeInstanceOf(RangeError)
-    expect(opened.slice(1).map((end) => end.noted.closed)).toEqual([1, 1])
+    expect(opened).toHaveLength(2)
+    expect(opened[1]!.noted.closed).toBe(1)
+    expect(endings).toEqual([{ why: 'too narrow', most: LEAST - 1, needs: LEAST }])
+    expect(waits.map((wait) => wait.ms)).toEqual([100])
+    expect(thrown).toEqual([])
+  })
+
+  it('closes one too narrow that is opened as the link is closed, and ends as it was closed', () => {
+    const waits: Array<() => void> = []
+    const endings: Ending[] = []
+    const opened: Array<ReturnType<typeof limited>> = []
+    let closing = false
+    const link = dial(() => {
+      if (closing) link.close()
+      const end = limited(closing ? LEAST - 1 : LEAST)
+      opened.push(end)
+      return end.narrow
+    }, { bound, reopen: { clock: { after: (_, run) => { waits.push(run); return () => {} } } } })
+    link.onEnd((ending) => { endings.push(ending) })
+    closing = true
+    opened[0]!.narrow.close()
+    opened[0]!.right.close()
+    waits.at(-1)!()
+    expect(opened[1]!.noted.closed).toBe(1)
+    expect(endings).toEqual([{ why: 'closed' }])
   })
 
   it('is asked through what accepts connections, as is how much it has not written', async () => {

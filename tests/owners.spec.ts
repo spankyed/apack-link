@@ -230,6 +230,17 @@ describe('a session has an owner', () => {
     expect([closes, at.told]).toEqual([1, []])
   })
 
+  it('closes a connection it turns away even when what it was to be told cannot be sent, and keeps nothing of it', () => {
+    const at = backend()
+    let onData: ((message: Message) => void) | undefined
+    let closes = 0
+    at.take({ send: () => { throw new Error('cannot send') }, onData: (h) => { onData = h }, onClose: () => {}, close: () => { closes++ } }, 'a')
+    onData!(JSON.stringify([{ link: 999, session: 'x', taken: 0 }]))
+    expect(closes).toBe(1)
+    at.gone('a')
+    expect([closes, at.told]).toEqual([1, []])
+  })
+
   it('turns the connection away as lost and hands the error to thrown when onLink throws, and closes once if gone was called first', async () => {
     let calls = 0
     const ended: Ending[] = []

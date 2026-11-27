@@ -36,7 +36,7 @@ const MOST = 128 * 1024 * 1024
 const LONGEST = 0xffff_ffff
 
 const encoder = new TextEncoder()
-const decoder = new TextDecoder('utf-8', { fatal: true })
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 /**
  * A transport over a stream of bytes. What arrives in pieces is put together, and what arrives together is taken

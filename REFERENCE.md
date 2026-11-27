@@ -110,9 +110,10 @@ interface Codec {
 Makes the end of a link that dials: the one that opened the connection, or, where neither did, the one of the
 two chosen to. It says hello first, and ends for what it meets: another link, a session that cannot be gone on
 with, something that is not a link. Given a transport, the link is carried on it alone and ends when it
-closes: what it sends goes at once, beside its hello. Given what opens a transport, and the clock to pace it on
-(`reopen`), it opens one now and another after each one closes, and numbers nothing until the other end has
-said hello.
+closes: what it sends goes at once, beside its hello. Throws a `RangeError`, having closed it, for a transport
+that takes no message of `LEAST` bytes. Given what opens a transport, and the clock to pace it on (`reopen`), it
+opens one now and another after each one closes or cannot be opened, and numbers nothing until the other end has
+said hello. One it opens that takes no message of `LEAST` bytes is closed, and the link ends `too narrow`.
 
 ```ts
 dial(open: () => Transport, options: Options & { readonly reopen: Reopen; }): Link
@@ -545,7 +546,8 @@ interface Size { readonly frames: number; readonly size: number }
 ### `socket`
 
 A transport over a WebSocket. What is sent while it is still opening waits, and leaves in order once it is open.
-Bytes arrive as a `Uint8Array`.
+Closing it while it is still opening aborts the opening, and what waited is dropped. Bytes arrive as a
+`Uint8Array`.
 
 ```ts
 socket(ws: WebSocketLike, options?: SocketOptions): Transport
@@ -626,7 +628,10 @@ interface Transport {
   onData(heard: (message: Message) => void): void
   /** Called once, when nothing more will arrive: either end closed it, or what carried it went. */
   onClose(closed: () => void): void
-  /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
+  /**
+   * Closes this end now. Once it is open, the other end is handed what was sent before this, and then hears that it
+   * closed. One closed while it is still opening never opens: what was sent waiting for it is dropped.
+   */
   close(): void
   /** How many bytes of what was sent it has not yet written, where it can say. A link counts it against its bound. */
   waiting?(): number

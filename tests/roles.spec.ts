@@ -250,3 +250,14 @@ describe('how an end is set', () => {
     }
   })
 })
+
+describe('a connection turned away', () => {
+  it('is closed even when what it was to be told cannot be sent', () => {
+    const link = listen(undefined)
+    let heard: ((message: Message) => void) | undefined
+    let closes = 0
+    link.carry({ send: () => { throw new Error('cannot send') }, onData: (h) => { heard = h }, onClose: () => {}, close: () => { closes++ } })
+    heard!(JSON.stringify([{ link: LINK + 1, session: 'other', taken: 0 }]))
+    expect(closes).toBe(1)
+  })
+})

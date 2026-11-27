@@ -12,7 +12,10 @@ export interface Transport {
   onData(heard: (message: Message) => void): void
   /** Called once, when nothing more will arrive: either end closed it, or what carried it went. */
   onClose(closed: () => void): void
-  /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
+  /**
+   * Closes this end now. Once it is open, the other end is handed what was sent before this, and then hears that it
+   * closed. One closed while it is still opening never opens: what was sent waiting for it is dropped.
+   */
   close(): void
   /** How many bytes of what was sent it has not yet written, where it can say. A link counts it against its bound. */
   waiting?(): number
@@ -54,15 +57,17 @@ export function memoryPair(later: (run: () => void) => void = queueMicrotask, ba
       onClose: here.closes.add,
       close: () => {
         if (here.closes.fired) return
-        here.closes.fire()
-        cross(() => there.closes.fire())
+        try { here.closes.fire() } finally { cross(() => there.closes.fire()) }
       },
     }
   }
   return [make(0, later), make(1, back)]
 }
 
-/** Calls each once, the first time; what is added after is called at once. For a transport's closing. */
+/**
+ * Calls each once, the first time; what is added after is called at once. For a transport's closing. One that
+ * throws does not keep the others from being called: each is, and then the first thing thrown is thrown again.
+ */
 export function once(): { add(closed: () => void): void; fire(): void; readonly fired: boolean } {
   let fired = false
   const waiting: Array<() => void> = []
@@ -71,7 +76,11 @@ export function once(): { add(closed: () => void): void; fire(): void; readonly 
     fire: () => {
       if (fired) return
       fired = true
-      for (const closed of waiting.splice(0)) closed()
+      let failed: { readonly error: unknown } | undefined
+      for (const closed of waiting.splice(0)) {
+        try { closed() } catch (error) { failed ??= { error } }
+      }
+      if (failed) throw failed.error
     },
     get fired() { return fired },
   }
