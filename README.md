@@ -193,8 +193,8 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 - **`LEAST` is 1144 bytes,** and is the least any link is carried on, whatever it is set with: the shortest part
   (16), the longest cause (1024), what JSON puts around a thing numbered at the most (102), and the batch's two.
   A transport that takes less is closed as it is handed over, with a `RangeError`: thrown by `dial`, `listen`,
-  `carry` and `accept`, and, for a connection a link opened for itself later, handed to `thrown` and counted as
-  one that did not hold. A hello that says the other end takes less is `too narrow`.
+  `carry` and `accept`, and, for a connection a link opens for itself, handed to `thrown` and counted as one that
+  did not hold. A hello that says the other end takes less is `too narrow`.
 - **What is kept is sent again as it was.** So a connection that takes less than something an end still keeps,
   and the hello on it does not say was taken, cannot carry it. That is found at the hello: the end that listens
   turns the connection away, and the end that dialled ends `too narrow`.
@@ -286,7 +286,7 @@ order, until it closes. It may say the longest message it carries (`most`) and h
 
 | | Carried on |
 |---|---|
-| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` (a positive whole number of bytes) is the longest message the server takes, where it has a limit. What is sent while it is opening waits for it to open |
+| `socket(ws, { most })` | A browser's `WebSocket`, Node's `ws`: anything with their shared `send`, `close`, `readyState` and events. `most` (a positive whole number of bytes) is the longest message the server takes, where it has a limit. What is sent while it is opening waits for it to open, and is dropped if it is closed before it opens |
 | `port(p)` | A browser's `MessagePort`, Node's `worker_threads` port, Electron's `MessagePortMain` |
 | `stream(duplex, { most })` | A Unix domain socket or a named pipe: each message crosses with its kind and length before it. One longer than `most` bytes (a positive whole number, 128 MiB unless given) closes the stream, as does anything that is not a message, and the stream beneath is destroyed |
 | `memoryPair()` | Two ends in memory, for specs |

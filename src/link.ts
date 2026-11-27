@@ -11,7 +11,7 @@
 import { core, firstOf, isHello, isObject, LEAST, LINK, rawLimitOf, ready, setup, start, type Bye, type Effect, type Ending, type Event, type Hello, type Lost, type Ready, type Sending, type Size, type Traffic } from './core.js'
 import { json, type Codec } from './codec.js'
 import type { Frame } from './frames.js'
-import type { Message, Transport } from './transport.js'
+import { once, type Message, type Transport } from './transport.js'
 
 export { LEAST, LINK, type Bye, type Ending, type Sending, type Size, type Traffic } from './core.js'
 
@@ -265,10 +265,8 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         try { transport?.close() } catch (error) { if (effect.thrown === 'reported') report(error) }
         return
       case 'away':
-        try {
-          if (effect.message !== undefined) transport!.send(effect.message)
-          transport!.close()
-        } catch { /* it has gone already */ }
+        if (effect.message !== undefined) try { transport!.send(effect.message) } catch { /* it has gone already */ }
+        try { transport!.close() } catch { /* it has gone already */ }
         return
       case 'later':
         later(() => tell({ is: 'turn', on: effect.on }))
@@ -314,7 +312,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
   }
 
   const hand = (transport: Transport): void => {
-    if (state.ending) { transport.close(); return }
+    if (state.ending) { try { transport.close() } catch (error) { report(error) } return }
     const on = ++connections
     transports.set(on, transport)
     const deliver = (message: Message): void => {
@@ -338,7 +336,7 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     if (closed) tell({ is: 'closed', on })
   }
   const carry = (transport: Transport): void => {
-    if (state.ending) { transport.close(); return }
+    if (state.ending) { try { transport.close() } catch (error) { report(error) } return }
     wideEnough(transport, LEAST)
     hand(transport)
   }
@@ -388,7 +386,8 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
     waiting: () => state.waiting.length - state.waitingHead,
   }
   if (typeof over === 'object') carry(over)
-  else if (typeof over === 'function') carry(over())
+  // The first connection is opened as every later one is: one that cannot be, or carried, did not hold.
+  else if (typeof over === 'function') perform({ do: 'open' }, undefined)
   return { made, hand }
 }
 
@@ -448,14 +447,14 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
     wideEnough(transport, LEAST)
     if (leaving.has(owner)) { try { transport.close() } catch { /* it has gone already */ } return }
     const hears: Array<(message: Message) => void> = []
-    const closes: Array<() => void> = []
+    const closes = once()
     let first = true
     let closed = false
     // What a link is handed: the connection, with what arrived first handed over again.
     const relay: Transport = {
       send: (message) => transport.send(message),
       onData: (heard) => { hears.push(heard) },
-      onClose: (then) => { if (closed) then(); else closes.push(then) },
+      onClose: (then) => { if (closed) then(); else closes.add(then) },
       close: () => { if (!closed) transport.close() },
       ...(transport.waiting ? { waiting: () => transport.waiting!() } : {}),
       ...(transport.most === undefined ? {} : { most: transport.most }),
@@ -481,15 +480,15 @@ export function accept<Owner>(onLink: (link: Link, owner: Owner) => void, option
       if (closed) return
       closed = true
       untrack()
-      try {
-        if (saying !== 'nothing') transport.send(codec.list([codec.encode({ link: LINK, session: '', taken: 0 } satisfies Hello), ...(saying === 'lost' ? [codec.encode({ lost: true } satisfies Lost)] : [])]))
-        transport.close()
-      } catch { /* it has gone already, which says as much */ }
+      if (saying !== 'nothing') {
+        try { transport.send(codec.list([codec.encode({ link: LINK, session: '', taken: 0 } satisfies Hello), ...(saying === 'lost' ? [codec.encode({ lost: true } satisfies Lost)] : [])])) } catch { /* it has gone already, which says as much */ }
+      }
+      try { transport.close() } catch { /* it has gone already */ }
     }
     transport.onClose(() => {
       closed = true
       untrack()
-      for (const then of closes.splice(0)) then()
+      closes.fire()
     })
     transport.onData((message) => {
       if (closed) return

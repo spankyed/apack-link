@@ -688,9 +688,17 @@ describe('what carries a link taking no message longer than it says', () => {
     const arriving = limited(LEAST - 1)
     expect(() => only(accept(() => {}, { bound }))(arriving.narrow)).toThrow(RangeError)
     expect(arriving.noted.closed).toBe(1)
-    // The first of a link that opens its own.
+  })
+
+  it('is counted as a connection that did not hold, and what was wrong handed on, where a link opens it for itself: the first as well', () => {
+    const waits: number[] = []
+    const thrown: unknown[] = []
     const opening = limited(LEAST - 1)
-    expect(() => dial(() => opening.narrow, { bound, reopen: { clock: { after: () => () => {} } } })).toThrow(RangeError)
+    expect(() => dial(() => opening.narrow, { bound, reopen: { clock: { after: (ms) => { waits.push(ms); return () => {} } } }, thrown: (error) => { thrown.push(error) } })).not.toThrow()
+    expect(opening.noted.closed).toBe(1)
+    expect(thrown).toHaveLength(1)
+    expect(thrown[0]).toBeInstanceOf(RangeError)
+    expect(waits).toEqual([100])
   })
 
   it('is counted as a connection that did not hold, and what was wrong handed on, where a link opens it for itself later', () => {

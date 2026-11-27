@@ -33,7 +33,8 @@ const isArrayBuffer = (value: unknown): value is ArrayBuffer =>
 
 /**
  * A transport over a WebSocket. What is sent while it is still opening waits, and leaves in order once it is open.
- * Bytes arrive as a `Uint8Array`.
+ * Closing it while it is still opening aborts the opening, and what waited is dropped. Bytes arrive as a
+ * `Uint8Array`.
  */
 export function socket(ws: WebSocketLike, options: SocketOptions = {}): Transport {
   if (options.most !== undefined && (!Number.isSafeInteger(options.most) || options.most < 1)) {

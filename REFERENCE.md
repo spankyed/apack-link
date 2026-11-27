@@ -545,7 +545,8 @@ interface Size { readonly frames: number; readonly size: number }
 ### `socket`
 
 A transport over a WebSocket. What is sent while it is still opening waits, and leaves in order once it is open.
-Bytes arrive as a `Uint8Array`.
+Closing it while it is still opening aborts the opening, and what waited is dropped. Bytes arrive as a
+`Uint8Array`.
 
 ```ts
 socket(ws: WebSocketLike, options?: SocketOptions): Transport
@@ -626,7 +627,10 @@ interface Transport {
   onData(heard: (message: Message) => void): void
   /** Called once, when nothing more will arrive: either end closed it, or what carried it went. */
   onClose(closed: () => void): void
-  /** Closes this end now. The other end is handed what was sent before this, and then hears that it closed. */
+  /**
+   * Closes this end now. Once it is open, the other end is handed what was sent before this, and then hears that it
+   * closed. One closed while it is still opening never opens: what was sent waiting for it is dropped.
+   */
   close(): void
   /** How many bytes of what was sent it has not yet written, where it can say. A link counts it against its bound. */
   waiting?(): number

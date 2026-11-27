@@ -22,7 +22,7 @@ export interface Codec {
   decode(message: Message): unknown
 }
 
-const decoder = new TextDecoder('utf-8', { fatal: true })
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const textOf = (message: Message): string => (typeof message === 'string' ? message : decoder.decode(message))
 
 /** Text, as JSON. What arrives as bytes is read as UTF-8. */
