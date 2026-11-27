@@ -2,7 +2,7 @@
 // clocks, only the core stepped by hand and a network that is values. Each state is looked at once, however many
 // orders lead to it, and held to what a queue each way would have done.
 import { describe, expect, it } from 'vitest'
-import { around, core, LEAST, ready, setup, start, type Effect, type Event, type State } from '../src/core.ts'
+import { around, core, LEAST, narrowest, ready, setup, start, type Effect, type Event, type State } from '../src/core.ts'
 import { json, sizeOf } from '../src/codec.ts'
 import { msgpack } from './support/msgpack.ts'
 import { space, type Act, type Script } from './support/space.ts'
@@ -177,6 +177,32 @@ describe('a step', () => {
     expect(step(state, { is: 'due', timer: state.reopening! + 100 })).toEqual([])
     const again = step(state, { is: 'due', timer: state.reopening! })
     expect(does(again)).toEqual(['open'])
+  })
+
+  it('ends too narrow for one opened that takes no message as long as any link needs, opening no other', () => {
+    const step = core(setup({ role: 'dials', connections: 'opened', session: 'here' }))
+    const state = start()
+    const said = step(state, { is: 'narrow', most: LEAST - 1 })
+    expect(said).toEqual([{ do: 'ended', ending: { why: 'too narrow', most: LEAST - 1, needs: LEAST } }])
+    expect(state.reopening).toBeUndefined()
+    expect(step(state, { is: 'narrow', most: 1 })).toEqual([])
+  })
+
+  it('says how many bytes it needs for what it keeps, where one opened is too narrow for that', () => {
+    const set = setup({ role: 'dials', connections: 'opened', session: 'here' })
+    const step = core(set)
+    const state = start()
+    step(state, { is: 'carry', on: 1 })
+    step(state, { is: 'data', on: 1, message: helloOf('there'), backlog: 0 })
+    const one = ready(set, { kind: 'tell', to: 'x', event: 'y'.repeat(3000) }, {})
+    step(state, { is: 'send', one, backlog: 0 })
+    step(state, { is: 'turn', on: 1 })
+    step(state, { is: 'closed', on: 1 })
+    expect(state.kept.length - state.keptHead).toBe(1)
+    expect(does(step(state, { is: 'due', timer: state.reopening! }))).toEqual(['open'])
+    const needs = narrowest(state)
+    expect(needs).toBeGreaterThan(3000)
+    expect(step(state, { is: 'narrow', most: LEAST - 1 })).toEqual([{ do: 'ended', ending: { why: 'too narrow', most: LEAST - 1, needs } }])
   })
 
   it('refuses a setting no end could work with', () => {

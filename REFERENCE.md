@@ -110,9 +110,10 @@ interface Codec {
 Makes the end of a link that dials: the one that opened the connection, or, where neither did, the one of the
 two chosen to. It says hello first, and ends for what it meets: another link, a session that cannot be gone on
 with, something that is not a link. Given a transport, the link is carried on it alone and ends when it
-closes: what it sends goes at once, beside its hello. Given what opens a transport, and the clock to pace it on
-(`reopen`), it opens one now and another after each one closes, and numbers nothing until the other end has
-said hello.
+closes: what it sends goes at once, beside its hello. Throws a `RangeError`, having closed it, for a transport
+that takes no message of `LEAST` bytes. Given what opens a transport, and the clock to pace it on (`reopen`), it
+opens one now and another after each one closes or cannot be opened, and numbers nothing until the other end has
+said hello. One it opens that takes no message of `LEAST` bytes is closed, and the link ends `too narrow`.
 
 ```ts
 dial(open: () => Transport, options: Options & { readonly reopen: Reopen; }): Link

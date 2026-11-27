@@ -192,9 +192,9 @@ Every size a link counts or reports is in bytes, of text as UTF-8.
 - **A batch is cut the same way:** into the fewest messages that fit, between the things said, in order.
 - **`LEAST` is 1144 bytes,** and is the least any link is carried on, whatever it is set with: the shortest part
   (16), the longest cause (1024), what JSON puts around a thing numbered at the most (102), and the batch's two.
-  A transport that takes less is closed as it is handed over, with a `RangeError`: thrown by `dial`, `listen`,
-  `carry` and `accept`, and, for a connection a link opens for itself, handed to `thrown` and counted as one that
-  did not hold. A hello that says the other end takes less is `too narrow`.
+  A transport that takes less is closed as it is handed over, with a `RangeError` thrown by `dial`, `listen`,
+  `carry` and `accept`. One a link opens for itself that takes less is closed, and the link ends `too narrow`:
+  what is opened again is opened as it was. A hello that says the other end takes less is `too narrow`.
 - **What is kept is sent again as it was.** So a connection that takes less than something an end still keeps,
   and the hello on it does not say was taken, cannot carry it. That is found at the hello: the end that listens
   turns the connection away, and the end that dialled ends `too narrow`.

@@ -155,9 +155,10 @@ const wideEnough = (transport: Transport, needed: number): void => {
  * Makes the end of a link that dials: the one that opened the connection, or, where neither did, the one of the
  * two chosen to. It says hello first, and ends for what it meets: another link, a session that cannot be gone on
  * with, something that is not a link. Given a transport, the link is carried on it alone and ends when it
- * closes: what it sends goes at once, beside its hello. Given what opens a transport, and the clock to pace it on
- * (`reopen`), it opens one now and another after each one closes, and numbers nothing until the other end has
- * said hello.
+ * closes: what it sends goes at once, beside its hello. Throws a `RangeError`, having closed it, for a transport
+ * that takes no message of `LEAST` bytes. Given what opens a transport, and the clock to pace it on (`reopen`), it
+ * opens one now and another after each one closes or cannot be opened, and numbers nothing until the other end has
+ * said hello. One it opens that takes no message of `LEAST` bytes is closed, and the link ends `too narrow`.
  */
 export function dial(open: () => Transport, options: Options & { readonly reopen: Reopen }): Link
 export function dial(over: Transport, options?: Options): Link
@@ -289,13 +290,26 @@ function end(role: 'dials' | 'listens', over: Transport | (() => Transport) | un
         off?.()
         return
       }
-      case 'open':
-        // What cannot be opened, or carried, is a connection that did not hold.
-        try { carry((over as () => Transport)()) } catch (error) {
+      case 'open': {
+        // What cannot be opened, or carried, is a connection that did not hold. One that takes no message as long
+        // as any link needs never will: the link ends, saying so.
+        let opened: Transport
+        try { opened = (over as () => Transport)() } catch (error) {
+          tell({ is: 'unopened' })
+          report(error)
+          return
+        }
+        if (opened.most !== undefined && opened.most < LEAST) {
+          try { opened.close() } catch { /* it is not this link's to report */ }
+          tell({ is: 'narrow', most: opened.most })
+          return
+        }
+        try { carry(opened) } catch (error) {
           tell({ is: 'unopened' })
           report(error)
         }
         return
+      }
       case 'hand':
         if (effect.traffic) tap(effect.traffic)
         for (const entry of [...hears]) if (entry.active) try { entry.fn(effect.frame, effect.cause) } catch (error) { report(error) }

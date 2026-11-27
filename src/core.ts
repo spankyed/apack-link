@@ -453,6 +453,8 @@ export type Event =
   | { readonly is: 'due'; readonly timer: number }
   /** A connection that was to be opened could not be. */
   | { readonly is: 'unopened' }
+  /** One that was opened takes no message as long as any link needs, `most` bytes at the most: none like it will. */
+  | { readonly is: 'narrow'; readonly most: number }
   /** The end is owed something by the other, and is owed it no longer. */
   | { readonly is: 'owed' }
   | { readonly is: 'settled' }
@@ -474,7 +476,10 @@ export type Effect =
   | { readonly do: 'after'; readonly timer: number; readonly ms: number; readonly clock: 'reopen' | 'there' }
   /** Call off what was put on a clock. */
   | { readonly do: 'off'; readonly timer: number }
-  /** Open a connection and hand it over. If that throws, the end is told it was `unopened`. */
+  /**
+   * Open a connection and hand it over. If that throws, the end is told it was `unopened`; if it takes no message
+   * as long as any link needs, it is closed and the end is told it was `narrow`.
+   */
   | { readonly do: 'open' }
   /** Hand a frame over, having told whoever is told of frames crossing. */
   | { readonly do: 'hand'; readonly frame: Frame; readonly cause?: string; readonly traffic?: Traffic }
@@ -1119,6 +1124,8 @@ export function core(set: Setup): (state: State, event: Event) => Effect[] {
       case 'due': due(event.timer); break
       // What cannot be opened, or carried, is a connection that did not hold.
       case 'unopened': if (!s.ending) { s.failed++; reopen() } break
+      // What is opened again is opened as it was: waiting would only open another as narrow.
+      case 'narrow': end({ why: 'too narrow', most: event.most, needs: narrowest(s) }); break
       case 'owed': s.owed++; watch(false); break
       case 'settled': s.owed--; unwatch(); break
       case 'tapped': s.tapped = true; break
